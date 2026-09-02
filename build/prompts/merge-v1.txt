@@ -1,0 +1,1 @@
+The following are audit-log entries generated from consecutive chunks of ONE Claude Code session. Merge them into a single entry in exactly the same strict markdown shape (### title / **Did:** / **Decided:** / **Setup changes:**), deduplicating. No preamble, no fences.

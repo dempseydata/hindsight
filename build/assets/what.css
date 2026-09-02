@@ -1,0 +1,31 @@
+
+#what .day { margin: 1rem 0 0; color: var(--o-dim); font: 11px var(--o-mono); }
+#what .row { background: var(--o-panel); border: 1px solid var(--o-border);
+  border-radius: var(--o-radius); margin-top: .35rem;
+  transition: border-color var(--o-motion); }
+#what .row:hover { border-color: var(--o-faint); }
+#what summary { display: flex; gap: .6rem; align-items: baseline;
+  padding: .45rem .8rem; cursor: pointer; list-style: none; }
+#what summary::-webkit-details-marker { display: none; }
+#what .srow { display: flex; gap: .6rem; align-items: baseline;
+  padding: .3rem .8rem; }
+.pchip { flex: none; font: 10px var(--o-mono); color: var(--o-dim);
+  border: 1px solid var(--o-border); border-radius: 2px; padding: .05rem .4rem;
+  max-width: 14rem; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+#what .ttl { min-width: 0; }
+#what .ttl.dim { color: var(--o-dim); }
+#what .cnt { margin-left: auto; flex: none; color: var(--o-dim);
+  font: 11px var(--o-mono); }
+#what .adr { color: var(--o-accent); border: 1px solid var(--o-accent);
+  border-radius: 2px; padding: 0 .3rem; margin-left: .5rem; }
+#what .entry { padding: 0 1rem .8rem 2rem; }
+#what .entry h3 { margin: .6rem 0 .1rem; color: var(--o-dim);
+  font: 600 11px var(--o-mono); text-transform: uppercase;
+  letter-spacing: .05em; }
+#what .entry ul { margin: .2rem 0; padding-left: 1.1rem; }
+#what .entry li { margin: .15rem 0; }
+#what .entry p { margin: .2rem 0; }
+#what .entry code { font: 12px var(--o-mono); color: var(--o-ok-text); }
+#what .entry pre { white-space: pre-wrap; color: var(--o-dim);
+  font: 12px/1.5 var(--o-mono); }

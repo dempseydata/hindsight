@@ -1,0 +1,92 @@
+{
+ "model": "claude-haiku-4-5-20251001",
+ "frozen": "2026-08-30",
+ "ticket": 79,
+ "extracts": "local-data/eval/what/extracts/<case>.txt",
+ "floors": [
+  "every case's output passes valid_entry",
+  "expected SKIP stays SKIP, expected entry stays entry (\"any\" cases only need the gate)"
+ ],
+ "cases": {
+  "296cf33f-45e4-413f-8344-f91ad2a785a0.part1": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part10": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part11": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part13": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part14": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part4": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part5": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part6": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "b769def2-ac7c-428e-9e2d-9140b6576cd4.part1": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "b769def2-ac7c-428e-9e2d-9140b6576cd4.part2": {
+   "expected": "any",
+   "role": "poisoned under what-v2 (continuation prose)"
+  },
+  "3b087602-7479-4061-ae13-fe7913eb73a2.part1": {
+   "expected": "SKIP",
+   "role": "good under what-v2"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part1": {
+   "expected": "entry",
+   "role": "false SKIP under what-v2: 180 KB extract, >100 user turns \u2014 relabelled after what-v3-r1, see eval/README.md"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part12": {
+   "expected": "entry",
+   "role": "false SKIP under what-v2: 180 KB extract, >100 user turns \u2014 relabelled after what-v3-r1, see eval/README.md"
+  },
+  "58c80910-1551-450e-bc70-02a954876864.part3": {
+   "expected": "entry",
+   "role": "false SKIP under what-v2: 180 KB extract, >100 user turns \u2014 relabelled after what-v3-r1, see eval/README.md"
+  },
+  "87ab682f-a016-4bc3-a0fe-48c646068473.part1": {
+   "expected": "SKIP",
+   "role": "good under what-v2"
+  },
+  "bf1e9012-1d8d-4f4d-a27e-1d8a4b23364c.part2": {
+   "expected": "entry",
+   "role": "false SKIP under what-v2: 180 KB extract, >100 user turns \u2014 relabelled after what-v3-r1, see eval/README.md"
+  },
+  "3f2f5c8a-d395-437f-a7f0-7add97b9f4d7.part1": {
+   "expected": "entry",
+   "role": "good under what-v2"
+  },
+  "8ed8b084-c0f4-418f-8624-61fedb161f8e.part1": {
+   "expected": "entry",
+   "role": "good under what-v2"
+  },
+  "754d0603-f4fa-49c1-a0f1-29bc8f02188c.part1": {
+   "expected": "entry",
+   "role": "good under what-v2"
+  },
+  "c1be7d62-2382-4fe7-b851-ac7eabb67e31.part1": {
+   "expected": "entry",
+   "role": "good under what-v2"
+  }
+ }
+}

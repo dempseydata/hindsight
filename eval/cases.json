@@ -1,0 +1,948 @@
+{
+ "model": "claude-haiku-4-5-20251001",
+ "frozen": "2026-08-28",
+ "source": "local-data/hindsight.db via build/how.py trail, event-run grain (\u22653 fold, majority titling) as settled by ticket #64",
+ "cases": {
+  "hindsight@2026-08-20": {
+   "project": "hindsight",
+   "as_of": "2026-08-20",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "Ideate",
+     "start": "2026-07-15",
+     "end": "2026-08-01",
+     "titles": [
+      "CCWhy \u2014 from memory research to discovery-gated PRD",
+      "Define hindsight consolidation, chart v1 map, extract A/B verdict"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-01",
+     "end": "2026-08-16",
+     "titles": [
+      "Locked extraction contract via 8-question grilling",
+      "Verify ingest schemas against real payloads (ticket #2)",
+      "Grilled and resolved silent-change backstop detection strategy",
+      "Backend stack decision resolved (#8), ADR-0003 written",
+      "Freeze evaluation corpus and thresholds for model output quality",
+      "Backfill session transcripts into observability database",
+      "Greybox the what-view prototype, validate ledger variant",
+      "Prototype why-view timeline; settled day-ledger layout with composed filtering",
+      "Greybox where-view prototype finalized with composition drill-down",
+      "Frontier check and scope calibration",
+      "Verify and close Dogfood review #1",
+      "Week-2 audit log review completed",
+      "Lock the audit format: four decisions resolved",
+      "Spec \u2192 9-ticket breakdown and implementation roadmap"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-08-16",
+     "end": "2026-08-20",
+     "titles": [
+      "Ship OTLP listener (ticket #16) and wire telemetry end-to-end",
+      "Implement ticket #17: analysis-run on-demand entrypoint",
+      "Implement why-pass in analyze.py with review-driven refactors (issue #18)",
+      "Implement why-pass anti-capture repair and prompt v2 refinements (ticket #19)",
+      "Backfill history import to live store (ticket #20)",
+      "Silent-change backstop: blobs, events, deterministic linking (#21)",
+      "Implement substrate-filling for tool events and usage metrics (#22)",
+      "Implement hook self-instrumentation for session observability (ticket #23)",
+      "Implement ticket #24; fix hook I/O issues; graphify codebase",
+      "Design charting and taste-references research complete",
+      "Delta-pass review: drop why-view from v1",
+      "Consolidate design-inputs bundle from greybox and ADR sources",
+      "Diverged on dashboard direction (C + A's bar sparklines)"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-20",
+     "end": "2026-08-20",
+     "titles": [
+      "Narrow design direction: three variants, winner selected",
+      "Dashboard serving model and UI dependencies (ticket #36)",
+      "Design phase exit: tokens.css and build-handoff from V3 Indigo",
+      "Chart wayfinder map for styled Build v1"
+     ]
+    }
+   ],
+   "expected": [
+    {
+     "id": "B1",
+     "name": "OTLP listener / telemetry",
+     "group": "Built",
+     "anchors": [
+      "otlp",
+      "listener",
+      "telemetry"
+     ]
+    },
+    {
+     "id": "B2",
+     "name": "history backfill",
+     "group": "Built",
+     "anchors": [
+      "backfill"
+     ]
+    },
+    {
+     "id": "B3",
+     "name": "substrate: tool events, usage",
+     "group": "Built",
+     "anchors": [
+      "substrate",
+      "tool event",
+      "usage"
+     ]
+    },
+    {
+     "id": "B4",
+     "name": "hook self-instrumentation",
+     "group": "Built",
+     "anchors": [
+      "hook"
+     ]
+    },
+    {
+     "id": "B5",
+     "name": "analysis run / why-pass",
+     "group": "Built",
+     "anchors": [
+      "analysis-run",
+      "analysis run",
+      "entrypoint",
+      "why-pass",
+      "why pass"
+     ]
+    },
+    {
+     "id": "B6",
+     "name": "greybox prototypes",
+     "group": "Built",
+     "anchors": [
+      "prototype"
+     ]
+    },
+    {
+     "id": "B7",
+     "name": "contracts and ADRs locked in Plan",
+     "group": "Built",
+     "anchors": [
+      "extraction contract",
+      "audit format",
+      "backend stack",
+      "adr"
+     ]
+    },
+    {
+     "id": "R1",
+     "name": "why-view dropped from v1",
+     "group": "Reversed",
+     "anchors": [
+      "why-view",
+      "why view"
+     ]
+    },
+    {
+     "id": "N1",
+     "name": "styled build map charted",
+     "group": "Now",
+     "anchors": [
+      "wayfinder",
+      "styled build",
+      "styled"
+     ]
+    }
+   ],
+   "forbidden": [
+    "how-view",
+    "command grain",
+    "launchd",
+    "nightly",
+    "hidden project",
+    "contract gate",
+    "process declaration",
+    "seam adr",
+    "styled what-view",
+    "styled where",
+    "#48",
+    "#49"
+   ]
+  },
+  "hindsight@2026-08-25": {
+   "project": "hindsight",
+   "as_of": "2026-08-25",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "Ideate",
+     "start": "2026-07-15",
+     "end": "2026-08-01",
+     "titles": [
+      "CCWhy \u2014 from memory research to discovery-gated PRD",
+      "Define hindsight consolidation, chart v1 map, extract A/B verdict"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-01",
+     "end": "2026-08-16",
+     "titles": [
+      "Locked extraction contract via 8-question grilling",
+      "Verify ingest schemas against real payloads (ticket #2)",
+      "Grilled and resolved silent-change backstop detection strategy",
+      "Backend stack decision resolved (#8), ADR-0003 written",
+      "Freeze evaluation corpus and thresholds for model output quality",
+      "Backfill session transcripts into observability database",
+      "Greybox the what-view prototype, validate ledger variant",
+      "Prototype why-view timeline; settled day-ledger layout with composed filtering",
+      "Greybox where-view prototype finalized with composition drill-down",
+      "Frontier check and scope calibration",
+      "Verify and close Dogfood review #1",
+      "Week-2 audit log review completed",
+      "Lock the audit format: four decisions resolved",
+      "Spec \u2192 9-ticket breakdown and implementation roadmap"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-08-16",
+     "end": "2026-08-20",
+     "titles": [
+      "Ship OTLP listener (ticket #16) and wire telemetry end-to-end",
+      "Implement ticket #17: analysis-run on-demand entrypoint",
+      "Implement why-pass in analyze.py with review-driven refactors (issue #18)",
+      "Implement why-pass anti-capture repair and prompt v2 refinements (ticket #19)",
+      "Backfill history import to live store (ticket #20)",
+      "Silent-change backstop: blobs, events, deterministic linking (#21)",
+      "Implement substrate-filling for tool events and usage metrics (#22)",
+      "Implement hook self-instrumentation for session observability (ticket #23)",
+      "Implement ticket #24; fix hook I/O issues; graphify codebase",
+      "Design charting and taste-references research complete",
+      "Delta-pass review: drop why-view from v1",
+      "Consolidate design-inputs bundle from greybox and ADR sources",
+      "Diverged on dashboard direction (C + A's bar sparklines)"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-20",
+     "end": "2026-08-25",
+     "titles": [
+      "Narrow design direction: three variants, winner selected",
+      "Dashboard serving model and UI dependencies (ticket #36)",
+      "Design phase exit: tokens.css and build-handoff from V3 Indigo",
+      "Chart wayfinder map for styled Build v1",
+      "Grilled and wrote seam ADRs for hindsight v1 (issue #41)",
+      "Backfilled consumer, error, and message-lens grains (#42)"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-08-25",
+     "end": "2026-08-25",
+     "titles": [
+      "Remove why-pass from analyze.py and schema (ticket #43)",
+      "Wayfinder ticket #44: server skeleton and shared header chrome",
+      "Styled what-view (session ledger) \u2014 ticket #45",
+      "Implement Where-view: the styled panel dashboard (#48)",
+      "Floor audit resolved: chart axis text to AA",
+      "Nightly analysis launchd calendar job install mechanism (ticket #49)"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-25",
+     "end": "2026-08-25",
+     "titles": [
+      "Derived product DESIGN.md for Impeccable tooling; tokens.css stays authority"
+     ]
+    }
+   ],
+   "expected": [
+    {
+     "id": "B1",
+     "name": "OTLP listener / telemetry",
+     "group": "Built",
+     "anchors": [
+      "otlp",
+      "listener",
+      "telemetry"
+     ]
+    },
+    {
+     "id": "B2",
+     "name": "history backfill",
+     "group": "Built",
+     "anchors": [
+      "backfill"
+     ]
+    },
+    {
+     "id": "B3",
+     "name": "substrate: tool events, usage",
+     "group": "Built",
+     "anchors": [
+      "substrate",
+      "tool event",
+      "usage"
+     ]
+    },
+    {
+     "id": "B4",
+     "name": "hook self-instrumentation",
+     "group": "Built",
+     "anchors": [
+      "hook"
+     ]
+    },
+    {
+     "id": "B5",
+     "name": "analysis run / why-pass",
+     "group": "Built",
+     "anchors": [
+      "analysis-run",
+      "analysis run",
+      "entrypoint",
+      "why-pass",
+      "why pass"
+     ]
+    },
+    {
+     "id": "B6",
+     "name": "greybox prototypes",
+     "group": "Built",
+     "anchors": [
+      "prototype"
+     ]
+    },
+    {
+     "id": "B7",
+     "name": "contracts and ADRs locked in Plan",
+     "group": "Built",
+     "anchors": [
+      "extraction contract",
+      "audit format",
+      "backend stack",
+      "adr"
+     ]
+    },
+    {
+     "id": "B8",
+     "name": "design direction narrowed, tokens handed off",
+     "group": "Built",
+     "anchors": [
+      "design direction",
+      "tokens.css",
+      "indigo",
+      "narrow"
+     ]
+    },
+    {
+     "id": "B9",
+     "name": "server skeleton + header chrome",
+     "group": "Built",
+     "anchors": [
+      "server",
+      "chrome"
+     ]
+    },
+    {
+     "id": "B10",
+     "name": "styled what-view",
+     "group": "Built",
+     "anchors": [
+      "what-view",
+      "what view"
+     ]
+    },
+    {
+     "id": "B11",
+     "name": "styled where-view",
+     "group": "Built",
+     "anchors": [
+      "where-view",
+      "where view"
+     ]
+    },
+    {
+     "id": "B12",
+     "name": "nightly launchd job",
+     "group": "Built",
+     "anchors": [
+      "nightly",
+      "launchd"
+     ]
+    },
+    {
+     "id": "R2",
+     "name": "why-pass removed",
+     "group": "Reversed",
+     "anchors": [
+      "why-pass",
+      "why pass"
+     ]
+    },
+    {
+     "id": "R1",
+     "name": "why-view dropped from v1",
+     "group": "Reversed",
+     "anchors": [
+      "why-view",
+      "why view"
+     ]
+    },
+    {
+     "id": "N1",
+     "name": "product DESIGN.md derived",
+     "group": "Now",
+     "anchors": [
+      "design.md",
+      "impeccable"
+     ]
+    }
+   ],
+   "forbidden": [
+    "how-view",
+    "command grain",
+    "hidden project",
+    "process declaration",
+    "contract gate",
+    "body width",
+    "category filter",
+    "#50",
+    "#53"
+   ]
+  },
+  "hindsight@2026-08-27": {
+   "project": "hindsight",
+   "as_of": "2026-08-27",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "Ideate",
+     "start": "2026-07-15",
+     "end": "2026-08-01",
+     "titles": [
+      "CCWhy \u2014 from memory research to discovery-gated PRD",
+      "Define hindsight consolidation, chart v1 map, extract A/B verdict"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-01",
+     "end": "2026-08-16",
+     "titles": [
+      "Locked extraction contract via 8-question grilling",
+      "Verify ingest schemas against real payloads (ticket #2)",
+      "Grilled and resolved silent-change backstop detection strategy",
+      "Backend stack decision resolved (#8), ADR-0003 written",
+      "Freeze evaluation corpus and thresholds for model output quality",
+      "Backfill session transcripts into observability database",
+      "Greybox the what-view prototype, validate ledger variant",
+      "Prototype why-view timeline; settled day-ledger layout with composed filtering",
+      "Greybox where-view prototype finalized with composition drill-down",
+      "Frontier check and scope calibration",
+      "Verify and close Dogfood review #1",
+      "Week-2 audit log review completed",
+      "Lock the audit format: four decisions resolved",
+      "Spec \u2192 9-ticket breakdown and implementation roadmap"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-08-16",
+     "end": "2026-08-20",
+     "titles": [
+      "Ship OTLP listener (ticket #16) and wire telemetry end-to-end",
+      "Implement ticket #17: analysis-run on-demand entrypoint",
+      "Implement why-pass in analyze.py with review-driven refactors (issue #18)",
+      "Implement why-pass anti-capture repair and prompt v2 refinements (ticket #19)",
+      "Backfill history import to live store (ticket #20)",
+      "Silent-change backstop: blobs, events, deterministic linking (#21)",
+      "Implement substrate-filling for tool events and usage metrics (#22)",
+      "Implement hook self-instrumentation for session observability (ticket #23)",
+      "Implement ticket #24; fix hook I/O issues; graphify codebase",
+      "Design charting and taste-references research complete",
+      "Delta-pass review: drop why-view from v1",
+      "Consolidate design-inputs bundle from greybox and ADR sources",
+      "Diverged on dashboard direction (C + A's bar sparklines)"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-20",
+     "end": "2026-08-25",
+     "titles": [
+      "Narrow design direction: three variants, winner selected",
+      "Dashboard serving model and UI dependencies (ticket #36)",
+      "Design phase exit: tokens.css and build-handoff from V3 Indigo",
+      "Chart wayfinder map for styled Build v1",
+      "Grilled and wrote seam ADRs for hindsight v1 (issue #41)",
+      "Backfilled consumer, error, and message-lens grains (#42)"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-08-25",
+     "end": "2026-08-25",
+     "titles": [
+      "Remove why-pass from analyze.py and schema (ticket #43)",
+      "Wayfinder ticket #44: server skeleton and shared header chrome",
+      "Styled what-view (session ledger) \u2014 ticket #45",
+      "Implement Where-view: the styled panel dashboard (#48)",
+      "Floor audit resolved: chart axis text to AA",
+      "Nightly analysis launchd calendar job install mechanism (ticket #49)"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-25",
+     "end": "2026-08-25",
+     "titles": [
+      "Derived product DESIGN.md for Impeccable tooling; tokens.css stays authority"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-08-25",
+     "end": "2026-08-26",
+     "titles": [
+      "Implement ticket #53: body width cap and centering",
+      "Add category filter chips to consumer league",
+      "Fix #29: live-session guard and growth invalidation for mid-flight extracts",
+      "Land ticket #50: crash paths, empty-DB guards, accessibility",
+      "Implement contract gate validation for what-pass output (ticket #38)"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-26",
+     "end": "2026-08-27",
+     "titles": [
+      "Grilled #51: hidden projects \u2014 filesystem curation, chips-only hiding",
+      "Grill ticket #54: how-view as process-trail observability",
+      "Chart how-view map with dependencies and research",
+      "Grilling ticket #60: process-declaration schema for hindsight"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-08-27",
+     "end": "2026-08-27",
+     "titles": [
+      "Command grain substrate: typed slash commands captured in scan"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-27",
+     "end": "2026-08-27",
+     "titles": [
+      "Author and stage process declarations for three projects",
+      "Implement declaration parser and trail assembly for how-view",
+      "How-view greybox prototype for ticket #64"
+     ]
+    }
+   ],
+   "expected": [
+    {
+     "id": "B1",
+     "name": "OTLP listener / telemetry",
+     "group": "Built",
+     "anchors": [
+      "otlp",
+      "listener",
+      "telemetry"
+     ]
+    },
+    {
+     "id": "B2",
+     "name": "history backfill",
+     "group": "Built",
+     "anchors": [
+      "backfill"
+     ]
+    },
+    {
+     "id": "B3",
+     "name": "substrate: tool events, usage",
+     "group": "Built",
+     "anchors": [
+      "substrate",
+      "tool event",
+      "usage"
+     ]
+    },
+    {
+     "id": "B4",
+     "name": "hook self-instrumentation",
+     "group": "Built",
+     "anchors": [
+      "hook"
+     ]
+    },
+    {
+     "id": "B5",
+     "name": "analysis run / why-pass",
+     "group": "Built",
+     "anchors": [
+      "analysis-run",
+      "analysis run",
+      "entrypoint",
+      "why-pass",
+      "why pass"
+     ]
+    },
+    {
+     "id": "B6",
+     "name": "greybox prototypes",
+     "group": "Built",
+     "anchors": [
+      "prototype"
+     ]
+    },
+    {
+     "id": "B7",
+     "name": "contracts and ADRs locked in Plan",
+     "group": "Built",
+     "anchors": [
+      "extraction contract",
+      "audit format",
+      "backend stack",
+      "adr"
+     ]
+    },
+    {
+     "id": "B8",
+     "name": "design direction narrowed, tokens handed off",
+     "group": "Built",
+     "anchors": [
+      "design direction",
+      "tokens.css",
+      "indigo",
+      "narrow"
+     ]
+    },
+    {
+     "id": "B9",
+     "name": "server skeleton + header chrome",
+     "group": "Built",
+     "anchors": [
+      "server",
+      "chrome"
+     ]
+    },
+    {
+     "id": "B10",
+     "name": "styled what-view",
+     "group": "Built",
+     "anchors": [
+      "what-view",
+      "what view"
+     ]
+    },
+    {
+     "id": "B11",
+     "name": "styled where-view",
+     "group": "Built",
+     "anchors": [
+      "where-view",
+      "where view"
+     ]
+    },
+    {
+     "id": "B12",
+     "name": "nightly launchd job",
+     "group": "Built",
+     "anchors": [
+      "nightly",
+      "launchd"
+     ]
+    },
+    {
+     "id": "R2",
+     "name": "why-pass removed",
+     "group": "Reversed",
+     "anchors": [
+      "why-pass",
+      "why pass"
+     ]
+    },
+    {
+     "id": "R1",
+     "name": "why-view dropped from v1",
+     "group": "Reversed",
+     "anchors": [
+      "why-view",
+      "why view"
+     ]
+    },
+    {
+     "id": "B13",
+     "name": "contract gate",
+     "group": "Built",
+     "anchors": [
+      "contract gate",
+      "#38"
+     ]
+    },
+    {
+     "id": "B14",
+     "name": "command grain",
+     "group": "Built",
+     "anchors": [
+      "command grain",
+      "slash command"
+     ]
+    },
+    {
+     "id": "B15",
+     "name": "declaration parser + trail assembly",
+     "group": "Built",
+     "anchors": [
+      "parser",
+      "trail assembly",
+      "declaration"
+     ]
+    },
+    {
+     "id": "N1",
+     "name": "how-view in progress",
+     "group": "Now",
+     "anchors": [
+      "how-view",
+      "how view",
+      "process trail",
+      "process-trail"
+     ]
+    }
+   ],
+   "forbidden": [
+    "status narrative"
+   ]
+  },
+  "thisisme@2026-08-16": {
+   "project": "thisisme",
+   "as_of": "2026-08-16",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "Ideate",
+     "start": "2026-07-27",
+     "end": "2026-07-27",
+     "titles": [
+      "Retrofit ThisIsMe tooling to new process; close OpenSpec; promote PRD"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-07-27",
+     "end": "2026-08-01",
+     "titles": [
+      "ThisIsMe: agent setup, GitHub remote, design direction briefs"
+     ]
+    },
+    {
+     "stage": "Design",
+     "start": "2026-08-01",
+     "end": "2026-08-16",
+     "titles": [
+      "Complete design phase: taste \u2192 diverge \u2192 narrow \u2192 decision",
+      "Run wayfinder map for ThisIsMe v0 decision phase"
+     ]
+    }
+   ],
+   "expected": [
+    {
+     "id": "B1",
+     "name": "agent setup, GitHub remote",
+     "group": "Built",
+     "anchors": [
+      "agent setup",
+      "github"
+     ]
+    },
+    {
+     "id": "B2",
+     "name": "design phase complete",
+     "group": "Built",
+     "anchors": [
+      "design phase",
+      "diverge",
+      "narrow",
+      "taste"
+     ]
+    },
+    {
+     "id": "R1",
+     "name": "OpenSpec closed",
+     "group": "Reversed",
+     "anchors": [
+      "openspec"
+     ]
+    },
+    {
+     "id": "N1",
+     "name": "v0 decision-phase map",
+     "group": "Now",
+     "anchors": [
+      "wayfinder",
+      "v0",
+      "decision phase"
+     ]
+    }
+   ],
+   "forbidden": [
+    "rate-limit",
+    "retention",
+    "resume",
+    "taxonomy",
+    "adr"
+   ]
+  },
+  "thisisme@2026-08-25": {
+   "project": "thisisme",
+   "as_of": "2026-08-25",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "Ideate",
+     "start": "2026-07-27",
+     "end": "2026-07-27",
+     "titles": [
+      "Retrofit ThisIsMe tooling to new process; close OpenSpec; promote PRD"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-07-27",
+     "end": "2026-08-01",
+     "titles": [
+      "ThisIsMe: agent setup, GitHub remote, design direction briefs"
+     ]
+    },
+    {
+     "stage": "Design",
+     "start": "2026-08-01",
+     "end": "2026-08-16",
+     "titles": [
+      "Complete design phase: taste \u2192 diverge \u2192 narrow \u2192 decision"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-16",
+     "end": "2026-08-25",
+     "titles": [
+      "Run wayfinder map for ThisIsMe v0 decision phase",
+      "Record design-direction and scope-change ADRs",
+      "Grilling ticket #4: store, rate-limit identity, retention",
+      "Wayfinder: resolve ambiguous-seniority JD taxonomy blocking issue",
+      "Grilling the gated resume artifact; 8-question decision tree closed",
+      "Inverted ticket ordering: author content before schema design"
+     ]
+    }
+   ],
+   "expected": [
+    {
+     "id": "B1",
+     "name": "agent setup, GitHub remote",
+     "group": "Built",
+     "anchors": [
+      "agent setup",
+      "github"
+     ]
+    },
+    {
+     "id": "B2",
+     "name": "design phase complete",
+     "group": "Built",
+     "anchors": [
+      "design phase",
+      "diverge",
+      "narrow",
+      "taste"
+     ]
+    },
+    {
+     "id": "B3",
+     "name": "ADRs recorded",
+     "group": "Built",
+     "anchors": [
+      "adr"
+     ]
+    },
+    {
+     "id": "R1",
+     "name": "OpenSpec closed",
+     "group": "Reversed",
+     "anchors": [
+      "openspec"
+     ]
+    },
+    {
+     "id": "R2",
+     "name": "ticket ordering inverted",
+     "group": "Reversed",
+     "anchors": [
+      "invert",
+      "ticket order",
+      "content before schema"
+     ]
+    },
+    {
+     "id": "N1",
+     "name": "v0 decision grilling",
+     "group": "Now",
+     "anchors": [
+      "v0",
+      "grilling",
+      "gated resume",
+      "rate-limit",
+      "store"
+     ]
+    }
+   ],
+   "forbidden": [
+    "deploy",
+    "launch",
+    "shipped"
+   ]
+  }
+ }
+}

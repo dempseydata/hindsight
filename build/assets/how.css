@@ -1,0 +1,48 @@
+
+#hsel { margin: .8rem 0 0; display: flex; flex-wrap: wrap; gap: .35rem; }
+#how { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: .9rem;
+  align-items: start; margin-top: .9rem; }
+#how aside h2, #how h2 { margin: 0 0 .5rem; color: var(--o-dim);
+  font: 600 10px var(--o-mono); text-transform: uppercase; letter-spacing: .05em; }
+#how .stage { padding: .5rem .7rem; margin-bottom: .4rem;
+  border-left: 3px solid var(--stage, var(--o-stage-off)); }
+#how aside h2.offh { margin: .9rem 0 .3rem; }
+#how .stage.none { border-style: dashed; box-shadow: none; }
+#how .stage b { display: block; font-size: 13px; }
+#how .stage.none b { color: var(--o-dim); }
+#how .stage small, #how .mk { display: block; color: var(--o-dim);
+  font: 11px var(--o-mono); }
+#how .mk { margin: .2rem 0 0; word-break: break-word; }
+#how details summary { cursor: pointer; color: var(--o-dim); font-size: 11px; }
+#how .off { margin: .3rem 0 0; padding-left: 1rem; color: var(--o-dim);
+  font: 11px/1.6 var(--o-mono); }
+#how .warn { border: 1px dashed var(--o-caution); border-radius: var(--o-radius);
+  padding: .6rem .8rem; margin-bottom: .8rem; }
+#how .warn b { color: var(--o-caution-text); }
+#how .warn code { font: 12px var(--o-mono); color: var(--o-caution-text); }
+#how .status { margin-bottom: 1.1rem; }
+#how .facts { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 1.2rem; }
+#how .facts h3 { margin: 0 0 .2rem; color: var(--o-dim);
+  font: 600 10px var(--o-mono); text-transform: uppercase; letter-spacing: .05em; }
+#how .facts ul { margin: 0; padding-left: 1rem; }
+#how .facts li { margin: .15rem 0; }
+#how .facts li.none { color: var(--o-dim); list-style: none; margin-left: -1rem; }
+#how .mech { margin: .6rem 0 0; color: var(--o-dim); font: 11px var(--o-mono); }
+#how .mech b { color: var(--o-text); }
+#how .stale { color: var(--o-caution-text); }
+#how .run { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: .8rem;
+  padding: .7rem .9rem; margin-top: .4rem;
+  border-left: 3px solid var(--stage, var(--o-stage-off));
+  transition: border-color var(--o-motion); }
+#how .run:hover { border-color: var(--o-faint); border-left-color: var(--stage, var(--o-stage-off)); }
+#how .run .now { margin-left: .4rem; color: var(--o-accent); border: 1px solid var(--o-accent);
+  border-radius: 2px; padding: 0 .3rem; font: 600 10px var(--o-mono); vertical-align: middle; }
+#how .run .who b { display: block; font-size: 13px; }
+#how .run .who small { display: block; color: var(--o-dim); font: 11px var(--o-mono); }
+#how .run ul { margin: 0; padding-left: 1rem; }
+#how .run li { margin: .1rem 0; }
+#how .run li.dim { color: var(--o-dim); list-style: none; margin-left: -1rem; }
+#how .meta { margin: .3rem 0 0; color: var(--o-dim); font: 11px var(--o-mono);
+  word-break: break-word; }
+@media (max-width: 760px) {
+  #how, #how .facts, #how .run { grid-template-columns: minmax(0, 1fr); } }

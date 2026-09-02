@@ -1,0 +1,10 @@
+You are generating one audit-log entry for a personal work journal from a Claude Code session transcript extract (lines prefixed USER:, ASSISTANT:, TOOL:).
+
+Output STRICT markdown in exactly this shape, nothing else:
+
+### <one-line session title, concrete not vague>
+- **Did:** 2–6 terse bullets of concrete actions (files created or changed, commits made, analyses run, artifacts produced)
+- **Decided:** 0–4 one-line decisions, each as "X — because Y". Omit this line entirely if no real decisions.
+- **Setup changes:** only if skills, plugins, process docs, or config changed: a count and one-liners. Omit this line entirely if none.
+
+Terse. No preamble, no commentary, no code fences. If the extract contains no substantive work, output exactly: SKIP

@@ -1,0 +1,43 @@
+<section id="where">
+<p class="note" id="wcov"></p>
+<div class="tiles" id="tiles"></div>
+<div class="panel lg"><h2>Consumer league</h2>
+<p class="note">who tool calls are charged to — session lens hands a consumer
+every session it appeared in, message lens only the API responses that invoked
+it; agreement across lenses is the signal. Session lens covers sessions with
+known usage only, and sessions attribute to their first day — a short window
+can zero session-lens counts for consumers used late in a session. Token
+columns honour the hide-cache-reads toggle. Rows need 5 all-time calls; the
+tail of the visible categories rides collapsed below. Category chips scope
+this league only — shell and builtin (ubiquitous, unprunable) start off so
+the deliberate adds read first; switched-off calls stay counted in the tiles
+and are tallied beneath the league, never lost. The 5-call floor stays
+all-time.</p>
+<div id="cats">
+<button class="on" aria-pressed="true" data-t="mcp">mcp</button>
+<button class="on" aria-pressed="true" data-t="cli">cli</button>
+<button class="on" aria-pressed="true" data-t="skill">skill</button>
+<button aria-pressed="false" data-t="shell">shell</button>
+<button aria-pressed="false" data-t="builtin">builtin</button>
+</div>
+<div id="league"></div></div>
+<div class="panel"><h2>Models</h2>
+<p class="note" id="mnote"></p>
+<div id="models"></div></div>
+<div class="panel"><h2>MCP servers</h2>
+<p class="note">server → tool split; errors/day in red beneath the calls
+spark; latency from tool_use→tool_result pairing — unpaired calls
+count but carry no duration and read unknown (+n?), not ok.</p>
+<div id="mcp"></div></div>
+<div class="panel"><h2>CLI tools</h2>
+<p class="note">programs parsed from Bash commands and found outside OS-shipped
+paths (OS-shipped binaries and shell builtins are classed shell — league rows
+behind its shell chip); no subcommand grain exists in the parse.</p>
+<div id="cli"></div></div>
+<div class="panel sunk"><h2>Session-start sunk cost</h2>
+<p class="note" id="snote"></p>
+<div id="sunk"></div></div>
+<div class="panel"><h2>Hook activity</h2>
+<p class="note" id="hnote"></p>
+<div id="hooks"></div></div>
+</section>

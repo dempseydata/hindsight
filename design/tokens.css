@@ -1,0 +1,193 @@
+/*
+ * Hindsight direction contract — V3 · Indigo deck.
+ * Source of truth for the UI: the server inlines this file into every page
+ * at render time (issue #36); comps are reference-only, never imported.
+ * Chosen in Narrow (issue #35) from the "Hindsight Narrow" canvas
+ * (VariantIndigo.dc.html); values verified against that artboard verbatim.
+ * Floor rules: every colour renders via these tokens; ok/caution/problem
+ * text always uses the -text weight; red pairs with blue, never green;
+ * accent never carries body text or large surfaces; chart data ink only
+ * ever uses the ink/spark tokens; stage hues carry identity only, as
+ * non-text marks.
+ */
+:root {
+  color-scheme: dark;
+
+  /* ground */
+  --o-bg: #0b0d14;
+  --o-panel: #141826;
+  --o-border: #272e45;
+
+  /* text */
+  --o-text: #dde2f0;
+  --o-dim: #9aa3bd;
+  --o-faint: #6f7794;
+
+  /* accent */
+  --o-accent: #7c9bff;
+  --o-accent-ink: #0b0d14;
+  --o-compare: #f0b23f; /* selection / compare hue */
+
+  /* semantic roles — text renders in the -text weight (AA) */
+  --o-ok: #7c9bff;
+  --o-ok-text: #a3b8ff;
+  --o-caution: #e3b859;
+  --o-caution-text: #eac878;
+  --o-problem: #f27878;
+  --o-problem-text: #f79b9b;
+
+  /* chart data ink — own palette, never accent or semantic */
+  --o-ink-1: #82a9e8;
+  --o-ink-2: #5c83c4;
+  --o-ink-3: #41639b;
+  --o-ink-4: #2b4468;
+  --o-spark: #82a9e8;
+  --o-gapline: #4c5470;
+  --o-axis: #6f7794;
+
+  /* stage identity — categorical, non-text marks only (rules, dots);
+     never chart data, never semantic (ADR-0007 amendment, #71).
+     Declared stages take -1..-5 in order and cycle past five. */
+  --o-stage-1: #2fc4c4;
+  --o-stage-2: #a98cf5;
+  --o-stage-3: #e07ad8;
+  --o-stage-4: #f0995a;
+  --o-stage-5: #d4c95a;
+  --o-stage-off: #6f7794; /* off-script and the unbucketed lane */
+
+  /* washes — theme-sensitive opacities, promoted from view literals (#83):
+     chart selection fill, selection rule, pre-coverage spark shading */
+  --o-wash-sel: 0.06;
+  --o-wash-rule: 0.7;
+  --o-wash-precov: 0.22;
+
+  /* faces — no runtime font fetches */
+  --o-font: system-ui, 'Helvetica Neue', sans-serif;
+  --o-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --o-stat-size: 28px; /* stat-tile numerals */
+
+  /* shape, elevation, motion */
+  --o-radius: 6px; /* panels; 2px for chips/small controls */
+  --o-elev: 0 3px 10px rgba(0, 0, 0, 0.45);
+  --o-motion: 200ms ease; /* hover lift on panels */
+}
+
+/*
+ * Light theme (issue #83, ADR-0017) — a derivation of the deck: same hues
+ * and roles, inverted value structure. Chosen comparatively (mini-Narrow,
+ * variant C · Ledger, "Hindsight Light Narrow" canvas): white ground,
+ * recessed indigo panels, borders over elevation. System preference by
+ * default; the viewer's pin ([data-theme], set before first paint by
+ * theme.js) wins in both directions. The light set appears twice below
+ * (media block + pin block) — keep the two identical. Faces, shape and
+ * motion are theme-invariant and stay in :root alone.
+ */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --o-bg: #fcfcfe;
+    --o-panel: #f1f3f9;
+    --o-border: #d9dde9;
+    --o-text: #14182a;
+    --o-dim: #4a5169;
+    --o-faint: #767e98;
+    --o-accent: #2f4fc9;
+    --o-accent-ink: #ffffff;
+    --o-compare: #956609;
+    --o-ok: #2f4fc9;
+    --o-ok-text: #2c49bd;
+    --o-caution: #a87d08;
+    --o-caution-text: #846007;
+    --o-problem: #c23c3c;
+    --o-problem-text: #ac3232;
+    --o-ink-1: #24406e;
+    --o-ink-2: #4a659c;
+    --o-ink-3: #7e93c0;
+    --o-ink-4: #b9c4dd;
+    --o-spark: #24406e;
+    --o-gapline: #ccd2e2;
+    --o-axis: #a0a8be;
+    --o-stage-1: #096060;
+    --o-stage-2: #6137c5;
+    --o-stage-3: #922a82;
+    --o-stage-4: #8a4209;
+    --o-stage-5: #61570d;
+    --o-stage-off: #525a74;
+    --o-wash-sel: 0.12;
+    --o-wash-rule: 1;
+    --o-wash-precov: 0.35;
+    --o-elev: none;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --o-bg: #fcfcfe;
+  --o-panel: #f1f3f9;
+  --o-border: #d9dde9;
+  --o-text: #14182a;
+  --o-dim: #4a5169;
+  --o-faint: #767e98;
+  --o-accent: #2f4fc9;
+  --o-accent-ink: #ffffff;
+  --o-compare: #956609;
+  --o-ok: #2f4fc9;
+  --o-ok-text: #2c49bd;
+  --o-caution: #a87d08;
+  --o-caution-text: #846007;
+  --o-problem: #c23c3c;
+  --o-problem-text: #ac3232;
+  --o-ink-1: #24406e;
+  --o-ink-2: #4a659c;
+  --o-ink-3: #7e93c0;
+  --o-ink-4: #b9c4dd;
+  --o-spark: #24406e;
+  --o-gapline: #ccd2e2;
+  --o-axis: #a0a8be;
+  --o-stage-1: #096060;
+  --o-stage-2: #6137c5;
+  --o-stage-3: #922a82;
+  --o-stage-4: #8a4209;
+  --o-stage-5: #61570d;
+  --o-stage-off: #525a74;
+  --o-wash-sel: 0.12;
+  --o-wash-rule: 1;
+  --o-wash-precov: 0.35;
+  --o-elev: none;
+}
+/* the pin back to dark must beat the light media block (same specificity,
+   later wins) — restates every token the light blocks set */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --o-bg: #0b0d14;
+  --o-panel: #141826;
+  --o-border: #272e45;
+  --o-text: #dde2f0;
+  --o-dim: #9aa3bd;
+  --o-faint: #6f7794;
+  --o-accent: #7c9bff;
+  --o-accent-ink: #0b0d14;
+  --o-compare: #f0b23f;
+  --o-ok: #7c9bff;
+  --o-ok-text: #a3b8ff;
+  --o-caution: #e3b859;
+  --o-caution-text: #eac878;
+  --o-problem: #f27878;
+  --o-problem-text: #f79b9b;
+  --o-ink-1: #82a9e8;
+  --o-ink-2: #5c83c4;
+  --o-ink-3: #41639b;
+  --o-ink-4: #2b4468;
+  --o-spark: #82a9e8;
+  --o-gapline: #4c5470;
+  --o-axis: #6f7794;
+  --o-stage-1: #2fc4c4;
+  --o-stage-2: #a98cf5;
+  --o-stage-3: #e07ad8;
+  --o-stage-4: #f0995a;
+  --o-stage-5: #d4c95a;
+  --o-stage-off: #6f7794;
+  --o-wash-sel: 0.06;
+  --o-wash-rule: 0.7;
+  --o-wash-precov: 0.22;
+  --o-elev: 0 3px 10px rgba(0, 0, 0, 0.45);
+}

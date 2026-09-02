@@ -1,0 +1,47 @@
+
+#where .tiles { display: flex; flex-wrap: wrap; gap: .6rem; }
+#where .tile { background: var(--o-panel); border: 1px solid var(--o-border);
+  border-radius: var(--o-radius); box-shadow: var(--o-elev);
+  padding: .55rem 1rem .5rem; min-width: 7rem; }
+#where .tile b { display: block; font: 600 var(--o-stat-size)/1.25 var(--o-mono);
+  font-variant-numeric: tabular-nums; }
+#where .tile span { font-size: 11px; color: var(--o-dim); }
+#where .panel { margin-top: 1rem;
+  transition: transform var(--o-motion), box-shadow var(--o-motion); }
+#where .panel:hover { transform: translateY(-1px); }
+#where .panel .note { font-size: 11px; margin: 0 0 .5rem; }
+#where table { border-collapse: collapse; width: 100%; font-size: 12px; }
+#where th { text-align: left; color: var(--o-dim);
+  font: 600 10px var(--o-mono); text-transform: uppercase;
+  letter-spacing: .05em; padding: .25rem .5rem;
+  border-bottom: 1px solid var(--o-border); }
+#where td { padding: .3rem .5rem; border-bottom: 1px solid var(--o-border);
+  vertical-align: middle; }
+#where tr:last-child td { border-bottom: none; }
+#where .num { text-align: right; font: 12px var(--o-mono);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+#where th.num { font-size: 10px; }
+#where .dim { color: var(--o-dim); }
+#where .err { color: var(--o-problem-text); }
+#where svg.spark { display: block; }
+#where #cats { margin: 0 0 .6rem; }
+#where .lg .lghead, #where .lg summary { display: grid;
+  grid-template-columns: minmax(9rem, 1fr) 128px 3.5rem 3rem 4.5rem 4.5rem;
+  gap: .6rem; align-items: center; padding: .25rem .6rem; }
+#where .lg summary { cursor: pointer; list-style: none;
+  border-top: 1px solid var(--o-border); }
+#where .lg summary::-webkit-details-marker { display: none; }
+#where .lg .lghead { color: var(--o-dim); font: 600 10px var(--o-mono);
+  text-transform: uppercase; letter-spacing: .05em; }
+#where .lg details[open] summary { background: var(--o-bg); }
+#where .lg .detail { padding: .4rem .6rem .6rem 1.2rem; background: var(--o-bg);
+  font-size: 12px; }
+#where .lg .detail p { margin: .15rem 0; color: var(--o-dim); }
+#where .lg .detail b { color: var(--o-text); font-weight: 600; }
+#where details.sub summary { cursor: pointer; color: var(--o-dim); }
+#where .sunk details { margin-top: .3rem; }
+#where .sunk summary { cursor: pointer; padding: .25rem 0; }
+#where .sunk summary::-webkit-details-marker { display: none; }
+#where .sunk .items { margin-left: 1.2rem; color: var(--o-dim); }
+#where .sunk .grp { margin-left: 1.2rem; }
+#where .med { font: 600 15px var(--o-mono); }

@@ -1,0 +1,16 @@
+You are writing the status card for one project's process view, from its run ledger. The ledger is JSON below: the project's declared stages in order, and its phase runs in date order — each run a stage, a start and end date, and the audit titles of the work sessions in that run. The last run is the current one.
+
+Output STRICT JSON, nothing else, exactly this shape:
+{"Built": ["..."], "Reversed": ["..."], "Now": ["..."]}
+
+Groups:
+- Built: what has been produced so far, from every run INCLUDING the current one — 3 to 8 lines. Group related titles into one line where they form one thing (e.g. several ingest tickets → one ingest line), but NAME each piece inside the line (list the subjects: "OTLP listener, history backfill, substrate tool events and usage, hook self-instrumentation") rather than summarising them away. Cover every distinct piece of completed work the titles show — a decision recorded, an ADR written, a phase completed, a map charted all count as built; omit nothing substantive. A thing that was built and later reversed appears here for when it was built AND under Reversed for when it was reversed.
+- Reversed: things the titles say were dropped, removed, retired, cut, closed, declined, replaced, inverted or reversed — work undone or a decision overturned — 0 to 4 lines. Only when a title states it. Each Reversed line quotes the title's own phrase VERBATIM, in the title's word order and verb form, then the date (title "Delta-pass review: drop why-view from v1" → line "Drop why-view from v1 — Aug 16–20"; never "why-view dropped"). An empty list is correct when nothing was reversed. When one title mixes built and reversed parts ("retrofit tooling; close OpenSpec; promote PRD"), split it: the reversed part goes under Reversed only, the rest under Built.
+- Now: the first line MUST name the current stage and the date the current run started, in the form "<Stage>, since <Mon D>: <what the run's titles are about>". Usually that one line is all. Add a second or third only for an open thread that is still in progress — never a thing already listed under Built or Reversed.
+
+Every line, in every group:
+- Ends with or contains its date or date range, as "Mon D" or "Mon D–D" (e.g. "Aug 16–20"), taken from the run(s) it draws on. No line without a date. No date outside the ledger.
+- Uses the ledger's own words — the stage names and the vocabulary of the titles. Do not paraphrase: keep the nouns AND the verb forms the titles use (write "drop why-view from v1" if the title says "drop", not "why-view dropped"). Quoting a title phrase outright is the safest form.
+- States only what the titles contain. Never infer outcomes, quality, or work not named. Never mention anything not in the ledger.
+- Carries at least three words taken from the titles it draws on, and is never a bare fragment: fold a short item ("promote PRD") into its run's line alongside its siblings rather than giving it a line of its own.
+- Is a terse fact, not a sentence of narrative. No preamble, no commentary, no markdown fences.

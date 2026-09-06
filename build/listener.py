@@ -184,6 +184,7 @@ def make_server(port=DEFAULT_PORT, db_path=DEFAULT_DB):
 
 
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
+LOG_DIR = Path.home() / "Library" / "Logs" / "hindsight"
 PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -204,8 +205,10 @@ PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def install():
-    log = REPO / "local-data" / "listener.log"
-    log.parent.mkdir(parents=True, exist_ok=True)
+    # launchd opens the log itself, and TCC refuses it a fresh file under
+    # ~/Documents (EX_CONFIG 78, job never spawns) — so logs live in ~/Library/Logs.
+    log = LOG_DIR / "listener.log"
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(PLIST.format(
         label=LAUNCHD_LABEL, python=sys.executable,

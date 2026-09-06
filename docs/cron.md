@@ -4,8 +4,8 @@ Two launchd user agents. There is no other background process (ADR-0001).
 
 | Job | Label | Schedule | Program | Log | Limits / retry |
 | --- | --- | --- | --- | --- | --- |
-| Ingest listener | `com.hindsight.ingest` | `RunAtLoad` + `KeepAlive` — always up, restarted by launchd on exit | `<sys.executable> build/listener.py` (no args → port 4318, default DB) | `local-data/listener.log` (stdout+stderr) | `busy_timeout` 5 s per request; no body cap; no retry (client is told `200`) |
-| Nightly analysis | `com.hindsight.nightly` | `StartCalendarInterval` 03:00 local | `<sys.executable> build/analyze.py` with `PATH` from the installing shell | `local-data/analyze.log` | Serial model calls, 300 s each; stops on `LimitExhausted` (rate limit or missing `claude`) and resumes next night |
+| Ingest listener | `com.hindsight.ingest` | `RunAtLoad` + `KeepAlive` — always up, restarted by launchd on exit | `<sys.executable> build/listener.py` (no args → port 4318, default DB) | `~/Library/Logs/hindsight/listener.log` (stdout+stderr) | `busy_timeout` 5 s per request; no body cap; no retry (client is told `200`) |
+| Nightly analysis | `com.hindsight.nightly` | `StartCalendarInterval` 03:00 local | `<sys.executable> build/analyze.py` with `PATH` from the installing shell | `~/Library/Logs/hindsight/analyze.log` | Serial model calls, 300 s each; stops on `LimitExhausted` (rate limit or missing `claude`) and resumes next night |
 
 Install / remove: `python3 build/listener.py install|uninstall`, `python3 build/analyze.py install|uninstall`
 (`listener.py:206-224`, `analyze.py:990-1005`). Both do `launchctl bootout` (ignored on failure) then
@@ -37,8 +37,8 @@ is loopback with no token (see [flows.md](flows.md) F2).
 
 ## Where to see last runs
 
-- Listener: `local-data/listener.log` — startup lines, exception strings, skip counts, and socketserver tracebacks (a `BrokenPipeError` is in the current log).
-- Nightly: `local-data/analyze.log` — full run output; `rejected <file>: '<80 chars>'` lines mark gated-out model output.
+- Listener: `~/Library/Logs/hindsight/listener.log` — startup lines, exception strings, skip counts, and socketserver tracebacks (a `BrokenPipeError` is in the current log).
+- Nightly: `~/Library/Logs/hindsight/analyze.log` — full run output; `rejected <file>: '<80 chars>'` lines mark gated-out model output.
 - In the product: the `/what` header's "synced through <date> · N sessions" line (`serve.py:545, 575`).
 
 ## Concurrency between the two jobs and the server

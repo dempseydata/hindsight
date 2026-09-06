@@ -19,7 +19,7 @@ gated, then stored as prose or JSON.
 | App-owned side effects | INSERT OR REPLACE `audit(session_id, project, date, skip, markdown, prompt_version, model, adr_count)`; `sessions.status`, `audited_size`; cache file on disk |
 | Agent-owned | Nothing. The model proposes an entry; the app decides whether it is well-formed and records it verbatim |
 | Failure handling | Timeout → `None` → `partial`, retried next run. `FileNotFoundError` (no CLI) or "limit" in stderr → `LimitExhausted`, loop stops, resumes next run. No retry bound by design (ADR-0016) |
-| Audit trail | `audit.prompt_version` + `audit.model` on every row; raw output in `local-data/analysis/what-v3/`; rejects echoed (80 chars) to `analyze.log` |
+| Audit trail | `audit.prompt_version` + `audit.model` on every row; raw output in `local-data/analysis/what-v3/`; rejects echoed (80 chars) to `~/Library/Logs/hindsight/analyze.log` |
 | Rate limit / kill switch | The CLI's own rate limit is the ceiling. Kill switch: `analyze.py uninstall` (nightly) — no in-app toggle |
 
 ## A2 — Status narrative (one per declaring project)

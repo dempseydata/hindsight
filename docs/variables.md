@@ -27,8 +27,8 @@ secret surface is therefore not "which env vars leak" but "which files get copie
 | File | Content | Owner |
 | --- | --- | --- |
 | `~/.claude/settings.json` | `OTEL_*` exporter env pointing Claude Code at `:4318`; three hook entries invoking `build/hook.py` by absolute path | Operator, edited by hand |
-| `~/Library/LaunchAgents/com.hindsight.ingest.plist` | Absolute `sys.executable` + `listener.py`; `KeepAlive`; log to `local-data/listener.log` | Written by `listener.py install` |
-| `~/Library/LaunchAgents/com.hindsight.nightly.plist` | Absolute `sys.executable` + `analyze.py`; `StartCalendarInterval 03:00`; `PATH`; log to `local-data/analyze.log` | Written by `analyze.py install` |
+| `~/Library/LaunchAgents/com.hindsight.ingest.plist` | Absolute `sys.executable` + `listener.py`; `KeepAlive`; log to `~/Library/Logs/hindsight/listener.log` | Written by `listener.py install` |
+| `~/Library/LaunchAgents/com.hindsight.nightly.plist` | Absolute `sys.executable` + `analyze.py`; `StartCalendarInterval 03:00`; `PATH`; log to `~/Library/Logs/hindsight/analyze.log` | Written by `analyze.py install` |
 
 Both plists pin the Python binary and repo path at install time. Moving the repo or upgrading
 Homebrew Python requires `uninstall` + `install` on each.
@@ -44,7 +44,7 @@ login), no tokens, no signing keys. What it has is **other people's secrets copi
 | `blobs.content` | Every historical version of every `.claude/*` file in every workspace repo, including `settings.local.json` and `.mcp.json` if they were ever committed | `_capture_project_git`, `analyze.py:816-817` | Same |
 | `local-data/analysis/extracts/` | User and assistant message text, 1,500 chars per piece — whatever the operator pasted into a session | `extract.py` | Filesystem |
 | `local-data/analysis/what-v3/` | Raw model output | `analyze.py:623-624` | Filesystem |
-| `local-data/analyze.log` | First 80 chars of any rejected model output | `analyze.py:621` | Filesystem |
+| `~/Library/Logs/hindsight/analyze.log` | First 80 chars of any rejected model output | `analyze.py:621` | Filesystem |
 | `tool_events.file_path`, `sunk_cost.path`, `sessions.transcript_path` | Absolute paths on this machine | substrate, sunk-cost, sync | Served on `/where` and `/how` |
 
 **Client-side bundling:** nothing. The views embed query results as JSON in the page; no key,

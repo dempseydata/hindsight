@@ -16,7 +16,7 @@ below means "what, if anything, stops this step", not a role lookup.
 | 1. POST `/v1/logs` or `/v1/metrics` | `listener.py:143-159` | Loopback bind only. No auth, no content-type check, no size cap. Any other path → `200 {}` with nothing stored. | — |
 | 2. Dechunk / gunzip / `json.loads` | `listener.py:131-151` | Any failure → whole batch dropped, `200` with `partialSuccess` | — |
 | 3. Per-row insert | `listener.py:86-98, 113-123` | Bad row counted and skipped; batch commits the rest. A malformed *container* yields zero rows and is not counted. | INSERT `otel_events(id, event_name, session_id, timestamp, attributes)` / `otel_metrics(...)`, attributes stored as the full JSON dict |
-| 4. Respond | `listener.py:167-173` | Always `200` | stderr → `local-data/listener.log` (exception text and skip counts; never bodies) |
+| 4. Respond | `listener.py:167-173` | Always `200` | stderr → `~/Library/Logs/hindsight/listener.log` (exception text and skip counts; never bodies) |
 
 **Deny case:** none exists; the protection is the bind address. **Failure that loses data:** DB locked past `busy_timeout=5000` → batch lost, reported as one rejected row, `200` (`listener.py:153, 162-164`).
 
@@ -49,7 +49,7 @@ below means "what, if anything, stops this step", not a role lookup.
 | 8. `_capture_project_git` | `analyze.py:790-883` | Per repo under `~/Documents/Claude` with `.git`; first sight is a silent baseline | `git log/diff-tree/show -- .claude`; every historical `.claude/*` file version into `blobs`; `change_events(source='project-git')` |
 | 9. `scan_sunk_cost`, `observe_presence` | `sunk_cost.py:231-266`, `analyze.py:916-918` | — | DELETE-all + INSERT `sunk_cost`, `project_presence` (paths and token estimates, no bodies) |
 
-**Failure modes:** any narrative exception is caught and printed (`analyze.py:954-960`); a model timeout returns `None` → `partial`; the run never deletes transcripts. stdout/stderr → `local-data/analyze.log` under launchd, including the first 80 chars of rejected model output.
+**Failure modes:** any narrative exception is caught and printed (`analyze.py:954-960`); a model timeout returns `None` → `partial`; the run never deletes transcripts. stdout/stderr → `~/Library/Logs/hindsight/analyze.log` under launchd, including the first 80 chars of rejected model output.
 
 ## F4 — Serve (`python3 build/serve.py` → browser)
 

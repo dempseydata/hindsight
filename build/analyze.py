@@ -971,10 +971,13 @@ def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
 NIGHTLY_LABEL = "com.hindsight.nightly"
 NIGHTLY_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{NIGHTLY_LABEL}.plist"
 NIGHTLY_HOUR = 3
+# launchd opens the log itself, and TCC refuses it a fresh file under
+# ~/Documents (EX_CONFIG 78, job never spawns) — so logs live in ~/Library/Logs.
+LOG_DIR = Path.home() / "Library" / "Logs" / "hindsight"
 
 
 def nightly_plist():
-    log = str(REPO / "local-data" / "analyze.log")
+    log = str(LOG_DIR / "analyze.log")
     return plistlib.dumps({
         "Label": NIGHTLY_LABEL,
         "ProgramArguments": [sys.executable, str(Path(__file__).resolve())],
@@ -988,7 +991,7 @@ def nightly_plist():
 
 
 def install_nightly():
-    (REPO / "local-data").mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     NIGHTLY_PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     NIGHTLY_PLIST_PATH.write_text(nightly_plist())
     domain = f"gui/{os.getuid()}"

@@ -1,6 +1,6 @@
 # ADR-0016: The what-pass prompt brackets the extract — instructions after the data, no retry bound
 
-**Date:** 2026-08-30 · **Status:** accepted · **Decides:** issue #79
+**Date:** 2026-08-30 · **Status:** accepted · **Decides:** [issue #79](../../background/tickets/079-296cf33f-retries-a-real-model-call-nightly-poisoned-what-pas.md)
 
 ## Context
 

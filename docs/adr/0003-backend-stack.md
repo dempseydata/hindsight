@@ -1,6 +1,6 @@
 # ADR-0003: Backend stack — `claude -p` on subscription, stdlib listener, zero pip deps
 
-**Date:** 2026-08-01 · **Status:** accepted · **Decides:** Decide the backend stack
+**Date:** 2026-08-01 · **Status:** accepted · **Decides:** [Decide the backend stack](../../background/tickets/008-decide-the-backend-stack.md)
 
 ## Context
 

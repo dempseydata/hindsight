@@ -1,6 +1,6 @@
 # ADR-0009: Filesystem as the curation surface for the evolving collection
 
-**Date:** 2026-08-26 · **Status:** accepted · **Decides:** issue #51
+**Date:** 2026-08-26 · **Status:** accepted · **Decides:** [issue #51](../../background/tickets/051-deleted-projects-and-the-evolving-collection-hide-in-navigat.md)
 
 ## Context
 

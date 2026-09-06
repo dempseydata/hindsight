@@ -1,6 +1,6 @@
 # ADR-0014: Day buckets are the operator's local day; storage stays UTC
 
-**Date:** 2026-08-29 · **Status:** accepted · **Decides:** issue #74
+**Date:** 2026-08-29 · **Status:** accepted · **Decides:** [issue #74](../../background/tickets/074-day-buckets-are-utc-not-local-11-of-usage-rows-land-on-the-w.md)
 
 ## Context
 

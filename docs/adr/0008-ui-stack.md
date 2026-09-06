@@ -1,6 +1,6 @@
 # ADR-0008: UI stack — foreground stdlib server, zero-dep vanilla UI, two refresh controls
 
-**Date:** 2026-08-24 · **Status:** accepted · **Decides:** issue #36
+**Date:** 2026-08-24 · **Status:** accepted · **Decides:** [issue #36](../../background/tickets/036-decide-the-ui-stack.md)
 
 ## Context
 

@@ -1,10 +1,10 @@
 # ADR-0006: v1 ships two views — the why-view is dropped wholesale
 
-**Date:** 2026-08-24 · **Status:** accepted · **Decides:** issue #39 (operator decision, 2026-08-19), recorded at the top of Build per the handoff
+**Date:** 2026-08-24 · **Status:** accepted · **Decides:** [issue #39](../../background/tickets/039-scope-drop-the-why-view-from-v1.md) (operator decision, 2026-08-19), recorded at the top of Build per the handoff
 
 ## Context
 
-Hindsight was framed as three views: **where** (where did my tokens go), **what** (what did I actually do), **why** (why did my process change). The delta-pass review (#31) put real pages side by side and exposed a redundancy: the what ledger is exactly the asked-for pseudo-audit of actions and decisions, and the why-view's prose payload near-duplicates it — both run the same stated-rationale convention, so a Decided line and a finding's why-line are frequently the same sentence, and same-session near-duplicate findings inflated the sameness further. The why-pass also carried almost the entire standing eval burden (frozen eval set, regression gate, resolution-rate health metric).
+Hindsight was framed as three views: **where** (where did my tokens go), **what** (what did I actually do), **why** (why did my process change). The delta-pass review ([#31](../../background/tickets/031-delta-pass-greyboxes-re-judged-on-the-real-backend.md)) put real pages side by side and exposed a redundancy: the what ledger is exactly the asked-for pseudo-audit of actions and decisions, and the why-view's prose payload near-duplicates it — both run the same stated-rationale convention, so a Decided line and a finding's why-line are frequently the same sentence, and same-session near-duplicate findings inflated the sameness further. The why-pass also carried almost the entire standing eval burden (frozen eval set, regression gate, resolution-rate health metric).
 
 ## Decision
 
@@ -20,4 +20,4 @@ Counter-arguments considered and set aside: (1) the why-view's differentiating h
 - `CONTEXT.md` is pruned to the two-view framing: findings/evidence, evaluation, and why-pass vocabulary removed (glossary deliberately ahead of the code until the removal ticket lands).
 - `eval/` loses its only consumer; the regression gate and resolution-rate health metric retire with it.
 - Backfill findings rows in the DB become historical data with no renderer; the schema-removal ticket decides their fate.
-- Greybox verdict history (#6, the delta-pass D2 ruling in #31) stays as the route walked; #39 supersedes their forward-looking force.
+- Greybox verdict history ([#6](../../background/tickets/006-greybox-the-why-view-change-timeline.md), the delta-pass D2 ruling in #31) stays as the route walked; #39 supersedes their forward-looking force.

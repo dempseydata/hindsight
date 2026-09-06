@@ -1,6 +1,6 @@
 # ADR-0012: The how-view status narrative — one model-written fact list, evaluated
 
-**Date:** 2026-08-28 · **Status:** accepted · **Decides:** issue #64 (greybox reaction) · **Amends:** ADR-0010
+**Date:** 2026-08-28 · **Status:** accepted · **Decides:** [issue #64](../../background/tickets/064-greybox-the-how-view-rendering-mechanics-with-real-data.md) (greybox reaction) · **Amends:** ADR-0010
 
 ## Context
 

@@ -1,0 +1,24 @@
+{
+ "artboards": [
+  {
+   "file": "Main.dc.html",
+   "title": "C \u00b7 Ledger",
+   "x": 0,
+   "y": 0,
+   "w": 880,
+   "h": 1120
+  }
+ ],
+ "annotations": [
+  {
+   "id": "decision",
+   "x": -380,
+   "y": 0,
+   "w": 330,
+   "text": "Picked 2026-08-31: C \u00b7 Ledger \u2014 white ground, recessed indigo panels, borders over elevation. Chosen over A \u00b7 Indigo wash (tinted ground) and B \u00b7 Porcelain (white panels on grey ground).\n\nValues are the light token set in design/tokens.css (ADR-0017): system preference by default, header pin wins; washes promoted to tokens \u2014 sel .12 \u00b7 rule 1 \u00b7 precov .35 (dark: .06 \u00b7 .7 \u00b7 .22). Floor: worst text 5.18:1, stage hues \u22656.5:1 on panel."
+  }
+ ],
+ "launch": {
+  "view": "canvas"
+ }
+}

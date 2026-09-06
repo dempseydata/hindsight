@@ -1,6 +1,6 @@
 # ADR-0004: The audit format — session granularity, cross-project store, mechanical ADR counts
 
-**Date:** 2026-08-16 · **Status:** accepted · **Decides:** Lock the audit format, on the evidence of the what-view greybox and dogfood reviews #1 and #2
+**Date:** 2026-08-16 · **Status:** accepted · **Decides:** [Lock the audit format](../../background/tickets/014-lock-the-audit-format.md), on the evidence of the [what-view greybox](../../background/tickets/005-greybox-the-what-view-audit-log.md) and dogfood reviews [#1](../../background/tickets/007-dogfood-review-1-7-aug.md) and [#2](../../background/tickets/013-dogfood-review-2-14-aug.md)
 
 ## Context
 

@@ -1,6 +1,6 @@
 # ADR-0017: Light theme — derived second token set, three-state toggle, one contract file
 
-**Date:** 2026-08-30 · **Status:** accepted · **Decides:** issue #83 (grilling session)
+**Date:** 2026-08-30 · **Status:** accepted · **Decides:** [issue #83](../../background/tickets/083-light-dark-mode-toggle-second-token-set-for-the-v3-indigo-de.md) (grilling session)
 
 ## Context
 

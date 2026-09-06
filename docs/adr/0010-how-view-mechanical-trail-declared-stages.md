@@ -1,6 +1,6 @@
 # ADR-0010: The how-view — mechanical process trail, operator-declared stages, no verdicts
 
-**Date:** 2026-08-26 · **Status:** accepted, amended by ADR-0012 (status narrative) · **Decides:** issue #54
+**Date:** 2026-08-26 · **Status:** accepted, amended by ADR-0012 (status narrative) · **Decides:** [issue #54](../../background/tickets/054-ideate-process-view-actual-process-followed-vs-the-project-s.md)
 
 ## Context
 

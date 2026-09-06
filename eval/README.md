@@ -1,6 +1,6 @@
 # eval/ — the status-narrative regression set (ADR-0012)
 
-**Frozen 2026-08-28** (ticket [#67](https://github.com/dempseydata/hindsight/issues/67)),
+**Frozen 2026-08-28** (ticket [#67](../background/tickets/067-status-narrative-frozen-eval-set-and-threshold.md)),
 **before any prompt was written** — the `tdd` red step for model output, per
 `my-process.md`'s Evaluation discipline. Any edit to the narrative prompt or its
 model pin runs this first and lands only on ACCEPT.

@@ -14,27 +14,11 @@ Local observability over Claude Code history, built for a solo, skill-heavy oper
 
 ![The how view: declared process beside the phase-run trail](docs/screenshots/how.png)
 
-## Why
+## What it is for
 
-I run a skill- and MCP-heavy Claude Code setup across many independent projects, and I evolve that setup constantly. Three questions about my own usage were unanswerable from anything on disk: where did my tokens go (cache economics, the sunk session-start cost each project pays, per-skill and per-MCP usage); what did I actually do (an audit of actions and decisions per session, reviewable months later); and how did the process actually run against what was declared. Hindsight answers them from local history alone.
+Three questions about a heavy Claude Code setup that nothing on disk answers directly: where the tokens went, what was actually done, and whether the process ran as declared. Hindsight answers them from the transcripts and telemetry already on the machine — no account, no upload, no daemon beyond an optional listener. The audience is one operator reviewing their own history months later, and the product is built to that bar: acted-upon insights, not dashboards.
 
-The demand is one user — me — and that is stated rather than hidden. The bar for a personal tool is acted-upon insights, not interest. A previous incarnation, limited in functionality and in retrospect a learning exercise, cleared that bar: its findings drove a real skills cleanup and a full project restructure. Both of those acted-upon insights were setup-evolution events, which argued for centring this product on the audit trail rather than the token dashboard — token reporting is steadily commoditised by first-party tooling, while only a local tool over full history can reconstruct decisions across months.
-
-The build carried a second, stated purpose: an end-to-end evaluation of the process and toolchain it was built with. That working record — 88 tickets, the phase documents, the throwaway prototypes, the full commit history — lives in the private working repo this application was exported from. What ships here alongside the code is the part of the record with teeth: the seventeen decision records in [docs/adr/](docs/adr/) and the domain vocabulary in [CONTEXT.md](CONTEXT.md).
-
-## How it was built
-
-The build ran in phases — ideation → definition → design → build — governed by a per-project process declaration that the tooling itself reads: the how-view screenshot above is hindsight rendering its own declared process against its own trail.
-
-- **Ideate.** Six forcing questions against the premise before any divergence, then an eval gate before commitment: a cheap-model run over real transcript days that confirmed the wedge and falsified an assumption — model-quoted evidence failed verbatim verification, so evidence is attached mechanically and model-quoted text is never stored as evidence.
-- **Design.** Prototype-first for a dense tool UI: greybox screens on real data settled the information architecture before any styling, then five candidate directions were diverged and narrowed comparatively — three variants of the winner, identical real content in every comp — into the indigo deck recorded in [ADR-0007](docs/adr/0007-direction-indigo-deck.md), with [design/tokens.css](design/tokens.css) as the single styling contract.
-- **Build.** A map of tracer-bullet tickets, one per session, each interrogated up front, built red-green, and reviewed before commit. Vocabulary lives in [CONTEXT.md](CONTEXT.md); every decision with teeth is an ADR in [docs/adr/](docs/adr/).
-- **Evaluation as a recurring discipline, not a stage.** Wherever model output is load-bearing: a frozen eval set drawn from real data ([eval/](eval/)), a numeric threshold decided in advance, and a regression run on any prompt change.
-
-Two reversals, told plainly, because the record is the point:
-
-- **The why-view was dropped wholesale** ([ADR-0006](docs/adr/0006-v1-scope-two-views.md)). The product was framed as three views; putting real pages side by side showed the why-view's prose near-duplicated the what ledger while carrying almost the entire standing eval burden. The clean cut won over a merge.
-- **28 sessions retried forever** ([ADR-0015](docs/adr/0015-lost-sessions-terminal-status.md)). Transcripts aged past Claude Code's retention while sessions waited behind a rate-limit pause, and the queue had no state meaning *unknowable*. The fix was a terminal `lost` status decided by an existence test, greedy extraction ahead of the model loop so the race cannot recur, and honest ledger rows — *transcript pruned before analysis, unrecoverable* — instead of silence.
+Why it exists, who reads this repo, how it was built and what was reversed along the way: [background/why.md](background/why.md). The full working record ships with the code — [88 tickets](background/tickets/), the phase documents under [background/](background/), the seventeen decision records in [docs/adr/](docs/adr/), and the domain vocabulary in [CONTEXT.md](CONTEXT.md).
 
 ## Run it
 

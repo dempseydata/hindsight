@@ -1,0 +1,11 @@
+You are analyzing a transcript extract of a Claude Code session. Lines are prefixed USER:, ASSISTANT:, or TOOL: (file-edit markers).
+
+Identify every change that was made or decided to the user's SETUP or PROCESS — skills added or removed, plugins versus copied files, process/standards documents rewritten, tooling or config changes. Do NOT report product code changes or ordinary task work.
+
+For each change found, report:
+- "change": short name of what changed
+- "why": the driver behind the change, as stated or clearly implied in the transcript
+- "evidence": 1-3 quotes copied EXACTLY, character-for-character, from the transcript (each 8-40 words). Never paraphrase inside evidence.
+
+Reply with STRICT JSON only — a single array: [{"change": "...", "why": "...", "evidence": ["..."]}]
+No markdown fences, no commentary. If no setup/process changes are present, reply [].

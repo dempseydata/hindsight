@@ -1,6 +1,6 @@
 # ADR-0011: Process-declaration schema — strict YAML subset, tail-segment matching, loud invalidity
 
-**Date:** 2026-08-26 · **Status:** accepted · **Decides:** issue #60
+**Date:** 2026-08-26 · **Status:** accepted · **Decides:** [issue #60](../../background/tickets/060-process-declaration-schema-the-frontmatter-shape-for-my-proc.md)
 
 ## Context
 

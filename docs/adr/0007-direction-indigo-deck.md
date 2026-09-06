@@ -1,6 +1,6 @@
 # ADR-0007: Direction — V3 · Indigo deck; tokens.css is the contract
 
-**Date:** 2026-08-24 · **Status:** accepted · **Decides:** the design direction chosen in Diverge #34 → Narrow #35
+**Date:** 2026-08-24 · **Status:** accepted · **Decides:** the design direction chosen in [Diverge #34](../../background/tickets/034-diverge-five-candidate-directions.md) → [Narrow #35](../../background/tickets/035-narrow-one-direction-three-variants-one-winner.md)
 
 ## Context
 

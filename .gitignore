@@ -1,3 +1,31 @@
-local-data/
 .DS_Store
+node_modules/
+.env*
+*.log
 __pycache__/
+.venv/
+
+# impeccable runtime state (per-machine)
+.impeccable/config.local.json
+.impeccable/hook.cache.json
+
+# Toolchain payload — never tracked in a product repo (pipeline.md Publication
+# rules). Restorable from installers; mostly third-party content. Note: these
+# lines don't untrack the template repo's own master copies (gitignore only
+# affects untracked files) — they take effect in each product's fresh git init.
+.claude/skills/
+
+# Real-data fixtures and derived session data — never committed, even privately
+local-data/
+
+# Tooling output and captures — never tracked in a public repo
+.impeccable/
+.playwright-mcp/
+graphify-out/
+*.png
+!docs/screenshots/*.png
+
+# Per-machine Claude Code state and toolchain inventory
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+what-is-installed.md

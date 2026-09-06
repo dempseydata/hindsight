@@ -1,6 +1,6 @@
 # ADR-0013: Resumed sessions — substrate is topped up, the audit is prefix-semantic past a threshold
 
-**Date:** 2026-08-29 · **Status:** accepted · **Decides:** issue #73
+**Date:** 2026-08-29 · **Status:** accepted · **Decides:** [issue #73](../../background/tickets/073-resumed-sessions-are-never-rescanned-26m-tokens-unrecorded-a.md)
 
 ## Context
 
@@ -24,7 +24,7 @@ The threshold was chosen against the 17 sessions found on the day, not in the ab
 
 `audited_size` is stamped in `process_session`, not in `insert_results`. The backfill import (ticket #20) shares `insert_results` and supplies a `size` that is archive metadata rather than a measurement of the transcript. An imported session therefore keeps a **NULL** watermark and is never re-audited on size grounds: nothing records what its audit actually saw, and a guess is not grounds to spend a model call. Migration v4 stamps `audited_size = size` for sessions that already carry an audit — the only evidence available of what those entries covered.
 
-**"Always" means *once the transcript is quiet*.** Amended for issue #76: the wipe is only half a top-up, and `fill_substrate` skips a live session (ticket #29), so wiping a live one ends the run with zero substrate rows for it — worse than the stale prefix it replaced. Pre-#73 the `status != 'done'` filter hid this; opening the path to every done session exposed it. Live sessions are therefore skipped outright, and top up on the first run that catches them quiet. Deferral, not exception: the tail is still on disk.
+**"Always" means *once the transcript is quiet*.** Amended for [issue #76](../../background/tickets/076-invalidate-grown-wipes-a-live-session-s-substrate-and-fill-s.md): the wipe is only half a top-up, and `fill_substrate` skips a live session (ticket #29), so wiping a live one ends the run with zero substrate rows for it — worse than the stale prefix it replaced. Pre-#73 the `status != 'done'` filter hid this; opening the path to every done session exposed it. Live sessions are therefore skipped outright, and top up on the first run that catches them quiet. Deferral, not exception: the tail is still on disk.
 
 **A transcript that shrank is left alone.** The previous code compared with `==` and so rescanned a shrunk file; it now skips one. Pruning means *unknown*, never *less* — rescanning would overwrite what we still hold with a smaller truth, which is the honesty grammar inverted.
 

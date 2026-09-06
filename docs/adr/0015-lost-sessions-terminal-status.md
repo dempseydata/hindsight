@@ -1,6 +1,6 @@
 # ADR-0015: A pruned, never-extracted session is `lost` — a terminal status decided by condition, not budget
 
-**Date:** 2026-08-29 · **Status:** accepted · **Decides:** issue #78
+**Date:** 2026-08-29 · **Status:** accepted · **Decides:** [issue #78](../../background/tickets/078-28-sessions-retry-forever-partial-has-no-terminal-state-for.md)
 
 ## Context
 

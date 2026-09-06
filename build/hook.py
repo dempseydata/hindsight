@@ -18,11 +18,11 @@ JSON Claude Code passes on stdin):
 
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command":
-      "python3 /Users/andrew/Documents/Claude/hindsight/build/hook.py"}]}],
+      "python3 /path/to/hindsight/build/hook.py"}]}],
     "UserPromptSubmit": [{"hooks": [{"type": "command", "command":
-      "python3 /Users/andrew/Documents/Claude/hindsight/build/hook.py"}]}],
+      "python3 /path/to/hindsight/build/hook.py"}]}],
     "Stop": [{"hooks": [{"type": "command", "command":
-      "python3 /Users/andrew/Documents/Claude/hindsight/build/hook.py"}]}]
+      "python3 /path/to/hindsight/build/hook.py"}]}]
   }
 
 Pass --port N if the listener is not on the default :4318.

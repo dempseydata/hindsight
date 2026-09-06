@@ -48,7 +48,7 @@ Everything else is optional and on-demand, and its absence degrades to honesty r
 
 **Hard-wired to the author's Mac** — every machine-specific assumption a second user would have to change:
 
-- The hook registration snippet's command paths ([build/hook.py:21-25](build/hook.py#L21-L25)) are the original clone path — substitute your own.
+- The hook registration snippet's command paths ([build/hook.py:21-25](build/hook.py#L21-L25)) are a placeholder (`/path/to/hindsight`) — substitute your clone's absolute path.
 - `~/Documents/Claude`, one directory per project repo, is the assumed workspace layout (`--projects-dir` overrides). Sunk-cost workspace scanning and project-presence observation read it; when absent, both skip silently.
 - `~/.claude` is assumed as Claude Code's home: transcripts under `~/.claude/projects` (`--root` overrides), the config-snapshot surface at `~/.claude` itself (`--claude-dir`).
 - The model pin is `claude-haiku-4-5-20251001`, called through `claude -p` — your subscription needs that model available.

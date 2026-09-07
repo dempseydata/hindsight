@@ -43,7 +43,7 @@ This project deviates from the house pipeline. `.claude/my-process.md` wins wher
   Change a value there, never in a view. Root `DESIGN.md` is the shipped design system,
   re-derived from the built UI (ticket 052) — an output, not an input.
 
-Pipeline map and house design standard: `~/Documents/Claude/my-standards/` (pipeline.md, DESIGN.md — cite the DESIGN.md version you implement; keep a manually-synced product copy if tooling needs one).
+Pipeline map and house design standard: `~/Documents/Claude/my-standards/` (pipeline.md — there is no house DESIGN.md; a product's root `DESIGN.md`, if any, is derived from its shipped UI for Impeccable's drift detection, never a source of truth).
 
 ## Agent skills
 

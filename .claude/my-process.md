@@ -19,7 +19,7 @@ stages:
 ---
 # my-process — what we do, and why
 
-**Sync: trial.** This is the current focus project, so changes to the process are trialled *here* first, on real work; the trial role moves with the focus, and a copy that is no longer the focus reverts to *Sync: duplicate*. Once proven they are promoted to the master — `~/.claude/process/my-process.md`, a user-level file that nothing loads — and pushed down from there to the templates and every other product's copy. Between promotions this copy may run ahead of the master; a sync is a diff of the part between the two `process-details` markers. The file has three parts — the frontmatter the how-view reads (ADR-0011), the process details between the two `process-details` markers (the part a sync diffs), and the project specifics after the end marker. How the process came to be this shape is recorded in `what-is-installed.md` under *How we got here*.
+**Sync: duplicate.** The process details below are a verbatim copy of the master, `~/.claude/process/my-process.md`; a sync is a diff of the part between the two `process-details` markers and nothing else. A change may be trialled here first and this copy may run ahead of the master until it is promoted or dropped. The frontmatter is this project's declaration (the how-view reads it — ADR-0011 in hindsight). The project specifics after the end marker are this project's own. How the process came to be this shape is recorded in `what-is-installed.md` under *How we got here*.
 
 <!-- process-details:start -->
 

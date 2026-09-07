@@ -30,7 +30,7 @@ exported working tracker (88 tickets, closing comments included); GitHub's own n
 on this repo starts afresh, so cite an exported ticket by its file, not `#N`.
 
 ## Process
-This project deviates from the house pipeline. `.claude/my-process.md` wins where the two disagree.
+`.claude/my-process.md` is the process — frontmatter the how-view reads, the house process details, then this project's specifics. This repo is the process's testing ground: changes are proven here and promoted to the house master.
 
 @.claude/my-process.md
 
@@ -43,7 +43,7 @@ This project deviates from the house pipeline. `.claude/my-process.md` wins wher
   Change a value there, never in a view. Root `DESIGN.md` is the shipped design system,
   re-derived from the built UI (ticket 052) — an output, not an input.
 
-Pipeline map and house design standard: `~/Documents/Claude/my-standards/` (pipeline.md — there is no house DESIGN.md; a product's root `DESIGN.md`, if any, is derived from its shipped UI for Impeccable's drift detection, never a source of truth).
+There is no house DESIGN.md; a product's root `DESIGN.md`, if any, is derived from its shipped UI for Impeccable's drift detection, never a source of truth. The design floor is in `.claude/my-process.md` → Design.
 
 ## Agent skills
 

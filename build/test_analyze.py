@@ -1036,11 +1036,32 @@ class RenameTest(IdentityFixture, unittest.TestCase):
         self.run_pipeline(StubRunner([ENTRY_A, ENTRY_A]))
 
         projects = self.project_of()
-        self.assertEqual(projects["sess-old"], "hindsight",
-                         "the first folder's identity was never confirmed"
-                         " under a new name, so it is left exactly as it was")
+        self.assertEqual(projects["sess-old"], "hindsight-old",
+                         "found by inode in the workspace root, though no"
+                         " session has opened under the new name")
         self.assertEqual(projects["sess-borrow"], "hindsight-new")
         self.assertEqual(projects["sess-fork"], "hindsight-new")
+
+    def test_rename_is_seen_before_any_session_opens_under_the_new_name(self):
+        """The run after a rename finds the folder by inode: its sessions
+        re-key and its chip stays live, with nothing having happened in
+        the folder since. A folder moved out of the workspace root has no
+        name to find, and is left as it was."""
+        (self.repos / "old-name").mkdir()
+        self.open_session("old-name", "sess-1")
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        (self.repos / "old-name").rename(self.repos / "new-name")
+        self.run_pipeline(StubRunner([]))
+        self.assertEqual(self.project_of(), {"sess-1": "new-name"})
+        presence = {r["name"]: r["present"] for r in self.presence_rows()}
+        self.assertEqual(presence, {"old-name": 0, "new-name": 1})
+
+        (self.repos / "new-name").rename(Path(self.tmp.name) / "away")
+        self.run_pipeline(StubRunner([]))
+        self.assertEqual(self.project_of(), {"sess-1": "new-name"})
+        presence = {r["name"]: r["present"] for r in self.presence_rows()}
+        self.assertEqual(presence, {"old-name": 0, "new-name": 0})
 
     def test_folder_deleted_after_a_rename_hides_under_its_current_name(self):
         (self.repos / "old-name").mkdir()

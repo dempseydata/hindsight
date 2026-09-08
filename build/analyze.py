@@ -1111,7 +1111,13 @@ def observe_presence(conn, projects_dir, observed_at=None):
     coverage-window rule applied to identity, a known and stated ceiling.
     An identified project's own name counts only when it resolves, right
     now, to *that* identity, so a name released by a rename and taken by a
-    different folder (name reuse) is never double-counted."""
+    different folder (name reuse) is never double-counted.
+
+    The workspace root is also read the other way round — inode to name —
+    so a known identity's *current* name is observed the run after a
+    rename, before any session has opened under it (ADR-0018's run-cadence
+    inode detection). Otherwise a live, renamed folder would sit under its
+    old name, chip hidden, until one did."""
     if not Path(projects_dir).is_dir():
         return  # could not look — not the same as every folder being gone
     observed_at = observed_at or datetime.now(timezone.utc).isoformat()
@@ -1123,6 +1129,15 @@ def observe_presence(conn, projects_dir, observed_at=None):
         present = path is not None and (
             identity is None or _folder_identity(path) == identity)
         _record_presence(conn, identity, name, present, observed_at)
+    # ponytail: top-level folders only — a renamed *nested* project folder
+    # is still found through its sessions once one opens under the new
+    # name; walk deeper if that ceiling is ever hit.
+    by_inode = {_folder_identity(p): p.name
+                for p in Path(projects_dir).iterdir() if p.is_dir()}
+    for identity in {i for i, _ in pairs if i is not None}:
+        if identity in by_inode:
+            _record_presence(conn, identity, by_inode[identity], True,
+                             observed_at)
     conn.commit()
 
 
@@ -1132,8 +1147,8 @@ def canonicalize_projects(conn):
     is stored, carrying its status-narrative row along so a good narrative
     survives without a model call. Rename is observed, never declared. An
     identity with no name confirmed live this run (its folder deleted, or
-    renamed to a name no session has opened yet) is left exactly as it
-    was: the safest guess is no guess. A name-only session (no hook
+    moved out of the workspace root) is left exactly as it was: the safest
+    guess is no guess. A name-only session (no hook
     identity ever recorded) is never re-keyed — it keeps the name it was
     synced under, the coverage-window rule applied to identity."""
     current = dict(conn.execute(

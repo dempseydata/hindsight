@@ -28,5 +28,6 @@ The operator's principle, put to a grilling: **insights stay with the folder the
 ## Consequences
 
 - ADR-0009 is amended: presence is no longer rewritten whole each run; it keeps the (inode, name, first seen, last seen) history the how-view's former roots and "formerly" line read from. Hiding is unchanged in meaning — a project is hidden when its folder is absent under every name it has carried.
+- Presence reads the workspace root both ways: name → folder for every name a session references, and inode → name over the root's top-level folders for every identity a session carries. The second is what lets a rename be re-keyed the run after it happens, before any session opens under the new name; without it a live folder sat hidden under its old name until one did. A nested project folder is found only the first way — a stated ceiling.
 - The hook payload, the listener's stored attributes and the sessions table each gain the folder identity; the hook's failure mode stays silent and bounded. Sessions predating the change carry no identity until the operator stamps them.
 - Re-keying substrate rows on rename is not the history re-shaping ADR-0009 forbids: a rename is not a deletion, and by (1) the rows always belonged to that folder.

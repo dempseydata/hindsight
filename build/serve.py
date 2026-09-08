@@ -201,6 +201,8 @@ def what_data(conn):
             # test_serve's rendering asserts), not the status vocabulary —
             # equal to it only by coincidence, so a literal like "pend" below
             r["lost"] = 1
+        elif status == "empty":  # #2: nothing extractable, never an audit row
+            r["empty"] = 1
         elif pend:
             r["pend"] = 1
         elif not skip:

@@ -10,6 +10,8 @@ function rowHtml(r, open) {
   const chip = `<span class="pchip" title="${esc(r.p)}">${esc(r.p)}</span>`;
   if (r.lost)
     return `<div class="row srow">${chip}<span class="ttl dim">transcript pruned before analysis \u2014 unrecoverable</span></div>`;
+  if (r.empty)
+    return `<div class="row srow">${chip}<span class="ttl dim">empty session \u2014 nothing to analyze</span></div>`;
   if (r.pend)
     return `<div class="row srow">${chip}<span class="ttl dim">synced, not yet analyzed \u2014 run an analysis</span></div>`;
   if (r.skip)

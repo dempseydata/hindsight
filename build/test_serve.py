@@ -44,6 +44,9 @@ def fixture_db(path):
     # transcript pruned before it was ever extracted (ticket #78)
     conn.execute("INSERT INTO sessions (id, project, transcript_path, date,"
                  " status) VALUES ('s8', 'pruned', 'x', '2026-08-03', 'lost')")
+    # extractor found nothing (#2): no audit row, but not pending either
+    conn.execute("INSERT INTO sessions (id, project, transcript_path, date,"
+                 " status) VALUES ('s9', 'big', 'x', '2026-08-05', 'empty')")
     usage = [
         ("s1", "m1", "2026-08-01T10:00:00Z", 1000, 200, 50, 90000),
         ("s1", "m1b", "2026-08-01T11:00:00Z", 500, 100, 0, 10000),
@@ -287,6 +290,7 @@ class ServerTest(unittest.TestCase):
         self.assertIn('id="ledger"', body)
         self.assertIn('"lost": 1', body)
         self.assertIn("unrecoverable", body)      # #78 one-liner + summary term
+        self.assertIn('"empty": 1', body)          # #2 empty row rides along
         self.assertNotIn('"title": "Shipped the widget"',
                          self.get("/where")[1])    # blob is what-view only
 
@@ -294,7 +298,7 @@ class ServerTest(unittest.TestCase):
         conn = serve.open_db(self.db)
         rows = serve.what_data(conn)
         conn.close()
-        self.assertEqual(len(rows), 8)
+        self.assertEqual(len(rows), 9)
         self.assertEqual([r["d"] for r in rows],
                          sorted([r["d"] for r in rows], reverse=True))
         by_id = {r["id"]: r for r in rows}
@@ -305,6 +309,8 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(by_id["s7"]["pend"], 1)   # unanalyzed still listed
         self.assertEqual(by_id["s8"]["lost"], 1)   # #78: lost, not pending
         self.assertNotIn("pend", by_id["s8"])
+        self.assertEqual(by_id["s9"]["empty"], 1)  # #2: empty, not pending
+        self.assertNotIn("pend", by_id["s9"])
 
     def test_where_view_embeds_blob(self):
         _, body = self.get("/where")
@@ -373,7 +379,7 @@ class ServerTest(unittest.TestCase):
         # so "small" occupies one local day, not two UTC ones
         self.assertEqual({r["d"] for r in data["days"] if r["p"] == "small"},
                          {"2026-08-02"})
-        self.assertEqual(data["sessions"], 8)
+        self.assertEqual(data["sessions"], 9)
         # per (day, project) grain; pruned has sessions but no day rows
         self.assertNotIn("pruned", {r["p"] for r in data["days"]})
 
@@ -387,7 +393,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(data["hidden"], ["pruned"])
         self.assertEqual(data["tail"], 1)   # unchanged by hiding
         # ledger, chart and totals never see it: pruned's sessions still count
-        self.assertEqual(data["sessions"], 8)
+        self.assertEqual(data["sessions"], 9)
 
     def test_hidden_chip_renders_marked_with_a_reveal_toggle(self):
         for view in ("what", "where"):

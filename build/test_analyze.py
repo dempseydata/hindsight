@@ -13,6 +13,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -610,7 +611,7 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 6)
+                conn.execute("PRAGMA user_version").fetchone()[0], 7)
         finally:
             conn.close()
         row = self.identity_row("sess-old")
@@ -794,8 +795,10 @@ class BackstopTest(DbHelpers, unittest.TestCase):
 
 
 class PresenceTest(DbHelpers, unittest.TestCase):
-    """Ticket #57 / ADR-0009: the analysis run observes each project's
-    workspace folder and stores the observation for the server to render."""
+    """Ticket #57 / ADR-0009, extended by ticket #5 / ADR-0018: the analysis
+    run observes each project's workspace folder and stores the observation
+    for the server to render — a history of (identity, name), not a per-run
+    rewrite, so a rename keeps every name it has carried."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -805,25 +808,27 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         (self.projects / "career-ops").mkdir()
         self.db = Path(self.tmp.name) / "h.db"
 
-    def observe(self, *projects):
+    def observe(self, *projects, observed_at=None):
         conn = analyze.init_db(self.db)
         try:
             conn.executemany(
                 "INSERT OR IGNORE INTO sessions (id, project, transcript_path)"
                 " VALUES (?, ?, 'x')", [(p, p) for p in projects])
-            analyze.observe_presence(conn, self.projects)
+            analyze.observe_presence(conn, self.projects, observed_at)
         finally:
             conn.close()
-        return {r["project"]: r["present"]
+        return {r["name"]: r["present"]
                 for r in self.rows("SELECT * FROM project_presence")}
 
     def test_dash_ambiguous_name_resolves_through_a_subdirectory(self):
         """`my-os-my-logs` is a session run in `my-os/my-logs`, not a project
         called that — one decoding of its dashes exists, so it is present."""
-        self.assertTrue(analyze.folder_present(self.projects, "my-os-my-logs"))
-        self.assertTrue(analyze.folder_present(self.projects, "career-ops"))
-        self.assertFalse(analyze.folder_present(self.projects, "career-ops-CLI"))
-        self.assertFalse(analyze.folder_present(self.projects, "my-logs"))
+        self.assertEqual(analyze.resolve_folder(self.projects, "my-os-my-logs"),
+                         self.projects / "my-os" / "my-logs")
+        self.assertEqual(analyze.resolve_folder(self.projects, "career-ops"),
+                         self.projects / "career-ops")
+        self.assertIsNone(analyze.resolve_folder(self.projects, "career-ops-CLI"))
+        self.assertIsNone(analyze.resolve_folder(self.projects, "my-logs"))
 
     def test_run_records_presence_per_project(self):
         self.assertEqual(
@@ -841,14 +846,239 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(
-            {r["project"]: r["present"]
+            {r["name"]: r["present"]
              for r in self.rows("SELECT * FROM project_presence")}, before)
 
     def test_recreated_folder_returns_at_the_next_run(self):
         self.assertEqual(self.observe("gone")["gone"], 0)
         (self.projects / "gone").mkdir()
         self.assertEqual(self.observe("gone")["gone"], 1,
-                         "presence is rewritten each run, not accreted")
+                         "each observation updates its name's row in place")
+
+    def test_history_keeps_first_and_last_seen_across_runs(self):
+        self.observe("career-ops", observed_at="2026-08-01T00:00:00Z")
+        self.observe("career-ops", observed_at="2026-08-02T00:00:00Z")
+        row = next(r for r in self.rows("SELECT * FROM project_presence")
+                   if r["name"] == "career-ops")
+        self.assertEqual((row["first_seen"], row["last_seen"]),
+                         ("2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"))
+
+    def test_migration_carries_old_presence_rows_forward(self):
+        """A pre-#5 db (user_version 6, one row per name): init_db reshapes
+        project_presence and every row survives as that name's first (and
+        so far only) observation."""
+        conn = analyze.init_db(self.db)
+        conn.execute("DROP TABLE project_presence")
+        conn.execute("CREATE TABLE project_presence (project TEXT PRIMARY KEY,"
+                     " present INTEGER NOT NULL)")
+        conn.execute("INSERT INTO project_presence VALUES ('old-project', 1)")
+        conn.execute("PRAGMA user_version = 6")
+        conn.commit()
+        conn.close()
+
+        conn = analyze.init_db(self.db)
+        try:
+            self.assertEqual(
+                conn.execute("PRAGMA user_version").fetchone()[0], 7)
+            row = conn.execute("SELECT folder_identity, name, present"
+                               " FROM project_presence").fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(row, (None, "old-project", 1))
+
+
+class RenameTest(DbHelpers, unittest.TestCase):
+    """Ticket #5 / ADR-0018: a rename is observed, never declared — presence
+    confirms which of an identity's known names is live on disk right now,
+    and canonicalisation re-keys every stale session (and its status-
+    narrative row) to it, driven through the analysis-run entrypoint over a
+    fixture transcript root and a real workspace-folder tree."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.repos = base / "repos"
+        self.repos.mkdir()
+        self.db = base / "hindsight.db"
+        self.work = base / "analysis"
+
+    def run_pipeline(self, model_runner):
+        base = Path(self.tmp.name)
+        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                      model_runner=model_runner,
+                      claude_dir=base / "claude", projects_dir=self.repos)
+
+    def seed_hook_row(self, sid, identity):
+        conn = analyze.init_db(self.db)
+        conn.executescript(listener.SCHEMA)
+        conn.execute(
+            "INSERT INTO otel_events (event_name, session_id, timestamp, attributes)"
+            " VALUES ('hindsight.hook', ?, '2026-08-01T09:00:00Z', ?)",
+            (sid, json.dumps({"hook.event": "SessionStart",
+                              "folder.identity": str(identity)})))
+        conn.commit()
+        conn.close()
+
+    def open_session(self, folder_name, sid, date="2026-08-01T10:00:00Z"):
+        """A session opened with cwd = repos/folder_name — the transcript
+        directory Claude Code encodes it under and the hook's stamped
+        identity are both the folder's *live* state at this instant, exactly
+        as sync_sessions/hook_folder_identity see it for real."""
+        write_transcript(self.root / folder_name / f"{sid}.jsonl",
+                          [("user", "do work"), ("assistant", "done")], date=date)
+        self.seed_hook_row(sid, (self.repos / folder_name).stat().st_ino)
+
+    def test_narrative_survives_a_rename_without_a_model_call(self):
+        """The ledger hash is over the runs, not the name (how.ledger_hash):
+        a declaring project's stored narrative is re-keyed with its sessions
+        and still matches the live ledger under the new name, so the
+        narrative pass makes no call — the one call in the second run is
+        the new session's what-pass."""
+        import how
+        (self.repos / "old-name" / ".claude").mkdir(parents=True)
+        (self.repos / "old-name" / ".claude" / "my-process.md").write_text(
+            "---\nstages:\n  - name: Build\n    skills: [tdd]\n---\n")
+        self.open_session("old-name", "sess-1")
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        conn = analyze.init_db(self.db)
+        for i in range(3):
+            conn.execute("INSERT INTO tool_events (session_id, name, at, consumer_type,"
+                         " consumer) VALUES ('sess-1', 'Skill', ?, 'skill', 'tdd')",
+                         (f"2026-08-01T10:0{i}:00Z",))
+        d = how.how_data(conn, "old-name", self.repos)
+        self.assertTrue(d["runs"], "fixture must yield a run, or the test is vacuous")
+        h = how.ledger_hash(d)
+        conn.execute("INSERT INTO status_narrative VALUES ('old-name', ?, '{\"Built\":"
+                     " [], \"Reversed\": [], \"Now\": []}', ?, ?, '2026-08-01T00:00:00Z')",
+                     (h, analyze.STATUS_VERSION, analyze.MODEL))
+        conn.commit()
+        conn.close()
+
+        (self.repos / "old-name").rename(self.repos / "new-name")
+        self.open_session("new-name", "sess-2", date="2026-08-05T10:00:00Z")
+        stub = StubRunner([ENTRY_A])
+        self.run_pipeline(stub)
+
+        self.assertEqual(len(stub.calls), 1, "only sess-2's what-pass may call")
+        conn = analyze.init_db(self.db)
+        try:
+            self.assertEqual(
+                conn.execute("SELECT project, ledger_hash FROM status_narrative")
+                    .fetchall(), [("new-name", h)])
+            self.assertEqual(
+                how.ledger_hash(how.how_data(conn, "new-name", self.repos)), h,
+                "the re-keyed row still matches the live ledger under the new name")
+        finally:
+            conn.close()
+
+    def presence_rows(self):
+        return self.rows("SELECT folder_identity, name, present"
+                         " FROM project_presence")
+
+    def project_of(self):
+        return dict(sqlite3.connect(self.db).execute(
+            "SELECT id, project FROM sessions"))
+
+    def test_rename_between_two_runs_rekeys_sessions_and_narrative(self):
+        (self.repos / "old-name").mkdir()
+        self.open_session("old-name", "sess-1")
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "INSERT INTO status_narrative VALUES ('old-name', 'h',"
+            " '{\"Built\": [], \"Reversed\": [], \"Now\": []}', 'status-v1',"
+            " 'test-model', '2026-08-01T00:00:00Z')")
+        conn.commit()
+        conn.close()
+
+        (self.repos / "old-name").rename(self.repos / "new-name")
+        self.open_session("new-name", "sess-2")
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        self.assertEqual(self.project_of(),
+                         {"sess-1": "new-name", "sess-2": "new-name"})
+        narratives = {r[0] for r in sqlite3.connect(self.db).execute(
+            "SELECT project FROM status_narrative")}
+        self.assertEqual(narratives, {"new-name"})
+        presence = {r["name"]: r["present"] for r in self.presence_rows()}
+        self.assertEqual(presence, {"old-name": 0, "new-name": 1})
+
+    def test_borrowed_name_never_merges_two_different_identities(self):
+        """`hindsight`, briefly reused by a second, unrelated folder while
+        the first sits permanently renamed away (ADR-0018's motivating
+        case): a session is attributed to its own folder by identity,
+        whatever the transcript directory is called — never merged just
+        because two folders shared a name at different times."""
+        (self.repos / "hindsight").mkdir()
+        self.open_session("hindsight", "sess-old")
+        self.run_pipeline(StubRunner([ENTRY_A]))
+        (self.repos / "hindsight").rename(self.repos / "hindsight-old")
+
+        (self.repos / "hindsight").mkdir()  # a second, unrelated folder
+        self.open_session("hindsight", "sess-borrow")
+        (self.repos / "hindsight").rename(self.repos / "hindsight-new")
+        self.open_session("hindsight-new", "sess-fork")
+        self.run_pipeline(StubRunner([ENTRY_A, ENTRY_A]))
+
+        projects = self.project_of()
+        self.assertEqual(projects["sess-old"], "hindsight",
+                         "the first folder's identity was never confirmed"
+                         " under a new name, so it is left exactly as it was")
+        self.assertEqual(projects["sess-borrow"], "hindsight-new")
+        self.assertEqual(projects["sess-fork"], "hindsight-new")
+
+    def test_folder_deleted_after_a_rename_hides_under_its_current_name(self):
+        (self.repos / "old-name").mkdir()
+        self.open_session("old-name", "sess-1")
+        self.run_pipeline(StubRunner([ENTRY_A]))
+        (self.repos / "old-name").rename(self.repos / "new-name")
+        self.open_session("new-name", "sess-2")
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        shutil.rmtree(self.repos / "new-name")
+        self.run_pipeline(StubRunner([]))  # nothing new to sync or call
+
+        presence = {r["name"]: r["present"] for r in self.presence_rows()}
+        self.assertEqual(presence["new-name"], 0)
+        self.assertEqual(set(self.project_of().values()), {"new-name"},
+                         "hides under its current name, not reverted to the old one")
+
+    def test_name_only_session_in_a_reused_name_stays_where_synced(self):
+        """A pre-hook session carries no identity — canonicalisation only
+        ever re-keys sessions with a folder identity, so a name-only row is
+        untouched even when an identified project later reuses its name.
+        No date rule, no heuristic."""
+        (self.repos / "reused").mkdir()
+        identity = (self.repos / "reused").stat().st_ino
+        conn = analyze.init_db(self.db)
+        conn.execute("INSERT INTO sessions (id, project, transcript_path)"
+                     " VALUES ('sess-pre-hook', 'reused', 'x')")
+        conn.execute(
+            "INSERT INTO sessions (id, project, transcript_path,"
+            " folder_identity, attribution_source) VALUES"
+            " ('sess-hooked', 'reused', 'x', ?, 'hook')", (identity,))
+        conn.commit()
+        conn.close()
+
+        (self.repos / "reused").rename(self.repos / "renamed")
+        conn = analyze.init_db(self.db)
+        conn.execute(
+            "INSERT INTO sessions (id, project, transcript_path,"
+            " folder_identity, attribution_source) VALUES"
+            " ('sess-hooked-2', 'renamed', 'x', ?, 'hook')", (identity,))
+        conn.commit()
+        analyze.observe_presence(conn, self.repos)
+        analyze.canonicalize_projects(conn)
+        projects = dict(conn.execute("SELECT id, project FROM sessions"))
+        conn.close()
+
+        self.assertEqual(projects["sess-pre-hook"], "reused")
+        self.assertEqual(projects["sess-hooked"], "renamed")
+        self.assertEqual(projects["sess-hooked-2"], "renamed")
 
 
 class NightlyTest(unittest.TestCase):

@@ -302,7 +302,12 @@ def ledger(d):
 
 
 def ledger_hash(d):
-    return hashlib.sha256(json.dumps(ledger(d), sort_keys=True).encode()).hexdigest()
+    """Over the ledger's content, never the project's name: a rename re-keys
+    the stored row (ADR-0018) and the narrative must survive it without a
+    model call, so the name — part of the prompt, not of the runs — stays
+    out of the staleness key."""
+    content = {k: v for k, v in ledger(d).items() if k != "project"}
+    return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
 def narrative(conn, project, d):

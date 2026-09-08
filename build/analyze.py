@@ -240,8 +240,11 @@ CREATE TABLE IF NOT EXISTS change_events (
   after_hash TEXT REFERENCES blobs(hash)
 );
 CREATE TABLE IF NOT EXISTS project_presence (
-  project TEXT PRIMARY KEY,
-  present INTEGER NOT NULL  -- workspace folder found when this run looked (ADR-0009)
+  folder_identity INTEGER,  -- folder inode; NULL for a name-only project (ADR-0018)
+  name TEXT NOT NULL,       -- an encoded project name this identity has carried
+  first_seen TEXT NOT NULL,  -- run timestamp this (identity, name) pairing was first seen
+  last_seen TEXT NOT NULL,   -- run timestamp of its most recent observation
+  present INTEGER NOT NULL  -- this name resolved, on disk, to this identity when last observed
 );
 CREATE TABLE IF NOT EXISTS sunk_cost (
   project TEXT,            -- NULL: user scope, paid by every project's sessions
@@ -366,6 +369,39 @@ def init_db(db_path):
             if col.split()[0] not in cols:
                 conn.execute(f"ALTER TABLE sessions ADD COLUMN {col}")
         conn.execute("PRAGMA user_version = 6")
+        conn.commit()
+    if v < 7:
+        # Ticket #5 / ADR-0018: presence becomes a history of (identity,
+        # name, first_seen, last_seen) rather than one row per project
+        # name, so a rename keeps every name an identity has carried
+        # instead of overwriting it. A fresh db already has the new shape
+        # from SCHEMA; a pre-#5 db's rows become their name's first (and
+        # so far only) observation — the true first-seen run predates this
+        # column and isn't recoverable.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(project_presence)")}
+        if "name" not in cols:
+            now = datetime.now(timezone.utc).isoformat()
+            old = conn.execute(
+                "SELECT project, present FROM project_presence").fetchall()
+            # Explicit BEGIN: sqlite3 autocommits DDL outside a transaction,
+            # so a crash between the DROP and the INSERT below would leave
+            # the new, empty shape durable — which the guard above then
+            # reads as "already migrated", losing every row for good.
+            conn.execute("BEGIN")
+            conn.execute("DROP TABLE project_presence")
+            conn.execute("""
+                CREATE TABLE project_presence (
+                  folder_identity INTEGER,
+                  name TEXT NOT NULL,
+                  first_seen TEXT NOT NULL,
+                  last_seen TEXT NOT NULL,
+                  present INTEGER NOT NULL
+                )""")
+            conn.executemany(
+                "INSERT INTO project_presence (folder_identity, name,"
+                " first_seen, last_seen, present) VALUES (NULL, ?, ?, ?, ?)",
+                [(name, now, now, present) for name, present in old])
+        conn.execute("PRAGMA user_version = 7")
         conn.commit()
     # Message-lens join indexes — after the gate, so a pre-#42 db grows the
     # columns before they're indexed.
@@ -931,35 +967,108 @@ def capture_backstop(conn, claude_dir, projects_dir, observed_at):
     conn.commit()
 
 
-def folder_present(projects_dir, project):
-    """ADR-0009: a project's workspace folder exists if *any* decoding of the
-    dashes in its encoded name resolves to a directory under projects_dir.
-    The encoding is lossy — `my-os-my-logs` is a session run in `my-os/my-logs`,
-    a subdirectory of a live project, and must never false-hide it."""
+def resolve_folder(projects_dir, name):
+    """ADR-0009: the directory an encoded project name resolves to, if any —
+    *any* decoding of its dashes that reaches an existing directory under
+    projects_dir. The encoding is lossy — `my-os-my-logs` is a session run in
+    `my-os/my-logs`, a subdirectory of a live project — so ambiguity must
+    favour finding a match over reporting there is none."""
     def walk(base, parts):
         if not parts:
-            return True
+            return base
         for i in range(1, len(parts) + 1):
             child = base / "-".join(parts[:i])
-            if child.is_dir() and walk(child, parts[i:]):
-                return True
-        return False
+            if child.is_dir():
+                found = walk(child, parts[i:])
+                if found is not None:
+                    return found
+        return None
 
-    return walk(Path(projects_dir), project.split("-"))
+    return walk(Path(projects_dir), name.split("-"))
 
 
-def observe_presence(conn, projects_dir):
-    """ADR-0009: record every project's folder presence, so the server renders
-    a stored observation instead of forming filesystem opinions at request
-    time. Rewritten whole each run — a deletion hides at the next run, a
-    recreated folder returns at the one after it."""
+def _folder_identity(path):
+    """The live inode of an on-disk directory, or None on a stat race — the
+    directory vanishing between the is_dir() check and this call. Presence
+    observation must never raise over a filesystem changing under it."""
+    try:
+        return path.stat().st_ino
+    except OSError:
+        return None
+
+
+def _record_presence(conn, identity, name, present, observed_at):
+    """Upsert one (identity, name) presence row (ADR-0018), matched by
+    identity IS name equality rather than a NULL-safe PRIMARY KEY — SQLite
+    never treats two NULLs as equal, so every name-only project would
+    otherwise accrete a fresh row each run instead of updating its one."""
+    cur = conn.execute(
+        "UPDATE project_presence SET last_seen=?, present=?"
+        " WHERE name=? AND folder_identity IS ?",
+        (observed_at, int(present), name, identity))
+    if cur.rowcount == 0:
+        conn.execute(
+            "INSERT INTO project_presence"
+            " (folder_identity, name, first_seen, last_seen, present)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (identity, name, observed_at, observed_at, int(present)))
+
+
+def observe_presence(conn, projects_dir, observed_at=None):
+    """ADR-0009, extended by ADR-0018: every (folder identity, name) pair
+    currently referenced by a session is checked against the live
+    filesystem and its observation recorded — a history, not a per-run
+    rewrite, so a name this run doesn't see keeps its last-known present
+    flag rather than losing it. A name-only project (no hook identity ever
+    recorded) is judged present by the name alone, as before — the
+    coverage-window rule applied to identity, a known and stated ceiling.
+    An identified project's own name counts only when it resolves, right
+    now, to *that* identity, so a name released by a rename and taken by a
+    different folder (name reuse) is never double-counted."""
     if not Path(projects_dir).is_dir():
         return  # could not look — not the same as every folder being gone
-    seen = [(p, int(folder_present(projects_dir, p))) for (p,) in conn.execute(
-        "SELECT DISTINCT project FROM sessions WHERE project IS NOT NULL")]
-    conn.execute("DELETE FROM project_presence")
-    conn.executemany("INSERT INTO project_presence (project, present)"
-                     " VALUES (?, ?)", seen)
+    observed_at = observed_at or datetime.now(timezone.utc).isoformat()
+    pairs = conn.execute(
+        "SELECT DISTINCT folder_identity, project FROM sessions"
+        " WHERE project IS NOT NULL").fetchall()
+    for identity, name in pairs:
+        path = resolve_folder(projects_dir, name)
+        present = path is not None and (
+            identity is None or _folder_identity(path) == identity)
+        _record_presence(conn, identity, name, present, observed_at)
+    conn.commit()
+
+
+def canonicalize_projects(conn):
+    """ADR-0018: re-key every session whose identity's current name — the
+    name observe_presence just confirmed live on disk — differs from what
+    is stored, carrying its status-narrative row along so a good narrative
+    survives without a model call. Rename is observed, never declared. An
+    identity with no name confirmed live this run (its folder deleted, or
+    renamed to a name no session has opened yet) is left exactly as it
+    was: the safest guess is no guess. A name-only session (no hook
+    identity ever recorded) is never re-keyed — it keeps the name it was
+    synced under, the coverage-window rule applied to identity."""
+    current = dict(conn.execute(
+        "SELECT folder_identity, name FROM project_presence"
+        " WHERE folder_identity IS NOT NULL AND present = 1"))
+    for identity, name in current.items():
+        stale = [row[0] for row in conn.execute(
+            "SELECT DISTINCT project FROM sessions"
+            " WHERE folder_identity = ? AND project != ?", (identity, name))]
+        if not stale:
+            continue
+        conn.execute("UPDATE sessions SET project = ?"
+                     " WHERE folder_identity = ? AND project != ?",
+                     (name, identity, name))
+        for old_name in stale:
+            if conn.execute("SELECT 1 FROM status_narrative WHERE project=?",
+                            (name,)).fetchone():
+                conn.execute("DELETE FROM status_narrative WHERE project=?",
+                             (old_name,))
+            else:
+                conn.execute("UPDATE status_narrative SET project=?"
+                             " WHERE project=?", (name, old_name))
     conn.commit()
 
 
@@ -970,6 +1079,11 @@ def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
     conn = init_db(db_path)
     try:
         sync_sessions(conn, root)
+        # Presence, then canonicalisation, ahead of everything that reads
+        # sessions.project — the model loop and narrative writer must see
+        # a rename already applied (ADR-0018).
+        observe_presence(conn, projects_dir)
+        canonicalize_projects(conn)
         invalidate_grown(conn, work_dir)
         fill_substrate(conn)
         classify_and_extract(conn, work_dir)
@@ -1007,7 +1121,6 @@ def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
         capture_backstop(conn, claude_dir, projects_dir,
                          datetime.now(timezone.utc).isoformat())
         scan_sunk_cost(conn, claude_dir, projects_dir)
-        observe_presence(conn, projects_dir)
     finally:
         conn.close()
 

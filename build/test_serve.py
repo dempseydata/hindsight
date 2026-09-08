@@ -130,10 +130,12 @@ def fixture_db(path):
     # Presence as the last analysis run observed it (ticket #57, ADR-0009):
     # `pruned` is a chip whose folder is gone, so it hides; the scratch dir is
     # gone too but never held a chip, so it must not reach the hidden count.
-    conn.executemany("INSERT INTO project_presence (project, present)"
-                     " VALUES (?, ?)",
-                     [("big", 1), ("small", 1), ("pruned", 0),
-                      ("-private-tmp-scratch", 0)])
+    conn.executemany(
+        "INSERT INTO project_presence (folder_identity, name, first_seen,"
+        " last_seen, present) VALUES (NULL, ?, '2026-08-05T00:00:00Z',"
+        " '2026-08-05T00:00:00Z', ?)",
+        [("big", 1), ("small", 1), ("pruned", 0),
+         ("-private-tmp-scratch", 0)])
     conn.commit()
     conn.close()
 

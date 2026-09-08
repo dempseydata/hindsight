@@ -27,8 +27,9 @@ A second run over unchanged input does no model calls and no duplicate writes:
 | `backstop_state` last-seen sha per repo | `analyze.py:808` | Git capture is incremental |
 | `PRAGMA user_version` | `analyze.py:298-356` | Migrations fire once |
 
-Replaced wholesale each run: `sunk_cost`, `project_presence`. Appended: substrate tables,
-`change_events`, `blobs`, `excluded_sessions`. Upserted: `audit`, `status_narrative`, `backstop_state`.
+Replaced wholesale each run: `sunk_cost`. Appended: substrate tables,
+`change_events`, `blobs`, `excluded_sessions`. Upserted: `audit`, `status_narrative`, `backstop_state`,
+`project_presence` (a history — rows update in place, never deleted; ADR-0018).
 
 ## Internal-call authentication
 

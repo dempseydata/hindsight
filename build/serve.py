@@ -100,16 +100,21 @@ def chip_rows(projects):
 
 
 def hidden_projects(conn):
-    """Projects whose workspace folder was absent when the last analysis run
-    looked (ADR-0009). Read-only: the observation is stored, never taken here
-    — no filesystem opinions at render time. Empty until a run has observed,
-    so an un-analysed db hides nothing. A db predating the table hides nothing
-    either: the server is read-only, so only the next run can create it."""
+    """Projects whose workspace folder was absent under every name it has
+    carried when the last analysis run looked (ADR-0009, extended by
+    ADR-0018's presence history: a name is hidden only when none of its
+    rows — across whatever identity has held it — says present, so a name
+    a rename just vacated never shadows the different project that has
+    since taken it up). Read-only: the observation is stored, never taken
+    here — no filesystem opinions at render time. Empty until a run has
+    observed, so an un-analysed db hides nothing. A db predating the table
+    hides nothing either: the server is read-only, so only the next run
+    can create it."""
     if not conn.execute("SELECT 1 FROM sqlite_master"
                         " WHERE name = 'project_presence'").fetchone():
         return set()
     return {p for (p,) in conn.execute(
-        "SELECT project FROM project_presence WHERE present = 0")}
+        "SELECT name FROM project_presence GROUP BY name HAVING MAX(present) = 0")}
 
 
 def header_data(conn):

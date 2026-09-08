@@ -328,6 +328,15 @@ class Narrative(unittest.TestCase):
         n = how.narrative(self.conn, "proj", {**self.d, "runs": []})
         self.assertFalse(n["stale"])
 
+    def test_ledger_hash_ignores_the_project_name(self):
+        """ADR-0018: a rename re-keys the stored row; the hash is over the
+        runs, so the narrative is still current under the new name."""
+        self.assertEqual(how.ledger_hash(self.d),
+                         how.ledger_hash({**self.d, "project": "renamed"}))
+        changed = [{**self.d["runs"][0], "titles": ["changed"]}, *self.d["runs"][1:]]
+        self.assertNotEqual(how.ledger_hash(self.d),
+                            how.ledger_hash({**self.d, "runs": changed}))
+
 
 if __name__ == "__main__":
     unittest.main()

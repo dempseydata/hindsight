@@ -12,6 +12,12 @@ individually capped at TIMEOUT, so the worst case is a small multiple
 of it, never an unbounded stall — a hook must never slow or break a
 session.
 
+At SessionStart only, the event also carries the workspace folder's
+identity — its inode, stat'ed from the `cwd` Claude Code passes on
+stdin (ADR-0018). A missing or unreadable cwd stores nothing for that
+attribute; the sync step later reads it from otel_events to attribute
+the session to its folder rather than its (renamable) directory name.
+
 Installation is config, not code. Add to ~/.claude/settings.json (any
 hook events you want timed; the script reads the event name from the
 JSON Claude Code passes on stdin):
@@ -60,6 +66,18 @@ def read_stdin(budget):
     return b"".join(chunks).decode(errors="ignore")
 
 
+def folder_identity(hook):
+    """The workspace folder's inode at SessionStart (ADR-0018), or None —
+    any other event, a missing cwd, or a stat failure. Identity is a
+    recorded fact or absent, never guessed."""
+    if hook.get("hook_event_name") != "SessionStart" or not hook.get("cwd"):
+        return None
+    try:
+        return os.stat(hook["cwd"]).st_ino
+    except OSError:
+        return None
+
+
 def main(argv):
     start = time.perf_counter()
     port = int(argv[argv.index("--port") + 1]) if "--port" in argv else DEFAULT_PORT
@@ -84,6 +102,9 @@ def main(argv):
         "hook.duration_ms": {"doubleValue": round((time.perf_counter() - start) * 1000, 3)},
         "hook.cpu_ms": {"doubleValue": round((ru.ru_utime + ru.ru_stime) * 1000, 3)},
     }
+    fid = folder_identity(hook)
+    if fid is not None:
+        attrs["folder.identity"] = {"stringValue": str(fid)}
     payload = {"resourceLogs": [{"scopeLogs": [{"logRecords": [
         {"attributes": [{"key": k, "value": v} for k, v in attrs.items()]}]}]}]}
     req = urllib.request.Request(

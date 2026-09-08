@@ -6,6 +6,7 @@ port. Assert the store rows, and silence + speed when the listener is
 down. No network beyond localhost.
 """
 import json
+import os
 import socket
 import sqlite3
 import subprocess
@@ -107,6 +108,39 @@ class HookTest(unittest.TestCase):
         proc, _ = run_hook(self.port, stdin="not json at all")
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout + proc.stderr, b"")
+
+    def test_session_start_stores_folder_identity(self):
+        stdin = json.dumps({"session_id": "sess-start", "cwd": str(Path(self.tmp.name)),
+                            "hook_event_name": "SessionStart", "source": "startup"})
+        proc, _ = run_hook(self.port, stdin=stdin)
+        self.assertEqual(proc.returncode, 0)
+        db = sqlite3.connect(self.db)
+        attrs = json.loads(db.execute(
+            "SELECT attributes FROM otel_events WHERE session_id='sess-start'").fetchone()[0])
+        db.close()
+        self.assertEqual(int(attrs["folder.identity"]), os.stat(self.tmp.name).st_ino)
+
+    def test_non_session_start_stores_no_folder_identity(self):
+        proc, _ = run_hook(self.port)  # STDIN default: hook_event_name=PostToolUse, no cwd
+        self.assertEqual(proc.returncode, 0)
+        db = sqlite3.connect(self.db)
+        attrs = json.loads(db.execute(
+            "SELECT attributes FROM otel_events WHERE session_id='sess-hook'").fetchone()[0])
+        db.close()
+        self.assertNotIn("folder.identity", attrs)
+
+    def test_session_start_missing_cwd_silent_no_identity(self):
+        stdin = json.dumps({"session_id": "sess-missing", "cwd": "/no/such/dir",
+                            "hook_event_name": "SessionStart"})
+        proc, elapsed = run_hook(self.port, stdin=stdin)
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout + proc.stderr, b"")
+        self.assertLess(elapsed, 2)
+        db = sqlite3.connect(self.db)
+        attrs = json.loads(db.execute(
+            "SELECT attributes FROM otel_events WHERE session_id='sess-missing'").fetchone()[0])
+        db.close()
+        self.assertNotIn("folder.identity", attrs)
 
 
 if __name__ == "__main__":

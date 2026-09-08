@@ -21,6 +21,7 @@ import unittest
 from pathlib import Path
 
 import analyze
+import listener
 from analyze import LimitExhausted, run_analysis
 from test_helpers import (DbHelpers, ENTRY_A, ENTRY_B, FIXTURE_TURNS,
                           MERGED_ENTRY, REFUSAL_MD, SKIP_MD, StubRunner,
@@ -486,6 +487,135 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
                 analyze.default_model_runner("prompt")
         finally:
             analyze.subprocess.run = orig
+
+
+class FolderIdentityTest(DbHelpers, unittest.TestCase):
+    """Sync fills a session's folder identity and attribution source from
+    its SessionStart hook row (ticket #4, ADR-0018), driven through the
+    analysis-run entrypoint over a fixture transcript root and the shared
+    otel_events table the listener also writes to."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.db = base / "hindsight.db"
+        self.work = base / "analysis"
+        self.proj = self.root / "test-project"
+
+    def run_pipeline(self, model_runner):
+        base = Path(self.tmp.name)
+        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                      model_runner=model_runner,
+                      claude_dir=base / "claude", projects_dir=base / "repos")
+
+    def seed_hook_row(self, sid, attributes_json):
+        conn = analyze.init_db(self.db)
+        conn.executescript(listener.SCHEMA)
+        conn.execute(
+            "INSERT INTO otel_events (event_name, session_id, timestamp, attributes)"
+            " VALUES ('hindsight.hook', ?, '2026-08-01T09:00:00Z', ?)",
+            (sid, attributes_json))
+        conn.commit()
+        conn.close()
+
+    def identity_row(self, sid):
+        return next(r for r in self.rows(
+            "SELECT id, folder_identity, attribution_source FROM sessions")
+            if r["id"] == sid)
+
+    def test_sync_fills_identity_and_source_from_session_start_row(self):
+        write_transcript(self.proj / "sess-id.jsonl",
+                          [("user", "add a feature"), ("assistant", "added")])
+        self.seed_hook_row(
+            "sess-id",
+            '{"hook.event": "SessionStart", "folder.identity": "424242"}')
+
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        row = self.identity_row("sess-id")
+        self.assertEqual(row["folder_identity"], 424242)
+        self.assertEqual(row["attribution_source"], "hook")
+
+    def test_sync_leaves_session_name_only_without_a_hook_row(self):
+        write_transcript(self.proj / "sess-noid.jsonl",
+                          [("user", "add a feature"), ("assistant", "added")])
+
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        row = self.identity_row("sess-noid")
+        self.assertIsNone(row["folder_identity"])
+        self.assertIsNone(row["attribution_source"])
+
+    def test_sync_falls_through_a_failed_session_start_firing_to_a_later_one(self):
+        # A resumed session can fire SessionStart twice; the first firing's
+        # stat failed (no folder.identity), the second succeeded — the
+        # valid one must still be picked up, not hidden by the first.
+        write_transcript(self.proj / "sess-resumed.jsonl",
+                          [("user", "add a feature"), ("assistant", "added")])
+        conn = analyze.init_db(self.db)
+        conn.executescript(listener.SCHEMA)
+        conn.executemany(
+            "INSERT INTO otel_events (event_name, session_id, timestamp, attributes)"
+            " VALUES ('hindsight.hook', ?, ?, ?)",
+            [("sess-resumed", "2026-08-01T09:00:00Z",
+              '{"hook.event": "SessionStart"}'),
+             ("sess-resumed", "2026-08-01T09:05:00Z",
+              '{"hook.event": "SessionStart", "folder.identity": "99"}')])
+        conn.commit()
+        conn.close()
+
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        row = self.identity_row("sess-resumed")
+        self.assertEqual(row["folder_identity"], 99)
+        self.assertEqual(row["attribution_source"], "hook")
+
+    def test_sync_ignores_non_session_start_hook_rows(self):
+        write_transcript(self.proj / "sess-stop.jsonl",
+                          [("user", "add a feature"), ("assistant", "added")])
+        self.seed_hook_row(
+            "sess-stop", '{"hook.event": "Stop", "hook.cpu_ms": 5}')
+
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        row = self.identity_row("sess-stop")
+        self.assertIsNone(row["folder_identity"])
+        self.assertIsNone(row["attribution_source"])
+
+    def test_sync_without_otel_table_leaves_session_name_only(self):
+        # Ticket #50: a db the listener has never touched has no otel
+        # tables at all — sync must not raise.
+        write_transcript(self.proj / "sess-nolistener.jsonl",
+                          [("user", "add a feature"), ("assistant", "added")])
+
+        self.run_pipeline(StubRunner([ENTRY_A]))
+
+        row = self.identity_row("sess-nolistener")
+        self.assertIsNone(row["folder_identity"])
+        self.assertIsNone(row["attribution_source"])
+
+    def test_migration_adds_identity_columns_without_losing_rows(self):
+        """A pre-#4 db (user_version 5): init_db adds the two columns and
+        every existing row survives, name-only, since there is nothing to
+        backfill an identity from after the fact."""
+        conn = analyze.init_db(self.db)
+        conn.execute("INSERT INTO sessions (id, transcript_path, status)"
+                     " VALUES ('sess-old', '/t/a.jsonl', 'done')")
+        conn.execute("PRAGMA user_version = 5")  # pre-#4 db
+        conn.commit()
+        conn.close()
+
+        conn = analyze.init_db(self.db)
+        try:
+            self.assertEqual(
+                conn.execute("PRAGMA user_version").fetchone()[0], 6)
+        finally:
+            conn.close()
+        row = self.identity_row("sess-old")
+        self.assertIsNone(row["folder_identity"])
+        self.assertIsNone(row["attribution_source"])
 
 
 def sha(text):

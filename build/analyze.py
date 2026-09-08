@@ -167,7 +167,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   size INTEGER,
   status TEXT NOT NULL DEFAULT 'pending',  -- pending -> done | empty | lost; partial = retryable
   skipped_records INTEGER,  -- also the substrate-scanned marker: NULL = never scanned
-  audited_size INTEGER  -- transcript size the audit entry covers (#73); NULL = never audited
+  audited_size INTEGER,  -- transcript size the audit entry covers (#73); NULL = never audited
+  folder_identity INTEGER,  -- workspace folder inode at SessionStart (ADR-0018); NULL = no hook row
+  attribution_source TEXT  -- 'hook' | 'operator' | NULL meaning name-only (ADR-0018)
 );
 CREATE TABLE IF NOT EXISTS audit (
   session_id TEXT PRIMARY KEY REFERENCES sessions(id),
@@ -354,6 +356,17 @@ def init_db(db_path):
         conn.executemany("UPDATE audit SET date=? WHERE session_id=?", redated)
         conn.execute("PRAGMA user_version = 5")
         conn.commit()
+    if v < 6:
+        # Ticket #4 / ADR-0018: sessions gain a folder identity and its
+        # attribution source. Existing rows predate the hook and stay
+        # name-only (both NULL) until the operator command (a later
+        # ticket) stamps them — nothing to backfill here.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+        for col in ("folder_identity INTEGER", "attribution_source TEXT"):
+            if col.split()[0] not in cols:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {col}")
+        conn.execute("PRAGMA user_version = 6")
+        conn.commit()
     # Message-lens join indexes — after the gate, so a pre-#42 db grows the
     # columns before they're indexed.
     conn.executescript(
@@ -447,6 +460,29 @@ def head_scan(path):
     return text, date, version
 
 
+def hook_folder_identity(conn, sid, has_otel):
+    """The folder identity the self-instrumentation hook recorded at this
+    session's SessionStart firing (ADR-0018), or None — pre-hook history,
+    an unreadable working directory, or (ticket #50) a db the listener has
+    never touched. A session can carry several hindsight.hook rows, one
+    per fired event, and SessionStart itself can fire more than once (a
+    resume or compact) — the earliest firing that actually carries an
+    identity wins; a stat failure on one firing doesn't hide a later one."""
+    if not has_otel:
+        return None
+    for (attrs,) in conn.execute(
+            "SELECT attributes FROM otel_events WHERE session_id=?"
+            " AND event_name='hindsight.hook' ORDER BY id", (sid,)):
+        a = json.loads(attrs)
+        if a.get("hook.event") != "SessionStart":
+            continue
+        try:
+            return int(a["folder.identity"])
+        except (KeyError, TypeError, ValueError):
+            continue  # this firing's stat failed; a later one may still carry it
+    return None
+
+
 def sync_sessions(conn, root):
     """Insert newly seen transcripts into `sessions`; self-excluded sessions
     never enter it. Excluded ids are remembered in `excluded_sessions` so each
@@ -454,9 +490,14 @@ def sync_sessions(conn, root):
     fresh `claude -p` transcripts of their own, so the excluded set otherwise
     grows the rescan cost forever. All file I/O happens before the write
     transaction opens (the ingest listener shares this db and its busy
-    timeout is finite). Returns the count inserted."""
+    timeout is finite). A new session's folder identity and attribution
+    source ('hook') are filled from its SessionStart hook row when one
+    exists (ADR-0018); a session with none is synced name-only, exactly as
+    before. Returns the count inserted."""
     seen = {r[0] for r in conn.execute("SELECT id FROM sessions")}
     seen |= {r[0] for r in conn.execute("SELECT id FROM excluded_sessions")}
+    has_otel = conn.execute("SELECT 1 FROM sqlite_master"
+                            " WHERE name = 'otel_events'").fetchone()
     rows, excluded = [], []
     for jsonl in sorted(Path(root).glob("*/*.jsonl")):
         sid = jsonl.stem
@@ -467,11 +508,14 @@ def sync_sessions(conn, root):
         if any(sig in head[:3000] for sig in ANALYSIS_SIGS):
             excluded.append((sid,))
             continue
+        fid = hook_folder_identity(conn, sid, has_otel)
         rows.append((sid, project_name(jsonl.parent.name), str(jsonl), date,
-                     version, jsonl.stat().st_size))
+                     version, jsonl.stat().st_size, fid,
+                     "hook" if fid is not None else None))
     conn.executemany(
-        "INSERT INTO sessions (id, project, transcript_path, date, cli_version, size, status)"
-        " VALUES (?, ?, ?, ?, ?, ?, 'pending')", rows)
+        "INSERT INTO sessions (id, project, transcript_path, date, cli_version,"
+        " size, status, folder_identity, attribution_source)"
+        " VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)", rows)
     conn.executemany("INSERT INTO excluded_sessions (id) VALUES (?)", excluded)
     conn.commit()
     return len(rows)

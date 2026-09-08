@@ -887,12 +887,10 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         self.assertEqual(row, (None, "old-project", 1))
 
 
-class RenameTest(DbHelpers, unittest.TestCase):
-    """Ticket #5 / ADR-0018: a rename is observed, never declared — presence
-    confirms which of an identity's known names is live on disk right now,
-    and canonicalisation re-keys every stale session (and its status-
-    narrative row) to it, driven through the analysis-run entrypoint over a
-    fixture transcript root and a real workspace-folder tree."""
+class IdentityFixture(DbHelpers):
+    """A fixture transcript root beside a real workspace-folder tree, so
+    folder identities are live inodes and the analysis run is driven end to
+    end (ADR-0018 tests: rename, attribute, hook-row fill)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -929,6 +927,23 @@ class RenameTest(DbHelpers, unittest.TestCase):
         write_transcript(self.root / folder_name / f"{sid}.jsonl",
                           [("user", "do work"), ("assistant", "done")], date=date)
         self.seed_hook_row(sid, (self.repos / folder_name).stat().st_ino)
+
+    def identity_of(self):
+        return {r["id"]: (r["folder_identity"], r["attribution_source"])
+                for r in self.rows("SELECT id, folder_identity,"
+                                   " attribution_source FROM sessions")}
+
+    def project_of(self):
+        return dict(sqlite3.connect(self.db).execute(
+            "SELECT id, project FROM sessions"))
+
+
+class RenameTest(IdentityFixture, unittest.TestCase):
+    """Ticket #5 / ADR-0018: a rename is observed, never declared — presence
+    confirms which of an identity's known names is live on disk right now,
+    and canonicalisation re-keys every stale session (and its status-
+    narrative row) to it, driven through the analysis-run entrypoint over a
+    fixture transcript root and a real workspace-folder tree."""
 
     def test_narrative_survives_a_rename_without_a_model_call(self):
         """The ledger hash is over the runs, not the name (how.ledger_hash):
@@ -977,10 +992,6 @@ class RenameTest(DbHelpers, unittest.TestCase):
     def presence_rows(self):
         return self.rows("SELECT folder_identity, name, present"
                          " FROM project_presence")
-
-    def project_of(self):
-        return dict(sqlite3.connect(self.db).execute(
-            "SELECT id, project FROM sessions"))
 
     def test_rename_between_two_runs_rekeys_sessions_and_narrative(self):
         (self.repos / "old-name").mkdir()
@@ -1079,6 +1090,149 @@ class RenameTest(DbHelpers, unittest.TestCase):
         self.assertEqual(projects["sess-pre-hook"], "reused")
         self.assertEqual(projects["sess-hooked"], "renamed")
         self.assertEqual(projects["sess-hooked-2"], "renamed")
+
+
+class AttributeTest(IdentityFixture, unittest.TestCase):
+    """Ticket #7 / ADR-0018: the operator's escape hatch for pre-hook
+    history. `attribute` stamps a live folder's identity onto the name-only
+    sessions synced under a name; the *next* run re-keys them through the
+    ordinary canonicalisation path. Plus the hook-row race fill from #5's
+    review: a session synced before its SessionStart row landed gains its
+    identity on the next run, no operator needed."""
+
+    def sync_name_only(self, folder_name, *sids_and_dates):
+        """Transcripts under folder_name with no hook rows — pre-hook history
+        — synced by one pipeline run. Returns the folder's live inode."""
+        (self.repos / folder_name).mkdir(exist_ok=True)
+        for sid, date in sids_and_dates:
+            write_transcript(self.root / folder_name / f"{sid}.jsonl",
+                              [("user", "do work"), ("assistant", "done")],
+                              date=date)
+        self.run_pipeline(StubRunner([ENTRY_A] * len(sids_and_dates)))
+        return (self.repos / folder_name).stat().st_ino
+
+    def attribute(self, name, folder, before=None):
+        conn = analyze.init_db(self.db)
+        try:
+            return analyze.attribute_sessions(conn, name, folder, before,
+                                              projects_dir=self.repos)
+        finally:
+            conn.close()
+
+    def main(self, *argv):
+        return analyze.main(["attribute", *argv, "--db", str(self.db),
+                             "--projects-dir", str(self.repos)])
+
+    def test_stamps_every_name_only_session_and_the_next_run_rekeys(self):
+        """The motivating repair: every session under the old name predates
+        the hook, and no hook-stamped session has opened under the new one
+        — the command alone must be enough for the next run to re-key."""
+        self.sync_name_only("legacy", ("s-1", "2026-08-01T10:00:00Z"),
+                            ("s-2", "2026-08-02T10:00:00Z"))
+        (self.repos / "legacy").rename(self.repos / "legacy-now")
+
+        self.assertEqual(self.attribute("legacy", self.repos / "legacy-now"), 2)
+        ident = (self.repos / "legacy-now").stat().st_ino
+        self.assertEqual(self.identity_of(),
+                         {"s-1": (ident, "operator"), "s-2": (ident, "operator")})
+        self.assertEqual(self.project_of()["s-1"], "legacy",
+                         "attribute does not re-key; the next run does")
+
+        self.run_pipeline(StubRunner([]))
+        self.assertEqual(set(self.project_of().values()), {"legacy-now"})
+        presence = {r["name"]: r["present"] for r in self.rows(
+            "SELECT name, present FROM project_presence")}
+        self.assertEqual(presence, {"legacy": 0, "legacy-now": 1})
+
+    def test_never_overwrites_a_session_already_carrying_an_identity(self):
+        self.sync_name_only("legacy", ("s-1", "2026-08-01T10:00:00Z"))
+        self.open_session("legacy", "s-hooked", "2026-08-03T10:00:00Z")
+        self.run_pipeline(StubRunner([ENTRY_A]))
+        hooked = self.identity_of()["s-hooked"]
+        self.assertEqual(hooked[1], "hook")
+
+        (self.repos / "elsewhere").mkdir()
+        self.assertEqual(self.attribute("legacy", self.repos / "elsewhere"), 1)
+        ids = self.identity_of()
+        self.assertEqual(ids["s-hooked"], hooked)
+        self.assertEqual(ids["s-1"],
+                         ((self.repos / "elsewhere").stat().st_ino, "operator"))
+
+    def test_before_stamps_only_sessions_first_seen_before_it(self):
+        self.sync_name_only("legacy", ("s-early", "2026-08-01T10:00:00Z"),
+                            ("s-late", "2026-08-10T10:00:00Z"))
+        (self.repos / "elsewhere").mkdir()
+        n = self.attribute("legacy", self.repos / "elsewhere",
+                           before="2026-08-05T00:00:00Z")
+        self.assertEqual(n, 1)
+        ids = self.identity_of()
+        self.assertEqual(ids["s-early"],
+                         ((self.repos / "elsewhere").stat().st_ino, "operator"))
+        self.assertEqual(ids["s-late"], (None, None))
+
+    def test_before_compares_instants_not_strings(self):
+        """A fractional-second transcript stamp sorts *below* a whole-second
+        bound as text ('.' < 'Z') though it is later in time."""
+        self.sync_name_only("legacy", ("s-1", "2026-08-05T00:00:00.500Z"))
+        (self.repos / "elsewhere").mkdir()
+        self.assertEqual(self.attribute("legacy", self.repos / "elsewhere",
+                                        before="2026-08-05T00:00:00Z"), 0)
+
+    def test_second_identical_call_touches_zero_rows(self):
+        self.sync_name_only("legacy", ("s-1", "2026-08-01T10:00:00Z"))
+        (self.repos / "elsewhere").mkdir()
+        self.assertEqual(self.attribute("legacy", self.repos / "elsewhere"), 1)
+        self.assertEqual(self.attribute("legacy", self.repos / "elsewhere"), 0)
+
+    def assert_refused(self, *argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+            self.main(*argv)
+        self.assertNotEqual(cm.exception.code, 0)
+        self.assertEqual(len(err.getvalue().strip().splitlines()), 1)
+        self.assertEqual(self.identity_of()["s-1"], (None, None), "no write")
+        self.assertEqual(self.rows("SELECT * FROM project_presence"
+                                   " WHERE folder_identity IS NOT NULL"), [])
+
+    def test_missing_folder_is_refused_with_no_write(self):
+        self.sync_name_only("legacy", ("s-1", "2026-08-01T10:00:00Z"))
+        self.assert_refused("legacy", str(self.repos / "nope"))
+
+    def test_folder_outside_the_workspace_root_is_refused(self):
+        """No encoded name can exist for it, so a stamp could never re-key."""
+        self.sync_name_only("legacy", ("s-1", "2026-08-01T10:00:00Z"))
+        self.assert_refused("legacy", self.tmp.name)
+
+    def test_mistyped_name_touches_zero_rows_and_says_so(self):
+        self.sync_name_only("legacy", ("s-1", "2026-08-01T10:00:00Z"))
+        (self.repos / "elsewhere").mkdir()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.main("legacyy", str(self.repos / "elsewhere"))
+        self.assertIn("0 session", out.getvalue())
+        self.assertEqual(self.identity_of()["s-1"], (None, None))
+
+    def test_subcommand_prints_the_count_it_changed(self):
+        self.sync_name_only("legacy", ("s-1", "2026-08-01T10:00:00Z"),
+                            ("s-2", "2026-08-02T10:00:00Z"))
+        (self.repos / "elsewhere").mkdir()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.main("legacy", str(self.repos / "elsewhere"),
+                      "--before", "2026-08-02T00:00:00Z")
+        self.assertIn("1 session", out.getvalue())
+
+    def test_hook_row_that_landed_after_sync_fills_on_the_next_run(self):
+        """The hook-row race (#5's review): sync ran before the listener
+        stored the SessionStart row. The per-run fill catches it; a session
+        with no hook row at all stays name-only."""
+        ident = self.sync_name_only("proj", ("s-raced", "2026-08-01T10:00:00Z"),
+                                    ("s-prehook", "2026-08-01T11:00:00Z"))
+        self.assertEqual(self.identity_of()["s-raced"], (None, None))
+        self.seed_hook_row("s-raced", ident)
+        self.run_pipeline(StubRunner([]))
+        self.assertEqual(self.identity_of(), {"s-raced": (ident, "hook"),
+                                              "s-prehook": (None, None)})
 
 
 class NightlyTest(unittest.TestCase):

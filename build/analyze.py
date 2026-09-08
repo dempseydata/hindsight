@@ -55,6 +55,10 @@ is gone before it was ever extracted is `lost` — terminal, never retried
 Usage: analyze.py [--root DIR] [--db PATH] [--work-dir DIR]
        analyze.py install       write + start the nightly launchd calendar job
        analyze.py uninstall     stop the job + remove the plist
+       analyze.py attribute <synced-name> <folder> [--before ISO-8601]
+                            [--db PATH] [--projects-dir DIR]
+                                stamp a folder's identity onto pre-hook sessions
+                                (ADR-0018); the next run re-keys them
 
 The nightly is a scheduled *invocation* of this on-demand command, not a
 background process (ADR-0001 amendment 2026-08-24). launchd calendar jobs
@@ -99,13 +103,18 @@ def local_day(ts):
     s = str(ts or "")
     if "T" not in s:
         return s[:10]
+    dt = parse_ts(s)
+    return dt.astimezone().strftime("%Y-%m-%d") if dt else s[:10]
+
+
+def parse_ts(s):
+    """Aware datetime of an ISO-8601 stamp (a trailing 'Z' accepted, a naive
+    stamp read as UTC), or None when unparseable."""
     try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
     except ValueError:
-        return s[:10]
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone().strftime("%Y-%m-%d")
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 # The ~/.claude text-config surface (ticket #21): the top-level operator-
 # editable text configs. Plugins are diffed structurally from their own file;
@@ -362,7 +371,7 @@ def init_db(db_path):
         redated = []
         for sid, path in conn.execute("SELECT id, transcript_path FROM sessions"):
             if Path(path).exists():
-                date = head_scan(Path(path))[1]
+                date = local_day(head_scan(Path(path))[1])
                 if date:
                     redated.append((date, sid))
         conn.executemany("UPDATE sessions SET date=? WHERE id=?", redated)
@@ -470,19 +479,20 @@ def project_name(dirname):
 
 
 def head_scan(path):
-    """(first user text, first date, cli version) from a transcript's head —
-    what self-exclusion and inventory metadata read, without a full parse."""
-    text, date, version = "", "", None
+    """(first user text, first record timestamp, cli version) from a
+    transcript's head — what self-exclusion, inventory metadata and the
+    attribute command's --before bound read, without a full parse."""
+    text, first_ts, version = "", "", None
     with path.open() as f:
         for i, line in enumerate(f):
-            if i > 50 or (text and date and version):
+            if i > 50 or (text and first_ts and version):
                 break
             try:
                 e = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if not date and e.get("timestamp"):
-                date = local_day(e["timestamp"])
+            if not first_ts and e.get("timestamp"):
+                first_ts = e["timestamp"]
             if version is None and e.get("version"):
                 version = e["version"]
             if not text and e.get("type") == "user" and not e.get("isMeta"):
@@ -492,7 +502,14 @@ def head_scan(path):
                 elif isinstance(c, list):
                     text = next((x.get("text", "") for x in c
                                  if isinstance(x, dict) and x.get("type") == "text"), "")
-    return text, date, version
+    return text, first_ts, version
+
+
+def _has_otel(conn):
+    """Whether the listener has ever touched this db (ticket #50) — the
+    otel_events table is its, not the analysis run's."""
+    return bool(conn.execute("SELECT 1 FROM sqlite_master"
+                             " WHERE name = 'otel_events'").fetchone())
 
 
 def hook_folder_identity(conn, sid, has_otel):
@@ -531,27 +548,98 @@ def sync_sessions(conn, root):
     before. Returns the count inserted."""
     seen = {r[0] for r in conn.execute("SELECT id FROM sessions")}
     seen |= {r[0] for r in conn.execute("SELECT id FROM excluded_sessions")}
-    has_otel = conn.execute("SELECT 1 FROM sqlite_master"
-                            " WHERE name = 'otel_events'").fetchone()
+    has_otel = _has_otel(conn)
     rows, excluded = [], []
     for jsonl in sorted(Path(root).glob("*/*.jsonl")):
         sid = jsonl.stem
         if sid in seen:
             continue
         seen.add(sid)
-        head, date, version = head_scan(jsonl)
+        head, first_ts, version = head_scan(jsonl)
         if any(sig in head[:3000] for sig in ANALYSIS_SIGS):
             excluded.append((sid,))
             continue
         fid = hook_folder_identity(conn, sid, has_otel)
-        rows.append((sid, project_name(jsonl.parent.name), str(jsonl), date,
-                     version, jsonl.stat().st_size, fid,
+        rows.append((sid, project_name(jsonl.parent.name), str(jsonl),
+                     local_day(first_ts), version, jsonl.stat().st_size, fid,
                      "hook" if fid is not None else None))
     conn.executemany(
         "INSERT INTO sessions (id, project, transcript_path, date, cli_version,"
         " size, status, folder_identity, attribution_source)"
         " VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)", rows)
     conn.executemany("INSERT INTO excluded_sessions (id) VALUES (?)", excluded)
+    conn.commit()
+    return len(rows)
+
+
+def fill_hook_identity(conn):
+    """The hook-row race (ticket #7): a session synced before the listener
+    stored its SessionStart row was filled name-only by sync_sessions and
+    would otherwise never be revisited. Each run, every identity-less
+    session that *has* a hindsight.hook row is re-read through the same
+    path sync uses. Pre-hook history has no hook rows, so it costs nothing
+    and no date rule enters; a session whose listener was down at
+    SessionStart never gains a row and is the attribute command's job."""
+    if not _has_otel(conn):
+        return
+    stamped = []
+    for (sid,) in conn.execute(
+            "SELECT DISTINCT s.id FROM sessions s JOIN otel_events o"
+            " ON o.session_id = s.id AND o.event_name = 'hindsight.hook'"
+            " WHERE s.folder_identity IS NULL"):
+        fid = hook_folder_identity(conn, sid, True)
+        if fid is not None:
+            stamped.append((fid, sid))
+    conn.executemany("UPDATE sessions SET folder_identity=?,"
+                     " attribution_source='hook' WHERE id=?", stamped)
+    conn.commit()
+
+
+def attribute_sessions(conn, name, folder, before=None,
+                       projects_dir=DEFAULT_PROJECTS_DIR):
+    """The operator's escape hatch (ADR-0018, ticket #7): stamp `folder`'s
+    live identity onto every name-only session currently under `name` —
+    pre-hook history, or a move the filesystem cannot show (cross-volume,
+    copy). With `before` (an ISO-8601 instant), only the sessions whose
+    transcript's first record precedes it; a session whose transcript is
+    gone has no first record and is left alone under a bound. A session
+    already carrying an identity is never touched, so a second identical
+    call changes nothing.
+
+    The folder's *current* name is recorded as a presence observation at
+    the same time — the one live fact the operator's path supplies. Without
+    it a folder no hook-stamped session has yet opened would have no name
+    confirmed live, and canonicalisation would (rightly) leave the stamped
+    rows where they are. Does not re-key: the next run does, through the
+    ordinary path. Raises OSError for a folder that is not there or lies
+    outside the workspace root (no encoded name can exist for it). Returns
+    the row count changed."""
+    folder = Path(folder)
+    if not folder.is_dir():
+        raise NotADirectoryError(f"no such folder: {folder}")
+    try:
+        rel = folder.resolve().relative_to(Path(projects_dir).resolve())
+    except ValueError:
+        raise NotADirectoryError(f"{folder} is not under the workspace root"
+                                 f" {projects_dir} (--projects-dir)") from None
+    # Not _folder_identity(): that swallows a stat race into None, and the
+    # escape hatch must refuse rather than stamp nothing silently.
+    identity = folder.stat().st_ino
+    if before is not None:
+        before = parse_ts(before)
+        if before is None:
+            raise ValueError("--before is not an ISO-8601 instant")
+    rows = conn.execute("SELECT id, transcript_path FROM sessions"
+                        " WHERE project = ? AND folder_identity IS NULL",
+                        (name,)).fetchall()
+    if before is not None:
+        rows = [(sid, p) for sid, p in rows if Path(p).exists()
+                and (ts := parse_ts(head_scan(Path(p))[1])) and ts < before]
+    conn.executemany("UPDATE sessions SET folder_identity=?,"
+                     " attribution_source='operator' WHERE id=?",
+                     [(identity, sid) for sid, _ in rows])
+    _record_presence(conn, identity, "-".join(rel.parts), True,
+                     datetime.now(timezone.utc).isoformat())
     conn.commit()
     return len(rows)
 
@@ -1078,9 +1166,10 @@ def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
     conn = init_db(db_path)
     try:
         sync_sessions(conn, root)
-        # Presence, then canonicalisation, ahead of everything that reads
-        # sessions.project — the model loop and narrative writer must see
-        # a rename already applied (ADR-0018).
+        # Identity fill, presence, then canonicalisation, ahead of everything
+        # that reads sessions.project — the model loop and narrative writer
+        # must see a rename already applied (ADR-0018).
+        fill_hook_identity(conn)
         observe_presence(conn, projects_dir)
         canonicalize_projects(conn)
         invalidate_grown(conn, work_dir)
@@ -1165,11 +1254,45 @@ def uninstall_nightly():
     print(f"removed {NIGHTLY_PLIST_PATH}")
 
 
+def attribute_main(argv):
+    ap = argparse.ArgumentParser(
+        prog="analyze.py attribute",
+        description="Stamp a folder's identity onto the name-only sessions"
+                    " synced under a name (ADR-0018). The next analysis run"
+                    " re-keys them to the folder's current name.")
+    ap.add_argument("name", help="the encoded name the sessions were synced under")
+    ap.add_argument("folder", type=Path, help="the workspace folder they ran in")
+    ap.add_argument("--before", metavar="ISO-8601",
+                    help="only sessions whose first record precedes this instant")
+    ap.add_argument("--db", type=Path, default=DEFAULT_DB)
+    ap.add_argument("--projects-dir", type=Path, default=DEFAULT_PROJECTS_DIR)
+    args = ap.parse_args(argv)
+
+    def refuse(why):
+        print(f"attribute: refused, nothing written — {why}", file=sys.stderr)
+        sys.exit(1)
+
+    if not args.db.exists():
+        refuse(f"no database at {args.db}; run an analysis first")
+    conn = init_db(args.db)
+    try:
+        n = attribute_sessions(conn, args.name, args.folder, args.before,
+                               args.projects_dir)
+    except (OSError, ValueError) as e:
+        refuse(e)
+    finally:
+        conn.close()
+    print(f"attribute: stamped {n} session(s) under '{args.name}'"
+          f" with the identity of {args.folder}")
+
+
 def main(argv):
     if argv[:1] == ["install"]:
         return install_nightly()
     if argv[:1] == ["uninstall"]:
         return uninstall_nightly()
+    if argv[:1] == ["attribute"]:
+        return attribute_main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=DEFAULT_TRANSCRIPTS)

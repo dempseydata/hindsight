@@ -92,8 +92,11 @@ class Parse(unittest.TestCase):
         self.assertEqual((state, err), ("valid", None))
         self.assertEqual([s["name"] for s in stages],
                          ["Ideate", "Design", "Plan", "Build", "Release"])
-        # wayfinder opens every ticket session, so it marks no stage (#64 → #65)
-        self.assertIsNone(how.stage_for(stages, "command", "/mattpocock-skills:wayfinder"))
+        # A built-in CLI command is never declared, so it marks no stage. (The
+        # declaration is the authority on which *skills* map where — it
+        # evolves, so this test pins no such decision; #64 → #65 once had
+        # wayfinder unmapped, and the live file has since said otherwise.)
+        self.assertIsNone(how.stage_for(stages, "command", "/clear"))
         self.assertEqual(how.stage_for(stages, "command", "/mattpocock-skills:to-tickets"), "Plan")
         self.assertEqual(how.stage_for(stages, "skill", "ponytail:ponytail-review"), "Build")
         self.assertEqual(how.stage_for(stages, "write", "docs/adr/0011-x.md"), "Plan")

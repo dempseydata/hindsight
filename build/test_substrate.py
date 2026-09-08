@@ -130,6 +130,31 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         self.assertEqual(rows["sess-adr"]["adr_count"], 2)
         self.assertEqual(rows["sess-plain"]["adr_count"], 0)
 
+    def test_adr_count_counts_writes_under_a_former_root(self):
+        """Ticket #6 / ADR-0018: a session re-keyed to `proj-b` after the
+        folder was renamed from `proj-a` wrote its ADRs under the old root;
+        the count follows presence history's former names, not the current
+        name alone. A stranger's `proj-a` (another identity) is not ours."""
+        import substrate
+        conn = analyze.init_db(self.db)
+        try:
+            conn.execute("INSERT INTO sessions (id, project, transcript_path,"
+                         " skipped_records, folder_identity)"
+                         " VALUES ('s', 'proj-b', 'x', 0, 5)")
+            conn.executemany(
+                "INSERT INTO project_presence (folder_identity, name, first_seen,"
+                " last_seen, present) VALUES (?, ?, 't0', 't1', ?)",
+                [(5, "proj-a", 0), (5, "proj-b", 1), (9, "proj-a", 1)])
+            conn.executemany(
+                "INSERT INTO tool_events (session_id, name, file_path) VALUES ('s', ?, ?)",
+                [("Write", "/w/proj-a/docs/adr/0001.md"),
+                 ("Edit", "/w/proj-a/docs/adr/0001.md"),
+                 ("Edit", "/w/proj-b/docs/adr/0002.md"),
+                 ("Edit", "/w/proj-c/docs/adr/0003.md")])
+            self.assertEqual(substrate.adr_count(conn, "s"), 2)
+        finally:
+            conn.close()
+
     def test_tokens_queryable_per_session_day_project(self):
         def usage_rec(uuid, day, mid, tokens):
             return rec("assistant", uuid, f"{day}T10:00:00Z",

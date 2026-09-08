@@ -301,6 +301,16 @@ def init_db(db_path):
     # each runs exactly once per db, so the #43 drops are never a standing
     # destructive startup side effect and the #42/#61 wipes can't re-fire.
     v = conn.execute("PRAGMA user_version").fetchone()[0]
+    # Ticket #4 / ADR-0018: sessions gain a folder identity and its
+    # attribution source. Ahead of the gate, not inside it, because the #22
+    # and #61 refills below run adr_count, which reads former names by
+    # folder identity (ticket #6) — the column must exist before any refill.
+    # Existing rows predate the hook and stay name-only (both NULL) until
+    # the operator command stamps them. Idempotent, like the indexes.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+    for col in ("folder_identity INTEGER", "attribution_source TEXT"):
+        if col.split()[0] not in cols:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {col}")
     if v < 1:
         _migrate(conn)
     if v < 2:
@@ -359,18 +369,7 @@ def init_db(db_path):
         conn.executemany("UPDATE audit SET date=? WHERE session_id=?", redated)
         conn.execute("PRAGMA user_version = 5")
         conn.commit()
-    if v < 6:
-        # Ticket #4 / ADR-0018: sessions gain a folder identity and its
-        # attribution source. Existing rows predate the hook and stay
-        # name-only (both NULL) until the operator command (a later
-        # ticket) stamps them — nothing to backfill here.
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
-        for col in ("folder_identity INTEGER", "attribution_source TEXT"):
-            if col.split()[0] not in cols:
-                conn.execute(f"ALTER TABLE sessions ADD COLUMN {col}")
-        conn.execute("PRAGMA user_version = 6")
-        conn.commit()
-    if v < 7:
+    if v < 7:  # v6 was the identity columns, now added above the gate
         # Ticket #5 / ADR-0018: presence becomes a history of (identity,
         # name, first_seen, last_seen) rather than one row per project
         # name, so a rename keeps every name an identity has carried

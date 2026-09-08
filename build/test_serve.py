@@ -134,8 +134,18 @@ def fixture_db(path):
         "INSERT INTO project_presence (folder_identity, name, first_seen,"
         " last_seen, present) VALUES (NULL, ?, '2026-08-05T00:00:00Z',"
         " '2026-08-05T00:00:00Z', ?)",
-        [("big", 1), ("small", 1), ("pruned", 0),
-         ("-private-tmp-scratch", 0)])
+        [("small", 1), ("pruned", 0), ("-private-tmp-scratch", 0)])
+    # `big` was renamed from `old-big` (ticket #6, ADR-0018): one identity,
+    # two names in the history; s1 wrote a file under the old root
+    conn.executemany(
+        "INSERT INTO project_presence (folder_identity, name, first_seen,"
+        " last_seen, present) VALUES (7, ?, ?, '2026-08-05T00:00:00Z', ?)",
+        [("old-big", "2026-07-01T00:00:00Z", 0), ("big", "2026-08-05T00:00:00Z", 1)])
+    conn.execute("UPDATE sessions SET folder_identity = 7 WHERE project = 'big'")
+    conn.execute("INSERT INTO tool_events (session_id, name, at, file_path,"
+                 " consumer_type, consumer) VALUES ('s1', 'Write',"
+                 " '2026-08-01T09:50:00Z', ?, 'builtin', 'Write')",
+                 (str(Path(path).parent / "old-big" / "notes.md"),))
     conn.commit()
     conn.close()
 
@@ -270,6 +280,23 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn('id="chart"', body)       # no shared filter chrome
         self.assertNotIn("const DATA", body)       # no filter data blob (#83:
         # the theme pin script is shared chrome and does render here)
+
+    def test_former_name_in_how_header_and_nowhere_else(self):
+        """Ticket #6 / ADR-0018: the how-view header says "formerly old-big"
+        for the renamed project; the write under the old root is a trail
+        event named relative to the root, so the former name appears in
+        the header line only. A never-renamed project has no such line,
+        and the ledger, chips and where-view render no former name."""
+        _, body = self.get("/how?p=big")
+        self.assertIn("formerly old-big", body)
+        self.assertEqual(body.count("old-big"), 1)
+        self.assertIn("write notes.md ×1", body)   # under the former root
+        _, body = self.get("/how?p=small")
+        self.assertNotIn("formerly", body)
+        for view in ("what", "where"):
+            _, body = self.get(f"/{view}")
+            self.assertNotIn("old-big", body)
+            self.assertNotIn("formerly", body)
 
     def test_how_view_invalid_and_unknown(self):
         _, body = self.get("/how?p=small")

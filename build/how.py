@@ -10,6 +10,9 @@ presence, first/last-seen per stage, off-script list — no order rules, no
 verdicts.
 
 Output of how_data() (the greybox ticket consumes it directly):
+  former:      [name]  names the folder carried before this one, oldest
+               first (ADR-0018) — the header's "formerly …", rendered
+               nowhere else; [] when never renamed
   declaration: {state, error, stages}   error = "line N: reason" when invalid
   trail:       [{at, session_id, kind, name, stage}]  date order;
                kind command|skill|write; stage None when unbucketed
@@ -38,6 +41,7 @@ from pathlib import Path
 from analyze import (DEFAULT_PROJECTS_DIR, MODEL, SKILL, STATUS_VERSION,
                      audit_title, local_day)
 from extract import FILE_TOOLS
+from substrate import former_names
 
 # commands and skills are one name pool seen through two capture paths
 # (ADR-0011): /implement typed is a grain, Skill(implement) is a tool event,
@@ -196,18 +200,26 @@ def stage_for(stages, kind, name):
     return None
 
 
-def _events(conn, project, root):
-    """The raw trail: grains, skill calls and first-touch writes under the
-    project root, date-ordered.
+def _events(conn, project, roots):
+    """The raw trail: grains, skill calls and first-touch writes under any
+    of the project's roots — current first, then former names' (ADR-0018:
+    a re-keyed session's paths still say the old name) — date-ordered.
     ponytail: project scoping is a path-prefix match on projects_dir/<name>,
     the same ceiling adr_count carries — a project whose name is a mangled
     transcript dirname outside the workspace contributes no writes."""
-    prefix = str(root) + "/"
+    prefixes = [str(r) + "/" for r in roots]
     marks = ", ".join("?" * len(FILE_TOOLS))
+    under = " OR ".join("substr(t.file_path, 1, ?) = ?" for _ in prefixes)
+
+    def rel(path):
+        return next(path[len(p):] for p in prefixes if path.startswith(p))
     # writes: one event per (session, file) — the first touch; a file edited
     # forty times in a session is one step on the trail, not forty
+    # ponytail: grouped on the absolute path, so a file touched under both
+    # the old and new root inside one session (a rename mid-session) is two
+    # steps; dedupe on the relative name if that ever shows
     rows = [{"at": at, "session_id": sid, "kind": kind,
-             "name": name[len(prefix):] if kind == "write" else name}
+             "name": rel(name) if kind == "write" else name}
             for kind, sid, at, name in conn.execute(f"""
         SELECT 'command', g.session_id, g.at, g.command FROM command_grains g
           JOIN sessions s ON s.id = g.session_id WHERE s.project = ?
@@ -218,10 +230,10 @@ def _events(conn, project, root):
         UNION ALL
         SELECT 'write', t.session_id, MIN(t.at), t.file_path FROM tool_events t
           JOIN sessions s ON s.id = t.session_id
-          WHERE s.project = ? AND t.name IN ({marks})
-            AND substr(t.file_path, 1, ?) = ?
+          WHERE s.project = ? AND t.name IN ({marks}) AND ({under})
           GROUP BY t.session_id, t.file_path""",
-                (project, project, project, *sorted(FILE_TOOLS), len(prefix), prefix))]
+                (project, project, project, *sorted(FILE_TOOLS),
+                 *(x for p in prefixes for x in (len(p), p))))]
     rows.sort(key=lambda r: (r["at"] or "", r["kind"], r["name"]))
     return rows
 
@@ -334,8 +346,9 @@ def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR):
     declaration every event is unbucketed and summary/off_script are empty
     (the raw ungrouped trail, ADR-0010's degradation)."""
     root = Path(projects_dir) / project
-    state, stages, error = read_declaration(root)
-    trail = _events(conn, project, root)
+    state, stages, error = read_declaration(root)  # the live folder's (ADR-0018)
+    former = former_names(conn, project)
+    trail = _events(conn, project, [root, *(Path(projects_dir) / n for n in former)])
     for e in trail:
         e["stage"] = stage_for(stages, e["kind"], e["name"]) if stages else None
     by_stage = _agg([e for e in trail if e["stage"]], lambda e: e["stage"])
@@ -352,6 +365,7 @@ def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR):
                     if state == "valid" else ([], []))
     return {
         "project": project,
+        "former": former,
         "declaration": {"state": state, "error": error, "stages": stages},
         "trail": trail,
         "summary": [{"name": s["name"], **by_stage.get(

@@ -5,7 +5,9 @@ command_grains, plus the mechanical adr_count derived from tool_events
 (ADR-0004) and the live-session guard the fill respects (ticket #29).
 
 A leaf module: imports extract's FILE_TOOLS and nothing from analyze —
-the import direction is analyze -> substrate only (ticket #82).
+the import direction is analyze -> substrate only (ticket #82). Also home
+to former_names, the presence-history read adr_count and the how pipeline
+share (ADR-0018) — here because adr_count cannot import analyze.
 """
 import functools
 import json
@@ -178,12 +180,29 @@ def scan_transcript(path):
     return events, list(usage.values()), commands, skipped
 
 
+def former_names(conn, project):
+    """The names this project carried before its current one, oldest first
+    (ADR-0018): every other name presence history has seen under the folder
+    identity the project's own sessions carry. The identity comes from the
+    sessions, not from the presence flag, so a project deleted after a
+    rename keeps its past; a vacated name (`hindsight`, held in turn by two
+    inodes, now holding only name-only sessions) claims neither successor.
+    Empty for a name-only project or one never renamed."""
+    return [n for (n,) in conn.execute(
+        "SELECT p.name FROM sessions s JOIN project_presence p"
+        " ON p.folder_identity = s.folder_identity"
+        " WHERE s.project = ? AND p.name != s.project"
+        " GROUP BY p.name ORDER BY MIN(p.first_seen)", (project,))]
+
+
 def adr_count(conn, sid):
     """The mechanical ADR count (ADR-0004): distinct files under the
     project's docs/adr/ created or modified by the session's tool events —
     semantics "ADRs touched", never model-derived. NULL when the session was
     never substrate-scanned (transcript gone before scanning), so an unknown
-    reads as unknown, not a false zero.
+    reads as unknown, not a false zero. A write recorded under a former
+    name's root counts too (ADR-0018): the session was re-keyed, its paths
+    were not.
     ponytail: project scoping is a path-segment match — file-tool paths are
     absolute and workspace projects live at .../<project>/; a project whose
     name is a mangled transcript dirname (outside the workspace) counts 0.
@@ -192,11 +211,13 @@ def adr_count(conn, sid):
                        (sid,)).fetchone()
     if row is None or row[1] is None:
         return None
+    names = [row[0], *former_names(conn, row[0])]
     marks = ", ".join("?" * len(FILE_TOOLS))
+    roots = " OR ".join("file_path LIKE ?" for _ in names)
     return conn.execute(
         f"SELECT COUNT(DISTINCT file_path) FROM tool_events WHERE session_id=?"
-        f" AND name IN ({marks}) AND file_path LIKE ?",
-        (sid, *sorted(FILE_TOOLS), f"%/{row[0]}/docs/adr/%")).fetchone()[0]
+        f" AND name IN ({marks}) AND ({roots})",
+        (sid, *sorted(FILE_TOOLS), *(f"%/{n}/docs/adr/%" for n in names))).fetchone()[0]
 
 
 def fill_substrate(conn):

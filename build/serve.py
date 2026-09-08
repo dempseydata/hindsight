@@ -511,7 +511,10 @@ def how_html(conn, project, projects_dir):
     body = (_status(conn, d) + _runs(d)) if d["declaration"]["state"] == "valid" else _sessions(d)
     if not d["trail"]:
         body = "<p>No trail events for this project.</p>"
-    return (f'<div id="hsel">{sel}</div>{unknown}<p class="note">the choice switches the view'
+    # the one place a former name is rendered (ADR-0018)
+    formerly = (f'<p class="note">formerly {html.escape(", ".join(d["former"]))}</p>'
+                if d["former"] else "")
+    return (f'<div id="hsel">{sel}</div>{unknown}{formerly}<p class="note">the choice switches the view'
             f" — declaring projects only; a project without a declaration has no how-view</p>"
             f'<section id="how"><aside>{_aside(d)}</aside><div>{body}</div></section>')
 

@@ -202,6 +202,39 @@ class Trail(unittest.TestCase):
         self.assertEqual(data["boundaries"], {})
         self.assertEqual(data["sessions"], {"s1": {"date": "2026-08-01", "title": "Grilled the plan"},
                                             "s2": {"date": "2026-08-03", "title": None}})
+        self.assertEqual(data["former"], [])   # never renamed
+
+    def test_writes_under_a_former_root_join_the_trail(self):
+        """Ticket #6 / ADR-0018: `proj` was `proj-v0`, then `proj-v1`, before
+        its current name — presence history says so, and the sessions were
+        re-keyed at analysis time. Writes recorded under either former root
+        are trail events of `proj` (first touch per file per session, the
+        prefix stripped) and the blob names the former names oldest first."""
+        self.conn.execute("UPDATE sessions SET folder_identity = 7 WHERE project = 'proj'")
+        self.conn.executemany(
+            "INSERT INTO project_presence (folder_identity, name, first_seen,"
+            " last_seen, present) VALUES (7, ?, ?, ?, ?)",
+            [("proj-v1", "2026-07-20T00:00:00Z", "2026-07-30T00:00:00Z", 0),
+             ("proj-v0", "2026-07-01T00:00:00Z", "2026-07-19T00:00:00Z", 0),
+             ("proj", "2026-08-01T00:00:00Z", "2026-08-05T00:00:00Z", 1)])
+        old = str(self.root / "proj-v0")
+        self.conn.executemany("INSERT INTO tool_events (session_id, name, at, file_path,"
+                              " consumer_type, consumer) VALUES (?,?,?,?,?,?)", [
+            ("s2", "Write", "2026-08-03T10:21:00Z", f"{old}/build/y.py", "builtin", "Write"),
+            ("s2", "Edit", "2026-08-03T10:22:00Z", f"{old}/build/y.py", "builtin", "Edit"),
+            ("s2", "Edit", "2026-08-03T10:23:00Z", f"{self.root}/proj-v1/CONTEXT.md",
+             "builtin", "Edit"),
+            # a different project's session under the former root: not ours
+            ("s3", "Edit", "2026-08-02T10:23:00Z", f"{old}/build/z.py", "builtin", "Edit"),
+        ])
+        self.conn.commit()
+        self.declare(VALID)
+        data = how.how_data(self.conn, "proj", self.root)
+        self.assertEqual(data["former"], ["proj-v0", "proj-v1"])
+        writes = [(e["name"], e["stage"]) for e in data["trail"] if e["kind"] == "write"]
+        self.assertEqual(writes, [("docs/adr/0001.md", "Plan"), ("build/x.py", "Build"),
+                                  ("build/y.py", "Build"), ("CONTEXT.md", "Plan"),
+                                  ("README.md", None)])
 
     def test_invalid_is_loud_and_raw(self):
         self.declare("---\nstages:\n  - nam: X\n---\n")

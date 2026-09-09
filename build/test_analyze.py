@@ -1295,6 +1295,84 @@ class NightlyTest(unittest.TestCase):
         # the installing shell's PATH is baked in so `claude` resolves under launchd
         self.assertEqual(d["EnvironmentVariables"]["PATH"], os.environ["PATH"])
 
+    def test_nightly_plist_carries_hindsight_tz_only_when_set(self):
+        """Issue #1: launchd bakes the installing shell's environment, so a
+        pinned zone must be written into the plist or the nightly buckets
+        under the host zone while the operator's shell does not."""
+        import plistlib
+        os.environ.pop("HINDSIGHT_TZ", None)
+        env = plistlib.loads(analyze.nightly_plist().encode())["EnvironmentVariables"]
+        self.assertNotIn("HINDSIGHT_TZ", env)
+        os.environ["HINDSIGHT_TZ"] = "Asia/Tokyo"
+        self.addCleanup(os.environ.pop, "HINDSIGHT_TZ", None)
+        env = plistlib.loads(analyze.nightly_plist().encode())["EnvironmentVariables"]
+        self.assertEqual(env["HINDSIGHT_TZ"], "Asia/Tokyo")
+
+
+class ZoneTest(DbHelpers, unittest.TestCase):
+    """Issue #1: `HINDSIGHT_TZ` pins the day-bucket zone; unset is the host
+    zone (ADR-0014 as amended). Both bucket paths go through libc, so the
+    one setting moves them together and they cannot drift."""
+    EVE = "2026-08-29T00:13:55Z"  # 20:13 EDT on the 28th, 09:13 JST on the 29th
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = Path(self.tmp.name) / "h.db"
+        self.root = Path(self.tmp.name) / "projects"
+        # Whatever a case sets, the suite's pin comes back afterwards.
+        self.addCleanup(os.environ.pop, "HINDSIGHT_TZ", None)
+        self.addCleanup(self.pin, "America/New_York")
+
+    def pin(self, name):
+        os.environ["HINDSIGHT_TZ"] = name
+        analyze.apply_tz()
+
+    def sql_day(self):
+        with contextlib.closing(sqlite3.connect(":memory:")) as c:
+            return c.execute(f"SELECT {analyze.day_sql('?')}",
+                             (self.EVE,)).fetchone()[0]
+
+    def test_hindsight_tz_moves_both_bucket_paths_together(self):
+        self.pin("Asia/Tokyo")
+        self.assertEqual((analyze.local_day(self.EVE), self.sql_day()),
+                         ("2026-08-29", "2026-08-29"))
+        self.pin("America/New_York")
+        self.assertEqual((analyze.local_day(self.EVE), self.sql_day()),
+                         ("2026-08-28", "2026-08-28"))
+
+    def test_invalid_zone_warns_once_and_keeps_the_host_zone(self):
+        os.environ["HINDSIGHT_TZ"] = "Not/AZone"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            analyze.apply_tz()
+        # Count its own line: the redirect is global, and the runner's
+        # warning display drops other modules' ResourceWarnings in here.
+        self.assertEqual([l for l in err.getvalue().splitlines() if "HINDSIGHT_TZ" in l],
+                         ["HINDSIGHT_TZ='Not/AZone' is not an IANA zone name;"
+                          " using the host zone"])
+        self.assertEqual(os.environ["TZ"], "America/New_York")  # untouched
+        self.assertEqual(analyze.local_day(self.EVE), "2026-08-28")
+
+    def test_run_redates_stored_session_days_under_the_effective_zone(self):
+        """`sessions.date` is the one stored bucket. A zone change would
+        leave it a day off its own usage bars forever, so every run
+        re-derives it from the transcript head; a vanished transcript keeps
+        the date it has (a guess is not a re-derivation)."""
+        write_transcript(self.root / "p" / "sess-eve.jsonl",
+                          [("user", "hi"), ("assistant", "yo")], date=self.EVE)
+        base = Path(self.tmp.name)
+        run = lambda: run_analysis(  # noqa: E731
+            root=self.root, db_path=self.db, work_dir=base / "analysis",
+            model_runner=StubRunner([SKIP_MD, SKIP_MD]),
+            claude_dir=base / "claude", projects_dir=base / "repos")
+        run()
+        self.assertEqual(self.rows("SELECT date FROM sessions")[0]["date"], "2026-08-28")
+        self.pin("Asia/Tokyo")
+        run()
+        self.assertEqual(self.rows("SELECT date FROM sessions")[0]["date"], "2026-08-29")
+        self.assertEqual(self.rows("SELECT date FROM audit")[0]["date"], "2026-08-29")
+
 
 class NarrativeTest(DbHelpers, unittest.TestCase):
     """The status-narrative pass (ADR-0012, ticket #68): ledger-keyed,

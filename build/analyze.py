@@ -52,6 +52,10 @@ LimitExhausted) pauses the run cleanly — sessions not yet reached stay
 is gone before it was ever extracted is `lost` — terminal, never retried
 (ticket #78, ADR-0015).
 
+Every day bucket is the operator's local day off the stored UTC instant
+(ADR-0014); `HINDSIGHT_TZ=<IANA name>` pins that zone, unset is the host's
+(issue #1). `sessions.date`, the one stored bucket, re-derives each run.
+
 Usage: analyze.py [--root DIR] [--db PATH] [--work-dir DIR]
        analyze.py install       write + start the nightly launchd calendar job
        analyze.py uninstall     stop the job + remove the plist
@@ -73,6 +77,8 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
+import zoneinfo
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -93,6 +99,35 @@ DEFAULT_PROJECTS_DIR = Path.home() / "Documents" / "Claude"
 # Python equivalent, so the two can never drift apart.
 def day_sql(col):
     return f"substr(datetime({col}, 'localtime'), 1, 10)"
+
+
+def apply_tz():
+    """`HINDSIGHT_TZ` (issue #1, ADR-0014 amended): an IANA name pins the
+    day-bucket zone; unset is the host's. SQLite's `localtime` and Python's
+    `astimezone()` both read libc, so one `TZ` + `tzset()` moves both
+    bucket paths together. An unknown name is one stderr line and the host
+    zone, never a crash — libc would otherwise take it silently as UTC."""
+    # ponytail: process-global — every localtime call in this process and
+    # the `claude -p` child it spawns moves with it, not just the buckets
+    # (nothing else here reads local time; timestamps are written UTC-aware).
+    # A ZoneInfo-aware local_day plus a registered SQLite function is the
+    # scoped upgrade if that ever matters.
+    name = os.environ.get("HINDSIGHT_TZ")
+    if not name:
+        return
+    try:
+        zoneinfo.ZoneInfo(name)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        print(f"HINDSIGHT_TZ={name!r} is not an IANA zone name; using the"
+              " host zone", file=sys.stderr)
+        return
+    os.environ["TZ"] = name
+    time.tzset()
+
+
+# At import, before any query: every entrypoint that buckets a day imports
+# this module (serve, how, import_backfill), so the pin applies to all.
+apply_tz()
 
 
 def local_day(ts):
@@ -363,19 +398,8 @@ def init_db(db_path):
         conn.execute("PRAGMA user_version = 4")
         conn.commit()
     if v < 5:
-        # Ticket #74 / ADR-0014: day buckets are the operator's local day.
-        # Every other bucket converts at read time, but `sessions.date` is a
-        # *stored* bucket that has already lost the clock time it would need
-        # — so it re-derives from the transcript head instead. A vanished
-        # transcript keeps its UTC date: a guess is not a re-derivation.
-        redated = []
-        for sid, path in conn.execute("SELECT id, transcript_path FROM sessions"):
-            if Path(path).exists():
-                date = local_day(head_scan(Path(path))[1])
-                if date:
-                    redated.append((date, sid))
-        conn.executemany("UPDATE sessions SET date=? WHERE id=?", redated)
-        conn.executemany("UPDATE audit SET date=? WHERE session_id=?", redated)
+        # Ticket #74 / ADR-0014: day buckets became the operator's local day.
+        redate_sessions(conn)
         conn.execute("PRAGMA user_version = 5")
         conn.commit()
     if v < 7:  # v6 was the identity columns, now added above the gate
@@ -533,6 +557,27 @@ def hook_folder_identity(conn, sid, has_otel):
         except (KeyError, TypeError, ValueError):
             continue  # this firing's stat failed; a later one may still carry it
     return None
+
+
+def redate_sessions(conn):
+    """Every other day bucket converts at read time, but `sessions.date` is
+    a *stored* bucket that has already lost the clock time it would need —
+    so it re-derives from the transcript head under the effective zone
+    (ADR-0014). Ran once as migration 5; runs every analysis since issue #1,
+    because a changed `HINDSIGHT_TZ` would otherwise leave every older
+    session a day off its own usage bars. A vanished transcript keeps the
+    date it has: a guess is not a re-derivation."""
+    # ponytail: head-scans every surviving transcript each run (~0.6 s per
+    # 300 sessions). Store the start *instant* and bucket at read time if
+    # this ever shows in the run's wall-clock.
+    redated = []
+    for sid, path in conn.execute("SELECT id, transcript_path FROM sessions"):
+        if Path(path).exists():
+            date = local_day(head_scan(Path(path))[1])
+            if date:
+                redated.append((date, sid))
+    conn.executemany("UPDATE sessions SET date=? WHERE id=?", redated)
+    conn.executemany("UPDATE audit SET date=? WHERE session_id=?", redated)
 
 
 def sync_sessions(conn, root):
@@ -1196,6 +1241,8 @@ def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
     conn = init_db(db_path)
     try:
         sync_sessions(conn, root)
+        redate_sessions(conn)
+        conn.commit()
         # Identity fill, presence, then canonicalisation, ahead of everything
         # that reads sessions.project — the model loop and narrative writer
         # must see a rename already applied (ADR-0018).
@@ -1258,8 +1305,10 @@ def nightly_plist():
         "ProgramArguments": [sys.executable, str(Path(__file__).resolve())],
         "StartCalendarInterval": {"Hour": NIGHTLY_HOUR, "Minute": 0},
         # launchd's default PATH lacks `claude` (and the CLI-kind probes);
-        # bake the installing shell's PATH, where both are known to resolve.
-        "EnvironmentVariables": {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+        # bake the installing shell's PATH, where both are known to resolve
+        # — and the pinned zone, or the nightly buckets under the host's.
+        "EnvironmentVariables": {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                                 **({"HINDSIGHT_TZ": tz} if (tz := os.environ.get("HINDSIGHT_TZ")) else {})},
         "StandardOutPath": log,
         "StandardErrorPath": log,
     }).decode()

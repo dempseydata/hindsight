@@ -13,6 +13,7 @@
   border: 1px solid var(--o-border); border-radius: 2px; padding: .05rem .4rem;
   max-width: 14rem; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
+#what .cont { flex: none; color: var(--o-dim); font: 11px var(--o-mono); }
 #what .ttl { min-width: 0; }
 #what .ttl.dim { color: var(--o-dim); }
 #what .cnt { margin-left: auto; flex: none; color: var(--o-dim);

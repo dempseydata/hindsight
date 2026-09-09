@@ -46,6 +46,7 @@ appear — the choice switches, it never filters. An invalid declaration
 renders its line-numbered error and the trail grouped by session.
 """
 import argparse
+import datetime
 import html
 import json
 import re
@@ -193,7 +194,19 @@ def what_data(conn):
     the ledger must never silently omit a session the coverage line counts.
     A `lost` session (ticket #78) is the one place status is a view input:
     without it, "not yet" and "never" render identically.
+
+    A session is filed under every local day it had usage (issue #9), so
+    the ledger and the chart agree on which days are empty: the full row
+    under its first active day, then a thin continuation row per later day
+    — id, project, day, the status flags and a `cont` note — that what.js
+    resolves to the entry by id. A session with no usage keeps its start day
+    alone; an undated one can't be windowed and stays one always-shown row.
     """
+    days = {sid: sorted(ds.split(",")) for sid, ds in conn.execute(f"""
+            SELECT session_id, GROUP_CONCAT(d) FROM (
+                SELECT DISTINCT session_id, {day_sql("at")} AS d
+                FROM usage WHERE at IS NOT NULL)
+            GROUP BY session_id""")}
     rows = []
     for sid, project, date, skip, md, adr, pend, status in conn.execute("""
             SELECT s.id, s.project, s.date, a.skip, a.markdown, a.adr_count,
@@ -217,6 +230,18 @@ def what_data(conn):
             else:
                 r.update(entry)
         rows.append(r)
+        active = days.get(sid) if date else None
+        if active:
+            r["d"] = first = active[0]
+            flags = {k: 1 for k in ("skip", "pend", "lost", "empty") if r.get(k)}
+            for day in active[1:]:   # day N counts calendar days, not resumes
+                n = (datetime.date.fromisoformat(day)
+                     - datetime.date.fromisoformat(first)).days + 1
+                rows.append({"id": sid, "p": project, "d": day, **flags,
+                             "cont": f"started {first} · day {n}"})
+    # newest day first, undated last; stable, so a continuation lists after
+    # the sessions that actually started that day
+    rows.sort(key=lambda r: r["d"] or "", reverse=True)
     return rows
 
 

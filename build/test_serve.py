@@ -327,10 +327,10 @@ class ServerTest(unittest.TestCase):
         conn = serve.open_db(self.db)
         rows = serve.what_data(conn)
         conn.close()
-        self.assertEqual(len(rows), 9)
+        self.assertEqual(len(rows), 10)            # 9 sessions + s2's #9 continuation
         self.assertEqual([r["d"] for r in rows],
                          sorted([r["d"] for r in rows], reverse=True))
-        by_id = {r["id"]: r for r in rows}
+        by_id = {r["id"]: r for r in rows if "cont" not in r}
         self.assertEqual(by_id["s1"]["sections"][0]["n"], 2)
         self.assertNotIn("title", by_id["s3"])     # refusal row -> raw only
         self.assertIn("raw", by_id["s3"])
@@ -340,6 +340,28 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn("pend", by_id["s8"])
         self.assertEqual(by_id["s9"]["empty"], 1)  # #2: empty, not pending
         self.assertNotIn("pend", by_id["s9"])
+
+    def test_what_ledger_files_a_session_under_each_active_day(self):
+        """#9: s2 has usage on 2026-08-03 and 2026-08-06 — the full row
+        under the first, a thin continuation with the note under the second,
+        each day once; nine distinct ids for the summary line to count."""
+        conn = serve.open_db(self.db)
+        rows = serve.what_data(conn)
+        conn.close()
+        s2 = [r for r in rows if r["id"] == "s2"]
+        self.assertEqual([r["d"] for r in s2], ["2026-08-06", "2026-08-03"])
+        self.assertEqual(s2[0], {"id": "s2", "p": "big", "d": "2026-08-06",
+                                 "skip": 1, "cont": "started 2026-08-03 · day 4"})
+        self.assertNotIn("cont", s2[1])
+        self.assertEqual(len({r["id"] for r in rows}), 9)
+        # each day lists the session once; blob order holds within a day
+        self.assertEqual([r["id"] for r in rows if r["d"] == "2026-08-03"],
+                         ["s8", "s2"])
+        self.assertEqual([r["id"] for r in rows if r["d"] == "2026-08-06"],
+                         ["s2"])
+        # a usage-less session keeps its start day; one row, no note
+        self.assertEqual([r["d"] for r in rows if r["id"] == "s4"],
+                         ["2026-08-02"])
 
     def test_where_view_embeds_blob(self):
         _, body = self.get("/where")

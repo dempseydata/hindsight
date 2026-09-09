@@ -63,7 +63,7 @@ below means "what, if anything, stops this step", not a role lookup.
 | 3. Query | `serve.py`, `how.py:224, 316, 344` | All values bound with `?`. The one request parameter, `?p=` on `/how`, is membership-checked against DB project names before use (`serve.py:496`) | — |
 | 4. Read `.claude/my-process.md` of the chosen project | `how.py:174, 331` | Strict YAML subset; any fault → whole declaration invalid, error text rendered escaped | Filesystem read outside the repo (workspace project dir) |
 | 5. Render | `serve.py:370-590`, `what.js`, `where.js` | `html.escape` on every model- or DB-derived string server-side; `_blob()` guards `</script>`; JS `esc()` on names, `inline()` re-adds `<b>`/`<code>` only | Reads `design/tokens.css` + `build/assets/*` per request (literal names only) |
-| 6. Browser | `theme.js`, `chrome.js` | No fetch, no external URL; `localStorage.theme` and the per-tab `sessionStorage.filter` (issue #10) only | — |
+| 6. Browser | `theme.js`, `chrome.js`, `how.js` | No fetch, no external URL; `localStorage.theme` and the per-tab `sessionStorage.filter` (issue #10) only | — |
 
 **No mutation route exists.** Refresh is a browser reload; a new run is F3.
 

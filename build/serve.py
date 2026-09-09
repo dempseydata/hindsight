@@ -571,7 +571,7 @@ def render(view, conn, query="", projects_dir=DEFAULT_PROJECTS_DIR):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>hindsight · how</title>
 <link rel="icon" href="data:,">
-<script>{_asset("theme.js")}</script>
+<script>{_asset("theme.js")}{_asset("how.js")}</script>
 <style>{tokens}{_asset("chrome.css")}{_asset("how.css")}</style></head><body>
 <header>
 <button id="theme"></button>

@@ -497,14 +497,17 @@ class ServerTest(unittest.TestCase):
         per tab on every change and restored before the first render, so a
         what ↔ where switch keeps the filter. On restore a hidden project's
         chip comes back active only with the reveal state that showed it
-        (ADR-0009); the how-view has no filter chrome and stores nothing."""
+        (ADR-0009). The how-view has no filter chrome, but its ?p= writes
+        the active chip, so the project looked at is selected on return."""
         for view in ("what", "where"):
             _, body = self.get(f"/{view}")
             self.assertIn('sessionStorage.setItem("filter"', body)
             self.assertIn('sessionStorage.getItem("filter")', body)
             self.assertIn('S.reveal ? "#chips button" : "#chips button:not([data-hidden])"', body)
             self.assertIn('restore() || applyPreset("14")', body)
-        self.assertNotIn("sessionStorage", self.get("/how")[1])
+            # the how-view is chosen by ?p=, so the nav link carries the active chip
+            self.assertIn("""querySelector('header nav a[href^="/how"]').href""", body)
+        self.assertIn('active: [p]', self.get("/how")[1])
 
     def test_chart_columns_keyboard_accessible(self):
         """Ticket #50 P2: day columns are focusable buttons with an

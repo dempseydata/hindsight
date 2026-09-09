@@ -78,6 +78,10 @@ function syncCtl() {
   });
   document.getElementById("chips").classList.toggle("reveal", S.reveal);
   document.getElementById("reveal")?.setAttribute("aria-pressed", S.reveal);
+  // the how-view is one project, chosen by ?p= (issue #10): the nav link
+  // carries the active chip. ponytail: first of several; how can't show more
+  const [p] = S.active;
+  document.querySelector('header nav a[href^="/how"]').href = p ? `/how?p=${encodeURIComponent(p)}` : "/how";
 }
 function changed() { renderChart(); syncCtl(); subs.forEach(f => f(S)); save(); }
 // The filter survives the what ↔ where navigation (issue #10): saved per tab

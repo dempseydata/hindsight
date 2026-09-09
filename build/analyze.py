@@ -601,8 +601,11 @@ def attribute_sessions(conn, name, folder, before=None,
     live identity onto every name-only session currently under `name` —
     pre-hook history, or a move the filesystem cannot show (cross-volume,
     copy). With `before` (an ISO-8601 instant), only the sessions whose
-    transcript's first record precedes it; a session whose transcript is
-    gone has no first record and is left alone under a bound. A session
+    transcript's first record precedes it. A session whose transcript is
+    gone falls back to its stored day bucket, derived from that same first
+    record: a day strictly before the bound's local day is decisive, the
+    bound's own day is not, and the session is left alone — which, in a
+    two-call repair, means the next unbounded call claims it. A session
     already carrying an identity is never touched, so a second identical
     call changes nothing.
 
@@ -629,15 +632,27 @@ def attribute_sessions(conn, name, folder, before=None,
         before = parse_ts(before)
         if before is None:
             raise ValueError("--before is not an ISO-8601 instant")
-    rows = conn.execute("SELECT id, transcript_path FROM sessions"
+    rows = conn.execute("SELECT id, transcript_path, date FROM sessions"
                         " WHERE project = ? AND folder_identity IS NULL",
                         (name,)).fetchall()
     if before is not None:
-        rows = [(sid, p) for sid, p in rows if Path(p).exists()
-                and (ts := parse_ts(head_scan(Path(p))[1])) and ts < before]
+        bound_day = local_day(before.isoformat())
+
+        def precedes(path, date):
+            if Path(path).exists():
+                ts = parse_ts(head_scan(Path(path))[1])
+                return ts is not None and ts < before
+            # ponytail: the bucket is the local day (ADR-0014) except for a
+            # transcript already gone at the v5 migration, which kept its
+            # UTC day — off by at most one, so only a bound within a day of
+            # such a session is affected; west of UTC the strict compare
+            # then under-stamps, east of it it could mis-stamp. Re-derive
+            # those rows' day from the backfill archive if one ever is.
+            return bool(date) and date < bound_day
+        rows = [(sid, p, d) for sid, p, d in rows if precedes(p, d)]
     conn.executemany("UPDATE sessions SET folder_identity=?,"
                      " attribution_source='operator' WHERE id=?",
-                     [(identity, sid) for sid, _ in rows])
+                     [(identity, sid) for sid, _, _ in rows])
     _record_presence(conn, identity, "-".join(rel.parts), True,
                      datetime.now(timezone.utc).isoformat())
     conn.commit()

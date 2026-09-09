@@ -1199,6 +1199,31 @@ class AttributeTest(IdentityFixture, unittest.TestCase):
         self.assertEqual(self.attribute("legacy", self.repos / "elsewhere",
                                         before="2026-08-05T00:00:00Z"), 0)
 
+    def test_before_decides_a_gone_transcript_by_its_stored_day(self):
+        """Ticket #8 found 39 pruned-transcript sessions under the motivating
+        repair: with no first record to read, a bound left them alone and the
+        unbounded second call swept them onto the wrong folder. The stored
+        day bucket is derived from that same first record, so a day strictly
+        before the bound's day is decisive; the bound's own day is not."""
+        self.sync_name_only("legacy", ("s-gone-early", "2026-08-01T10:00:00Z"),
+                            ("s-gone-same-day", "2026-08-05T12:00:00Z"))
+        for sid in ("s-gone-early", "s-gone-same-day"):
+            (self.root / "legacy" / f"{sid}.jsonl").unlink()
+        conn = analyze.init_db(self.db)  # a head with no timestamp syncs as ''
+        conn.execute("INSERT INTO sessions (id, project, transcript_path, date)"
+                     " VALUES ('s-gone-undated', 'legacy', 'x', '')")
+        conn.commit()
+        conn.close()
+        (self.repos / "elsewhere").mkdir()
+        n = self.attribute("legacy", self.repos / "elsewhere",
+                           before="2026-08-05T12:00:00Z")
+        self.assertEqual(n, 1)
+        ids = self.identity_of()
+        self.assertEqual(ids["s-gone-early"],
+                         ((self.repos / "elsewhere").stat().st_ino, "operator"))
+        self.assertEqual(ids["s-gone-same-day"], (None, None))
+        self.assertEqual(ids["s-gone-undated"], (None, None))
+
     def test_second_identical_call_touches_zero_rows(self):
         self.sync_name_only("legacy", ("s-1", "2026-08-01T10:00:00Z"))
         (self.repos / "elsewhere").mkdir()

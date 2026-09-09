@@ -1,5 +1,5 @@
 
-const S = { active: new Set(), tFrom: null, tTo: null, hideCR: false, preset: "14" };
+const S = { active: new Set(), tFrom: null, tTo: null, hideCR: false, preset: "14", reveal: false };
 const subs = [];
 const fmt = n => n == null ? "\u2014" : n >= 1e9 ? (n / 1e9).toFixed(1) + "B"
   : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : "" + n;
@@ -76,19 +76,41 @@ function syncCtl() {
     b.classList.toggle("on", b.dataset.w === S.preset);
     b.setAttribute("aria-pressed", b.dataset.w === S.preset);
   });
+  document.getElementById("chips").classList.toggle("reveal", S.reveal);
+  document.getElementById("reveal")?.setAttribute("aria-pressed", S.reveal);
 }
-function changed() { renderChart(); syncCtl(); subs.forEach(f => f(S)); }
+function changed() { renderChart(); syncCtl(); subs.forEach(f => f(S)); save(); }
+// The filter survives the what ↔ where navigation (issue #10): saved per tab
+// in sessionStorage on every change, restored ahead of the first render. Gone
+// when the tab closes; a reload keeps the filter instead of resetting — accepted.
+function save() {
+  try { sessionStorage.setItem("filter", JSON.stringify({ ...S, active: [...S.active] })); }
+  catch { /* private mode etc. — the filter just won't survive the tab */ }
+}
+function restore() {
+  try {
+    const f = JSON.parse(sessionStorage.getItem("filter"));
+    if (!f) return false;
+    S.reveal = !!f.reveal;
+    // only a chip on show may come back active (ADR-0009): a hidden project's
+    // chip is dropped unless the reveal state that showed it is restored too
+    const shown = new Set([...document.querySelectorAll(
+      S.reveal ? "#chips button" : "#chips button:not([data-hidden])")].map(b => b.dataset.p));
+    S.active = new Set(f.active.filter(p => shown.has(p)));
+    S.hideCR = !!f.hideCR;
+    document.getElementById("hidecr").checked = S.hideCR;
+    if (f.preset) applyPreset(f.preset);   // re-anchor to today's last day
+    else { S.preset = null; S.tFrom = f.tFrom; S.tTo = f.tTo; changed(); }
+    return true;
+  } catch { return false; }
+}
 document.addEventListener("click", e => {
-  const rv = e.target.closest("#reveal");
-  if (rv) {
-    const on = document.getElementById("chips").classList.toggle("reveal");
-    rv.setAttribute("aria-pressed", on);
+  if (e.target.closest("#reveal")) {
+    S.reveal = !S.reveal;
     // un-revealing must never leave an invisible active filter (ADR-0009)
-    let dropped = false;
-    if (!on) document.querySelectorAll("#chips button[data-hidden]").forEach(
-      b => { dropped = S.active.delete(b.dataset.p) || dropped; });
-    if (dropped) changed();
-    return;
+    if (!S.reveal) document.querySelectorAll("#chips button[data-hidden]").forEach(
+      b => S.active.delete(b.dataset.p));
+    changed(); return;
   }
   const b = e.target.closest("#chips button");
   if (b) {
@@ -115,4 +137,4 @@ document.addEventListener("keydown", e => {
 document.getElementById("hidecr").addEventListener("change", e => {
   S.hideCR = e.target.checked; changed();
 });
-applyPreset("14");
+restore() || applyPreset("14");

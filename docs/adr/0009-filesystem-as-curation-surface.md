@@ -15,6 +15,8 @@ Hindsight is archive-first: deleting a project's working folder erases nothing, 
 - **Dash-ambiguity rule:** a project counts as present if *any* decoding of its dashes resolves to an existing directory, so subdirectory sessions of live projects never false-hide.
 - **Reveal is ephemeral chrome state**, not stored config: a "show hidden (n)" toggle on the note line under the chips restores hidden projects' chips; un-revealing deactivates any active hidden-project filter.
 
+**Amended 2026-09-09 (issue #10):** ephemeral means *per tab*, not per page load. The reveal state rides in `sessionStorage` with the header filter it guards, so a what ↔ where switch keeps both; on restore a hidden project's chip comes back active only alongside the reveal state that showed it, so an invisible active filter can never return from storage. Still never stored config: gone when the tab closes, never on the server.
+
 ## Considered options
 
 - **Curated hide list** — honest about hiding being a preference, but the product's first curated surface, needing a write mechanism against a deliberately read-only server, for a gesture (folder deletion/archival) the operator already makes.

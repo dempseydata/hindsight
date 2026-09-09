@@ -166,7 +166,7 @@ Claude Code sessions (transcripts), not login sessions. See [permissions.md](per
 | Analysis run → `claude -p` | Prompt on stdin, markdown/JSON on stdout | Model output is **untrusted**: gated by `valid_entry` (what-pass) and `score.contract` + `BOUNDS` (narrative) before any write. Raw output is cached on disk only. |
 | Analysis run → project git repos | `git -C <repo> log/diff-tree/show -- .claude` | Full historical contents of every `.claude/*` file are copied verbatim into `blobs`. |
 | Serve → browser | GET on loopback, read-only DB (`mode=ro`) | Page content comes from the DB, which contains model prose. Escaped server-side; `what.js` re-injects `**b**`/`` `code` `` from escaped text. |
-| Browser → anywhere | — | Nothing. No fetch, no external assets, one `localStorage` key (`theme`). |
+| Browser → anywhere | — | Nothing. No fetch, no external assets, one `localStorage` key (`theme`) and one per-tab `sessionStorage` key (`filter`, the filter state — issue #10). |
 
 ## Known risks and assumptions
 

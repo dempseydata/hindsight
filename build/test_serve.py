@@ -436,7 +436,7 @@ class ServerTest(unittest.TestCase):
             # hidden by default, revealed by an ephemeral class, and
             # un-revealing drops the filter it would otherwise leave invisible
             self.assertIn("#chips button[data-hidden] { display: none; }", body)
-            self.assertIn('classList.toggle("reveal")', body)
+            self.assertIn('classList.toggle("reveal", S.reveal)', body)
             self.assertIn("S.active.delete(b.dataset.p)", body)
         # a hidden project's ledger rows are untouched
         self.assertIn("Paragraph entry", self.get("/what")[1])
@@ -469,6 +469,20 @@ class ServerTest(unittest.TestCase):
                 server.server_close()
         self.assertNotIn("data-hidden>", body)   # the CSS rule always ships
         return body
+
+    def test_filter_state_rides_session_storage_across_views(self):
+        """Issue #10: chips, window, preset and the reveal state are saved
+        per tab on every change and restored before the first render, so a
+        what ↔ where switch keeps the filter. On restore a hidden project's
+        chip comes back active only with the reveal state that showed it
+        (ADR-0009); the how-view has no filter chrome and stores nothing."""
+        for view in ("what", "where"):
+            _, body = self.get(f"/{view}")
+            self.assertIn('sessionStorage.setItem("filter"', body)
+            self.assertIn('sessionStorage.getItem("filter")', body)
+            self.assertIn('S.reveal ? "#chips button" : "#chips button:not([data-hidden])"', body)
+            self.assertIn('restore() || applyPreset("14")', body)
+        self.assertNotIn("sessionStorage", self.get("/how")[1])
 
     def test_chart_columns_keyboard_accessible(self):
         """Ticket #50 P2: day columns are focusable buttons with an

@@ -360,15 +360,40 @@ def where_data(conn):
             SELECT timestamp, attributes FROM otel_events
             WHERE event_name = 'api_request'""") if has_otel else []:
         a = json.loads(attrs)
-        try:
-            dur = int(float(a["duration_ms"]))
-        except (KeyError, TypeError, ValueError):
+        dur = _ms(a.get("duration_ms"))
+        if dur is None:
             continue
         key = (local_day(ts), proj.get(a.get("session.id")),
                (a.get("model") or "?").replace("claude-", ""))
         lat.setdefault(key, []).append(dur)
     lat_rows = [{"d": d, "p": p, "m": m, "durs": sorted(v)}
                 for (d, p, m), v in lat.items()]
+
+    # reliability panel (#14): retries and MCP connection health at event
+    # grain, the session id as the evidence. Self-excluded analysis sessions
+    # drop out, as the coverage line promises; a session OTEL saw but sync
+    # never did keeps its rows with the project unknown (NULL), like the
+    # latency rows above — never dropped.
+    retries, mcp_conn = [], []
+    for name, ts, sid, p, attrs in conn.execute("""
+            SELECT o.event_name, o.timestamp, o.session_id, s.project,
+                   o.attributes
+            FROM otel_events o LEFT JOIN sessions s ON s.id = o.session_id
+            WHERE o.event_name IN ('api_error', 'api_retries_exhausted',
+                                   'mcp_server_connection')
+              AND o.session_id NOT IN (SELECT id FROM excluded_sessions)
+            ORDER BY o.timestamp""") if has_otel else []:
+        a = json.loads(attrs)
+        r = {"d": local_day(ts), "p": p, "sid": sid}
+        if name == "mcp_server_connection":
+            mcp_conn.append({**r, "srv": a.get("server_name") or "?",
+                             "st": a.get("status") or "?",
+                             "ms": _ms(a.get("duration_ms"))})
+        else:
+            ex = name == "api_retries_exhausted"
+            retries.append({**r, "m": (a.get("model") or "?").replace("claude-", ""),
+                            "ex": ex,
+                            "ms": _ms(a.get("total_retry_duration_ms")) if ex else None})
 
     hooks = []
     for ts, attrs in conn.execute("""
@@ -408,7 +433,17 @@ def where_data(conn):
            "excluded": one("SELECT COUNT(*) FROM excluded_sessions")}
     return {"tools": tools, "lens": lens, "sess": sess, "subd": subd, "cs": cons_sess,
             "models": models, "lat": lat_rows, "hooks": hooks,
+            "retries": retries, "conn": mcp_conn,
             "sunk": sunk, "med": medians, "cov": cov}
+
+
+def _ms(v):
+    """An OTEL millisecond attribute as an int, or None — the CLI sends
+    numbers as ints on some paths and as strings on others."""
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
 
 
 

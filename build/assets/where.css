@@ -10,6 +10,8 @@
   transition: transform var(--o-motion), box-shadow var(--o-motion); }
 #where .panel:hover { transform: translateY(-1px); }
 #where .panel .note { font-size: 11px; margin: 0 0 .5rem; }
+#where .panel h3 { margin: .8rem 0 .3rem; font: 600 11px var(--o-mono);
+  color: var(--o-dim); text-transform: uppercase; letter-spacing: .05em; }
 #where table { border-collapse: collapse; width: 100%; font-size: 12px; }
 #where th { text-align: left; color: var(--o-dim);
   font: 600 10px var(--o-mono); text-transform: uppercase;

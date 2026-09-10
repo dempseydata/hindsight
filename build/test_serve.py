@@ -94,6 +94,30 @@ def fixture_db(path):
         ("hindsight.hook", "s1", "2026-08-04T09:00:00Z",
          '{"hook.event": "Stop", "hook.cpu_ms": 80.5,'
          ' "hook.duration_ms": 1.2}'),
+        # reliability panel (#14): two retries and one exhaustion on s1 —
+        # the CLI stringifies numbers on some paths, so one of each shape
+        ("api_error", "s1", "2026-08-03T09:00:01Z",
+         '{"model": "claude-sonnet-5", "status_code": 429, "attempt": 1,'
+         ' "session.id": "s1"}'),
+        ("api_error", "s1", "2026-08-03T09:00:02Z",
+         '{"model": "claude-sonnet-5", "status_code": "429", "attempt": "2",'
+         ' "session.id": "s1"}'),
+        ("api_retries_exhausted", "s1", "2026-08-03T09:00:03Z",
+         '{"model": "claude-sonnet-5", "status_code": 529, "total_attempts": 11,'
+         ' "total_retry_duration_ms": "273269", "session.id": "s1"}'),
+        # one server: a failure and a connection in the same session
+        ("mcp_server_connection", "s1", "2026-08-03T09:00:00Z",
+         '{"server_name": "plugin:gh", "status": "failed", "duration_ms": "12"}'),
+        ("mcp_server_connection", "s3", "2026-08-03T10:00:00Z",
+         '{"server_name": "plugin:gh", "status": "connected", "duration_ms": 30}'),
+        # self-excluded analysis session (x1): must not render. A session
+        # OTEL saw but sync never did (u1): kept, project unknown
+        ("api_error", "x1", "2026-08-03T09:00:00Z",
+         '{"model": "claude-haiku-4-5-20251001", "status_code": 429}'),
+        ("mcp_server_connection", "x1", "2026-08-03T09:00:00Z",
+         '{"server_name": "plugin:gh", "status": "failed"}'),
+        ("mcp_server_connection", "u1", "2026-08-03T11:00:00Z",
+         '{"server_name": "plugin:gh", "status": "failed"}'),
     ]
     conn.executemany("""INSERT INTO otel_events (event_name, session_id,
         timestamp, attributes) VALUES (?, ?, ?, ?)""", otel)
@@ -435,6 +459,37 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(w["cov"]["excluded"], 1)
         self.assertEqual(w["cov"]["usage_sessions"], 4)
         self.assertEqual(w["cov"]["hook"], "2026-08-04")
+
+    def test_where_data_reliability(self):
+        """#14: retries and MCP connection health at event grain — day and
+        project on every row so the chrome's filters apply, the session id
+        as the evidence, numbers coerced whatever shape the CLI sent them
+        in, self-excluded sessions dropped, and a session sync never saw
+        kept with its project unknown — never silently thinned."""
+        conn = serve.open_db(self.db)
+        w = serve.where_data(conn)
+        conn.close()
+        self.assertEqual(w["retries"], [
+            {"d": "2026-08-03", "p": "big", "sid": "s1", "m": "sonnet-5",
+             "ex": False, "ms": None},
+            {"d": "2026-08-03", "p": "big", "sid": "s1", "m": "sonnet-5",
+             "ex": False, "ms": None},
+            {"d": "2026-08-03", "p": "big", "sid": "s1", "m": "sonnet-5",
+             "ex": True, "ms": 273269}])
+        self.assertEqual(w["conn"], [
+            {"d": "2026-08-03", "p": "big", "sid": "s1", "srv": "plugin:gh",
+             "st": "failed", "ms": 12},
+            {"d": "2026-08-03", "p": "small", "sid": "s3", "srv": "plugin:gh",
+             "st": "connected", "ms": 30},
+            {"d": "2026-08-03", "p": None, "sid": "u1", "srv": "plugin:gh",
+             "st": "failed", "ms": None}])
+
+    def test_where_view_has_reliability_panel(self):
+        _, body = self.get("/where")
+        self.assertIn('id="retries"', body)
+        self.assertIn('id="conn"', body)
+        self.assertIn('"retries"', body)
+        self.assertIn('"conn"', body)
 
     def test_unknown_path_404s(self):
         r, _ = self.get("/nope")

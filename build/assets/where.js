@@ -45,7 +45,7 @@ function sparkSvg(perDay, o = {}) {
       const eh = Math.max(1, o.err[d] / epeak * EH);
       out += `<rect x="${x}" y="${(SH + 2 + EH - eh).toFixed(1)}" width="${BW}" height="${eh.toFixed(1)}" fill="var(--o-problem)"/>`;
     }
-    out += `<rect x="${x}" y="0" width="${BW + GAP}" height="${H}" fill="transparent"><title>${d} \u00b7 ${n} calls${o.err ? ` \u00b7 ${o.err[d] || 0} err` : ""}</title></rect>`;
+    out += `<rect x="${x}" y="0" width="${BW + GAP}" height="${H}" fill="transparent"><title>${d} \u00b7 ${n} ${o.lab?.[0] ?? "calls"}${o.err ? ` \u00b7 ${o.err[d] || 0} ${o.lab?.[1] ?? "err"}` : ""}</title></rect>`;
   });
   return `<svg class="spark" width="${SPARK_DAYS.length * (BW + GAP)}" height="${H}">${out}</svg>`;
 }
@@ -312,6 +312,53 @@ function hooksHtml() {
                 { h: "dur p50", n: 1 }], rows);
 }
 
+// reliability (#14): retries and wall time lost, never spend \u2014 api_error
+// carries no token counts. Event grain in, so the session ids ride along as
+// the evidence (the cli panel's projects-column pattern).
+const sessCell = ids => ({ n: 1, h: `<span class="dim" title="${esc([...ids].join(", "))}">${ids.size}</span>` });
+// the coverage-window rule for an empty table: a window before capture is a
+// stated gap, never a zero (a single-day window carries tFrom alone)
+const noRows = what => `<p class="dim">no ${what} in window \u00b7 OTEL capture from ${WHERE.cov.otel || "\u2014"}${
+  WHERE.cov.otel && (hs.S.tTo || hs.S.tFrom) < WHERE.cov.otel ? " \u2014 this window predates it: a gap, not a zero" : ""}</p>`;
+function retriesHtml() {
+  const g = {};
+  for (const r of WHERE.retries) {
+    if (!keep(r)) continue;
+    const o = g[r.m] ??= { n: 0, ex: 0, ms: 0, perDay: {}, exDay: {}, sids: new Set() };
+    if (r.ex) { o.ex++; o.ms += r.ms || 0; o.exDay[r.d] = (o.exDay[r.d] || 0) + 1; }
+    else { o.n++; o.perDay[r.d] = (o.perDay[r.d] || 0) + 1; }
+    o.sids.add(r.sid);
+  }
+  const rows = Object.entries(g).sort((a, b) => b[1].ms - a[1].ms || b[1].n - a[1].n).map(([m, o]) =>
+    [esc(m), sparkSvg(o.perDay, { err: o.ex ? o.exDay : null, covFrom: WHERE.cov.otel, lab: ["retries", "exhausted"] }),
+     num(o.n), errCell(o.ex, 0), { n: 1, h: o.ex ? fmtMs(o.ms) : '<span class="dim">\u2014</span>' },
+     sessCell(o.sids)]);
+  return rows.length ? table(["model", "retries/day \u00b7 exhausted below", { h: "retries", n: 1 },
+    { h: "exhausted", n: 1 }, { h: "wall lost", n: 1 }, { h: "sessions", n: 1 }], rows)
+    : noRows("retries");
+}
+function connHtml() {
+  const g = {};
+  for (const r of WHERE.conn) {
+    if (!keep(r) || r.st === "disconnected") continue;   // a clean close, not an attempt
+    const o = g[r.srv] ??= { n: 0, f: 0, durs: [], perDay: {}, errDay: {}, sids: new Set() };
+    o.n++;
+    o.perDay[r.d] = (o.perDay[r.d] || 0) + 1;
+    if (r.st === "failed") { o.f++; o.errDay[r.d] = (o.errDay[r.d] || 0) + 1; o.sids.add(r.sid); }
+    else if (r.ms != null) o.durs.push(r.ms);   // time-to-fail is not connect time
+  }
+  const rows = Object.entries(g).sort((a, b) => b[1].f / b[1].n - a[1].f / a[1].n || b[1].n - a[1].n).map(([s, o]) => {
+    o.durs.sort((a, b) => a - b);
+    return [esc(s), sparkSvg(o.perDay, { err: o.f ? o.errDay : null, covFrom: WHERE.cov.otel, lab: ["attempts", "failed"] }),
+            num(o.n), errCell(o.f, 0),
+            { n: 1, h: o.f ? `<span class="err">${Math.round(o.f / o.n * 100)}%</span>` : '<span class="dim">0%</span>' },
+            { n: 1, h: ms(pct(o.durs, 50)) }, sessCell(o.sids)];
+  });
+  return rows.length ? table(["server", "attempts/day \u00b7 failures below", { h: "attempts", n: 1 },
+    { h: "failed", n: 1 }, { h: "share", n: 1 }, { h: "connect p50", n: 1 },
+    { h: "failed in", n: 1 }], rows) : noRows("MCP connections");
+}
+
 const openIn = sel => new Set([...document.querySelectorAll(sel + " details[open]")]
   .map(d => d.dataset.k).filter(Boolean));
 // chip toggles repaint the league alone — the other panels ignore CATS, and
@@ -329,6 +376,8 @@ function renderWhere() {
   document.getElementById("cli").innerHTML = cliHtml(cliOpen);
   document.getElementById("sunk").innerHTML = sunkHtml(sunkOpen);
   document.getElementById("hooks").innerHTML = hooksHtml();
+  document.getElementById("retries").innerHTML = retriesHtml();
+  document.getElementById("conn").innerHTML = connHtml();
 }
 // coverage honesty: one global line + per-panel notes; OTEL-fed sparks
 // additionally shade their pre-coverage region (judged: in-chart beats
@@ -336,6 +385,7 @@ function renderWhere() {
 document.getElementById("wcov").textContent = `usage for ${WHERE.cov.usage_sessions} of ${WHERE.cov.sessions} synced sessions (${WHERE.cov.span[0]} \u2192 ${WHERE.cov.span[1]}; pruned transcripts read unknown, never zero) \u00b7 OTEL capture from ${WHERE.cov.otel || "\u2014"} \u00b7 hooks from ${WHERE.cov.hook || "\u2014"} \u00b7 ${WHERE.cov.excluded} of hindsight's own analysis sessions excluded from everything here`;
 document.getElementById("mnote").textContent = `token counts come from the transcript scan (full span); api latency from OTEL api_request \u2014 capture began ${WHERE.cov.otel || "\u2014"}, so models unused since then read \u2014. No pricing columns, ever (ADR-0003).`;
 document.getElementById("snote").textContent = `what a session pays before the first prompt \u2014 ${WHERE.cov.excluded} of hindsight's own analysis sessions self-excluded. Reads today's filesystem, all-time \u2014 the window doesn't apply, project chips do. size/4 estimates; the measured median (first usage row per session) carries authority \u2014 the gap between itemized eager cost and the median is system-prompt/built-in overhead, invisible to the file scan.`;
+document.getElementById("rnote").textContent = `retries and wall time lost, never spend \u2014 api_error carries no token counts. Retries are api_error events; exhausted is api_retries_exhausted, whose total_retry_duration_ms is the wall lost. MCP attempts are connected + failed per server (disconnected is a clean close, not an attempt); connect p50 over successful connections carrying a duration. OTEL-fed \u2014 capture began ${WHERE.cov.otel || "\u2014"}, the shaded spark region predates it. Hover a sessions count for the ids. Hindsight's own analysis sessions are excluded; a session OTEL saw but sync never did counts with its project unknown, so a project chip hides it.`;
 document.getElementById("hnote").textContent = `cpu_ms carries the table: per-firing process CPU including interpreter startup (ADR-0005). duration_ms (dim) times the script body only \u2014 clock starts after spawn, stops before the POST. True wall cost, spawn\u2192exit including timeout waits, is not captured. Capture began ${WHERE.cov.hook || "\u2014"} \u2014 the shaded spark region predates it. Hooks are user-scope: project chips don't apply.`;
 document.getElementById("cats").addEventListener("click", e => {
   const b = e.target.closest("button");

@@ -107,7 +107,8 @@ authoritative direction contract; the server inlines it into every page at
 render time. On any conflict between this file and tokens.css, tokens.css wins.
 Re-derive this file (re-run the documenter) whenever tokens.css or the UI's
 visual system changes. Derived 2026-08-31 from the post-light-theme surface
-(ticket #83, ADR-0017).
+(ticket #83, ADR-0017); panel sub-headings added 2026-09-10 from the shipped
+reliability panel (issue #14).
 -->
 
 # Design System: Hindsight
@@ -182,7 +183,7 @@ The current run is marked with a small accent `now` badge, not an accent rule, s
 - **Panel heading** (bold, 13px): `h2` panel titles, same size as body — hierarchy by weight and position, not size.
 - **Body** (400, 13px, 1.5): default prose and ledger entry text.
 - **Data** (400, 12px, mono): table cells, numeric columns, code, raw-entry `pre` (1.5 line-height on multi-line).
-- **Label** (600, 10–11px, mono, 0.05em, UPPERCASE): section heads inside entries, table headers, league grid headers. Non-uppercase 11px mono: day headings, counts, chip buttons, the theme toggle; 10px: project chips; 9px: chart axis text.
+- **Label** (600, 10–11px, mono, 0.05em, UPPERCASE): section heads inside entries, `h3` sub-headings inside a where-view panel that holds more than one table (the reliability panel), table headers, league grid headers. Non-uppercase 11px mono: day headings, counts, chip buttons, the theme toggle; 10px: project chips; 9px: chart axis text.
 
 ### Named Rules
 **The Mono-Datum Rule.** If it is a number, a label over data, or an identifier, it is monospace; if it is prose, it is the sans. Numerals in columns always carry tabular figures.
@@ -226,6 +227,7 @@ Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels,
 - **Corner Style:** 6px (`--o-radius`).
 - **Background / Border / Shadow:** `--o-panel` / 1px `--o-border` / `--o-elev` (dark only; flat in light).
 - **Heading:** 13px `h2`, then an 11px `--o-dim` note paragraph explaining the panel's honesty caveats.
+- **Sub-headings:** a panel holding more than one table (reliability: API retries · MCP connection health) separates them with `h3` in the Label tier — 600 11px mono UPPERCASE 0.05em `--o-dim`, margin 0.8rem 0 0.3rem. Hierarchy stays by weight and case, never size; one note paragraph serves the whole panel.
 - **Hover (where-view):** `translateY(-1px)` lift over `--o-motion`.
 
 ### Stat Tiles

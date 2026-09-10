@@ -63,8 +63,17 @@ function tilesHtml() {
   const sessions = WHERE.sess.filter(keep).length;
   let calls = 0;
   for (const r of WHERE.tools) if (keep(r)) calls += r.n;
+  // #13: two numbers, no list — subagents spawned by sessions in view
+  // (first-day attributed, like the sessions tile) and the share of the
+  // view's tokens they spent (day grain, the same base as the token tiles)
+  let agents = 0, subTok = 0;
+  for (const s of WHERE.sess) if (s.na && keep(s)) agents += s.na;
+  for (const r of WHERE.subd) if (keep(r)) subTok += val4(r.t);
+  const all = val4(t);  // same toggle as the numerator
+  const share = all ? Math.round(subTok / all * 100) : 0;
   return [["input", t[0]], ["output", t[1]], ["cache create", t[2]],
-          ["cache read", t[3]], ["sessions", sessions], ["tool calls", calls]]
+          ["cache read", t[3]], ["sessions", sessions], ["tool calls", calls],
+          [`subagents · ${share}% of tokens`, agents]]
     .map(([l, v]) => `<div class="tile"><b>${fmt(v)}</b><span>${l}</span></div>`).join("");
 }
 

@@ -355,6 +355,56 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
                          "audit entry still describes only the first prefix")
         self.assertEqual(self.session_statuses()["sess-big"], "done")
 
+    def test_subagent_transcripts_ride_the_growth_path_and_never_reaudit(self):
+        """Issue #13: a subagent transcript unseen at sync (a db synced before
+        the ticket, or an agent spawned after the parent went quiet) is picked
+        up on the next run through the top-up path — no migration. The audit
+        is blind to it by design: the entry, its watermark and the extract
+        read the parent alone, so a subagent appearing or growing is never a
+        model call (StubRunner([]) raises if one happens)."""
+        parent = self.proj / "sess-sub.jsonl"
+        recs = [rec("user", "u0", "2026-08-01T10:00:00Z", "do the task"),
+                rec("assistant", "a0", "2026-08-01T10:00:05Z",
+                    [{"type": "text", "text": "ok"}],
+                    usage=USAGE, model="test-model", id="msg-p")]
+        write_records(parent, recs)
+        stub = StubRunner([ENTRY_A])
+        self.run_pipeline(stub)
+        watermark = self.rows("SELECT audited_size FROM sessions")[0]["audited_size"]
+        self.assertEqual(watermark, parent.stat().st_size)
+
+        sub = self.proj / "sess-sub" / "subagents" / "agent-a1.jsonl"
+        big = "subagent secret text " * 3000  # far past REAUDIT_SHARE if counted
+        write_records(sub, [
+            {**rec("assistant", "s0", "2026-08-01T10:00:08Z",
+                   [{"type": "text", "text": big}],
+                   usage=USAGE, model="test-model", id="msg-s"),
+             "sessionId": "sess-sub", "agentId": "a1", "isSidechain": True}])
+        self.run_pipeline(StubRunner([]))
+
+        self.assertEqual([u["agent_id"] for u in self.rows(
+            "SELECT agent_id FROM usage WHERE session_id='sess-sub' ORDER BY at")],
+            [None, "a1"])
+        self.assertEqual(self.session_statuses()["sess-sub"], "done")
+        self.assertEqual(self.audit_rows()["sess-sub"]["markdown"], ENTRY_A)
+        self.assertEqual(self.rows("SELECT audited_size FROM sessions")[0]
+                         ["audited_size"], watermark)
+        self.assertNotIn("subagent secret", stub.calls[-1],
+                         "the extract read a subagent transcript")
+
+        # the subagent grows: topped up again, still no model call
+        write_records(sub, [
+            {**rec("assistant", f"s{i}", f"2026-08-01T10:0{i}:08Z",
+                   [{"type": "text", "text": big}],
+                   usage=USAGE, model="test-model", id=f"msg-s{i}"),
+             "sessionId": "sess-sub", "agentId": "a1", "isSidechain": True}
+            for i in range(3)])
+        self.run_pipeline(StubRunner([]))
+        self.assertEqual(self.rows("SELECT COUNT(*) n FROM usage"
+                                   " WHERE agent_id='a1'")[0]["n"], 3)
+        self.assertEqual(self.rows("SELECT COUNT(*) n FROM usage"
+                                   " WHERE agent_id IS NULL")[0]["n"], 1)
+
     def test_why_pass_tables_dropped_from_pre_cut_db(self):
         """Ticket-#43 migration (ADR-0006): a db carrying the why-pass tables
         loses findings/evidence/runs and change_events.finding_id, keeping

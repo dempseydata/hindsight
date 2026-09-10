@@ -190,6 +190,13 @@ def parse_entry(md):
     return {"title": title, "sections": sections}
 
 
+def subagent_counts(conn):
+    """{session_id: subagent transcripts filed under it} (issue #13) — the
+    mechanical count both views' "N subagents" read; sessions with none absent."""
+    return dict(conn.execute("SELECT session_id, COUNT(*) FROM subagent_transcripts"
+                             " GROUP BY session_id"))
+
+
 def what_data(conn):
     """One row per session, newest day first — the cross-project ledger.
 
@@ -204,12 +211,17 @@ def what_data(conn):
     — id, project, day, the status flags and a `cont` note — that what.js
     resolves to the entry by id. A session with no usage keeps its start day
     alone; an undated one can't be windowed and stays one always-shown row.
+
+    `sub` is the count of subagent transcripts filed under the session
+    (issue #13) — a mechanical note so a large total has a visible cause;
+    absent when there are none.
     """
     days = {sid: sorted(ds.split(",")) for sid, ds in conn.execute(f"""
             SELECT session_id, GROUP_CONCAT(d) FROM (
                 SELECT DISTINCT session_id, {day_sql("at")} AS d
                 FROM usage WHERE at IS NOT NULL)
             GROUP BY session_id""")}
+    subs = subagent_counts(conn)
     rows = []
     for sid, project, date, skip, md, adr, pend, status in conn.execute("""
             SELECT s.id, s.project, s.date, a.skip, a.markdown, a.adr_count,
@@ -217,6 +229,8 @@ def what_data(conn):
             FROM sessions s LEFT JOIN audit a ON a.session_id = s.id
             ORDER BY s.date DESC, s.rowid DESC"""):
         r = {"id": sid, "p": project, "d": date, "skip": skip, "adr": adr}
+        if sid in subs:
+            r["sub"] = subs[sid]
         if status == LOST and pend:  # an entry always outranks the status
             # the blob key is the serve<->what.js contract (pinned by
             # test_serve's rendering asserts), not the status vocabulary —
@@ -290,7 +304,11 @@ def where_data(conn):
             JOIN sessions s ON s.id = u.session_id
             GROUP BY 1, 2, 3, 4""")]
 
-    # session lens: sessions with known usage only (pruned = unknown)
+    # session lens: sessions with known usage only (pruned = unknown). A
+    # session's subagent count rides along as `na` (issue #13) — the tile's
+    # agent count, attributed to the session's first day like the sessions
+    # tile beside it; absent when none.
+    subs = subagent_counts(conn)
     sess, sidx = [], {}
     for sid, p, d, i, o, cc, cr in conn.execute(f"""
             SELECT u.session_id, s.project, MIN({day_sql("u.at")}),
@@ -300,7 +318,18 @@ def where_data(conn):
             FROM usage u JOIN sessions s ON s.id = u.session_id
             GROUP BY u.session_id"""):
         sidx[sid] = len(sess)
-        sess.append({"p": p, "d": d, "t": [i, o, cc, cr]})
+        sess.append({"p": p, "d": d, "t": [i, o, cc, cr],
+                     **({"na": subs[sid]} if sid in subs else {})})
+    # subagent tokens at (day, project) grain — the same base as the header's
+    # day rows the tiles sum, so the tile's share is a true ratio in any window
+    subd = [{"d": d, "p": p, "t": [i, o, cc, cr]}
+            for d, p, i, o, cc, cr in conn.execute(f"""
+            SELECT {day_sql("u.at")}, s.project,
+                   SUM(u.input_tokens), SUM(u.output_tokens),
+                   SUM(u.cache_creation_input_tokens),
+                   SUM(u.cache_read_input_tokens)
+            FROM usage u JOIN sessions s ON s.id = u.session_id
+            WHERE u.agent_id IS NOT NULL GROUP BY 1, 2""")]
     cs = {}
     for ty, c, sid in conn.execute("""
             SELECT DISTINCT consumer_type, consumer, session_id
@@ -377,7 +406,7 @@ def where_data(conn):
                     if has_otel else ""),
            "hook": min((h["d"] for h in hooks), default=None),
            "excluded": one("SELECT COUNT(*) FROM excluded_sessions")}
-    return {"tools": tools, "lens": lens, "sess": sess, "cs": cons_sess,
+    return {"tools": tools, "lens": lens, "sess": sess, "subd": subd, "cs": cons_sess,
             "models": models, "lat": lat_rows, "hooks": hooks,
             "sunk": sunk, "med": medians, "cov": cov}
 

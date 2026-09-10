@@ -10,7 +10,10 @@ const full = Object.fromEntries(WHAT.filter(r => !r.cont).map(r => [r.id, r]));
 
 function rowHtml(r, open) {
   const cont = r.cont ? `<span class="cont">${r.cont}</span>` : "";
-  const chip = `<span class="pchip" title="${esc(r.p)}">${esc(r.p)}</span>${cont}`;
+  // #13: mechanical note — the session spawned subagents, whose tokens and
+  // tool calls are counted in it (their work is the session's work)
+  const sub = r.sub ? `<span class="cont" title="subagent transcripts filed under this session — their tokens count here">${r.sub} subagent${r.sub > 1 ? "s" : ""}</span>` : "";
+  const chip = `<span class="pchip" title="${esc(r.p)}">${esc(r.p)}</span>${cont}${sub}`;
   if (r.lost)
     return `<div class="row srow">${chip}<span class="ttl dim">transcript pruned before analysis \u2014 unrecoverable</span></div>`;
   if (r.empty)

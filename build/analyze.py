@@ -83,7 +83,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-from substrate import _is_live, adr_count, fill_substrate  # noqa: E402
+from substrate import (_is_live, adr_count, fill_substrate,  # noqa: E402
+                       subagent_transcripts)
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 
 DEFAULT_TRANSCRIPTS = Path.home() / ".claude" / "projects"
@@ -228,6 +229,7 @@ CREATE TABLE IF NOT EXISTS audit (
 CREATE TABLE IF NOT EXISTS tool_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL REFERENCES sessions(id),
+  agent_id TEXT,       -- subagent that emitted it (issue #13); NULL = the parent's own
   tool_use_id TEXT,
   name TEXT,
   at TEXT,
@@ -250,12 +252,14 @@ CREATE TABLE IF NOT EXISTS status_narrative (
 CREATE TABLE IF NOT EXISTS command_grains (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL REFERENCES sessions(id),
+  agent_id TEXT,
   command TEXT NOT NULL,  -- the <command-name> text, verbatim (ticket #61)
   at TEXT
 );
 CREATE TABLE IF NOT EXISTS usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL REFERENCES sessions(id),
+  agent_id TEXT,
   message_id TEXT,
   at TEXT,
   model TEXT,
@@ -263,6 +267,15 @@ CREATE TABLE IF NOT EXISTS usage (
   output_tokens INTEGER NOT NULL,
   cache_creation_input_tokens INTEGER NOT NULL,
   cache_read_input_tokens INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS subagent_transcripts (
+  -- a subagent transcript filed under its parent session (issue #13); not a
+  -- sessions row. size is the growth watermark, as sessions.size is for the parent
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  agent_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  PRIMARY KEY (session_id, agent_id)
 );
 CREATE TABLE IF NOT EXISTS excluded_sessions (
   id TEXT PRIMARY KEY
@@ -321,7 +334,7 @@ SECTIONS = ("Did", "Decided", "Setup changes")
 # The per-session substrate tables the scan fills — every wipe-for-rescan
 # site (growth invalidation, migration resets) must clear all of them, or a
 # rescan silently duplicates the forgotten table's rows.
-SUBSTRATE_TABLES = ("tool_events", "usage", "command_grains")
+SUBSTRATE_TABLES = ("tool_events", "usage", "command_grains", "subagent_transcripts")
 
 
 class LimitExhausted(Exception):
@@ -355,10 +368,17 @@ def init_db(db_path):
     # folder identity (ticket #6) — the column must exist before any refill.
     # Existing rows predate the hook and stay name-only (both NULL) until
     # the operator command stamps them. Idempotent, like the indexes.
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
-    for col in ("folder_identity INTEGER", "attribution_source TEXT"):
-        if col.split()[0] not in cols:
-            conn.execute(f"ALTER TABLE sessions ADD COLUMN {col}")
+    # Issue #13 likewise: agent_id on the substrate tables, ahead of the
+    # gate for the same refills. Existing rows are the parent's own (NULL);
+    # subagent transcripts of already-synced sessions arrive through
+    # invalidate_grown on the next run — no data migration.
+    for table, col in (("sessions", "folder_identity INTEGER"),
+                       ("sessions", "attribution_source TEXT"),
+                       ("tool_events", "agent_id TEXT"),
+                       ("usage", "agent_id TEXT"),
+                       ("command_grains", "agent_id TEXT")):
+        if col.split()[0] not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
     if v < 1:
         _migrate(conn)
     if v < 2:
@@ -741,28 +761,47 @@ def invalidate_grown(conn, work_dir):
     A *live* transcript is left alone too (ticket #76). The wipe is only
     half a top-up: `fill_substrate` skips a live session (ticket #29), so
     wiping one would end the run with zero substrate rows for it. Waiting
-    a run costs nothing — the tail is still on disk."""
-    rows = conn.execute("SELECT id, transcript_path, size, status, audited_size"
-                        " FROM sessions").fetchall()
-    for sid, path, size, status, audited in rows:
+    a run costs nothing — the tail is still on disk.
+
+    A session with a subagent transcript unseen or grown since its scan is a
+    session that grew (issue #13) — the same path backfills subagents of
+    sessions synced before they were ingested. Only the substrate follows:
+    the re-audit share is measured on the parent transcript alone, so a
+    subagent appearing or growing never rewrites the audit."""
+    rows = conn.execute("SELECT id, transcript_path, size, status, audited_size,"
+                        " skipped_records FROM sessions").fetchall()
+    for sid, path, size, status, audited, scanned in rows:
         p = Path(path)
-        if (not p.exists() or size is None or p.stat().st_size <= size
-                or _is_live(path)):
+        if not p.exists() or size is None or _is_live(path):
             continue
         now = p.stat().st_size
+        if now <= size and not (scanned is not None
+                                and _subagents_grew(conn, sid, path)):
+            continue
         for table in SUBSTRATE_TABLES:
             conn.execute(f"DELETE FROM {table} WHERE session_id=?", (sid,))
         conn.execute("UPDATE sessions SET skipped_records=NULL, size=?"
                      " WHERE id=?", (now, sid))
         reaudit = (status == "done" and audited is not None
                    and (now - audited) / now >= REAUDIT_SHARE)
-        if status != "done" or reaudit:
+        # the extract reads the parent alone: subagent-only growth leaves it
+        if (status != "done" and now > size) or reaudit:
             for f in [*(Path(work_dir) / "extracts").glob(f"{sid}.*"),
                       *(Path(work_dir) / PROMPT_VERSION).glob(f"{sid}.*")]:
                 f.unlink()
         if reaudit:
             conn.execute("UPDATE sessions SET status='pending' WHERE id=?", (sid,))
     conn.commit()
+
+
+def _subagents_grew(conn, sid, path):
+    """Any subagent transcript on disk that the scan has not recorded, or
+    that is larger than recorded. One that shrank or vanished is left alone
+    — pruning means unknown, never less (ADR-0013)."""
+    known = dict(conn.execute("SELECT agent_id, size FROM subagent_transcripts"
+                              " WHERE session_id=?", (sid,)))
+    return any(aid not in known or p.stat().st_size > known[aid]
+               for aid, p in subagent_transcripts(path))
 
 
 def part_files(extracts_dir, session_id):

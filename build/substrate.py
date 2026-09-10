@@ -220,6 +220,15 @@ def adr_count(conn, sid):
         (sid, *sorted(FILE_TOOLS), *(f"%/{n}/docs/adr/%" for n in names))).fetchone()[0]
 
 
+def subagent_transcripts(transcript_path):
+    """A parent transcript's subagent transcripts (issue #13, ADR-0019):
+    `<project>/<session>/subagents/agent-<id>.jsonl`, as [(agent_id, path)],
+    the agent id taken from the filename — it equals every record's agentId.
+    Filed under the parent session, never a session of their own."""
+    return [(p.stem.removeprefix("agent-"), p) for p in
+            sorted(Path(transcript_path).with_suffix("").glob("subagents/*.jsonl"))]
+
+
 def fill_substrate(conn):
     """The sync stage that fills tool_events + usage + command_grains for
     every session not yet scanned — sessions newly synced this run, and
@@ -227,29 +236,42 @@ def fill_substrate(conn):
     their next run, whose existing audit rows get adr_count stamped here.
     sessions.skipped_records doubles as the scanned marker: NULL means never
     scanned, and a vanished transcript stays NULL rather than reading as an
-    empty session."""
+    empty session. The parent's subagent transcripts are scanned in the same
+    pass (issue #13): their rows file under the parent id with agent_id set
+    (NULL on the parent's own rows), their skipped records count on the
+    parent, and each is recorded in subagent_transcripts with its size so
+    growth is detected per transcript the way sessions.size does it."""
     todo = conn.execute("SELECT id, transcript_path FROM sessions"
                         " WHERE skipped_records IS NULL").fetchall()
     for sid, path in todo:
         if not Path(path).exists() or _is_live(path):
             continue
-        events, usage_rows, commands, skipped = scan_transcript(path)
+        subs = subagent_transcripts(path)
+        total_skipped = 0
+        for aid, p in [(None, Path(path)), *subs]:
+            events, usage_rows, commands, skipped = scan_transcript(p)
+            total_skipped += skipped
+            conn.executemany(
+                "INSERT INTO tool_events (session_id, agent_id, tool_use_id, name,"
+                " at, result_at, file_path, message_id, consumer_type, consumer,"
+                " mcp_tool, is_error) VALUES (:session_id, :agent_id, :tool_use_id,"
+                " :name, :at, :result_at, :file_path, :message_id, :consumer_type,"
+                " :consumer, :mcp_tool, :is_error)",
+                [{**ev, "session_id": sid, "agent_id": aid} for ev in events])
+            conn.executemany(
+                "INSERT INTO usage (session_id, agent_id, message_id, at, model,"
+                " input_tokens, output_tokens, cache_creation_input_tokens,"
+                " cache_read_input_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [(sid, aid, *u) for u in usage_rows])
+            conn.executemany(
+                "INSERT INTO command_grains (session_id, agent_id, command, at)"
+                " VALUES (?, ?, ?, ?)", [(sid, aid, *c) for c in commands])
         conn.executemany(
-            "INSERT INTO tool_events (session_id, tool_use_id, name, at,"
-            " result_at, file_path, message_id, consumer_type, consumer,"
-            " mcp_tool, is_error) VALUES (:session_id, :tool_use_id, :name,"
-            " :at, :result_at, :file_path, :message_id, :consumer_type,"
-            " :consumer, :mcp_tool, :is_error)",
-            [{**ev, "session_id": sid} for ev in events])
-        conn.executemany(
-            "INSERT INTO usage (session_id, message_id, at, model, input_tokens,"
-            " output_tokens, cache_creation_input_tokens, cache_read_input_tokens)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [(sid, *u) for u in usage_rows])
-        conn.executemany(
-            "INSERT INTO command_grains (session_id, command, at)"
-            " VALUES (?, ?, ?)", [(sid, *c) for c in commands])
+            "INSERT INTO subagent_transcripts (session_id, agent_id, path, size)"
+            " VALUES (?, ?, ?, ?)",
+            [(sid, aid, str(p), p.stat().st_size) for aid, p in subs])
         conn.execute("UPDATE sessions SET skipped_records=? WHERE id=?",
-                     (skipped, sid))
+                     (total_skipped, sid))
         conn.execute("UPDATE audit SET adr_count=? WHERE session_id=?",
                      (adr_count(conn, sid), sid))
         conn.commit()  # per session — short write transactions on a shared db
@@ -261,6 +283,9 @@ LIVE_WINDOW_S = 300  # transcript written this recently = session still live
 def _is_live(path):
     """A transcript modified within the window is a live session (ticket #29):
     extracting it mid-flight would cache a truncated prefix forever. Skipped
-    sessions stay pending/partial for the next run."""
+    sessions stay pending/partial for the next run. A fresh subagent
+    transcript holds its parent live too (issue #13) — the session is the
+    operator's session including everything it spawned."""
     p = Path(path)
-    return p.exists() and time.time() - p.stat().st_mtime < LIVE_WINDOW_S
+    return any(q.exists() and time.time() - q.stat().st_mtime < LIVE_WINDOW_S
+               for q in (p, *(s for _, s in subagent_transcripts(p))))

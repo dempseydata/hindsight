@@ -63,6 +63,13 @@ def fixture_db(path):
     conn.executemany("""INSERT INTO usage (session_id, message_id, at,
         input_tokens, output_tokens, cache_creation_input_tokens,
         cache_read_input_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)""", usage)
+    # s1 spawned one subagent (issue #13): its usage files under s1 with the
+    # agent id on the row, and the transcript is recorded against s1
+    conn.execute("""INSERT INTO usage (session_id, message_id, at, input_tokens,
+        output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
+        agent_id) VALUES ('s1', 'ms', '2026-08-01T10:30:00Z', 100, 0, 0, 0, 'ag1')""")
+    conn.execute("INSERT INTO subagent_transcripts (session_id, agent_id, path,"
+                 " size) VALUES ('s1', 'ag1', 'x', 1)")
     tool_events = [
         # cli call in m1, paired 2s later, ok
         ("s1", "t1", "Bash", "2026-08-01T10:00:00Z", "2026-08-01T10:00:02Z",
@@ -320,6 +327,8 @@ class ServerTest(unittest.TestCase):
         self.assertIn('"lost": 1', body)
         self.assertIn("unrecoverable", body)      # #78 one-liner + summary term
         self.assertIn('"empty": 1', body)          # #2 empty row rides along
+        self.assertIn('"sub": 1', body)            # #13 subagent note
+        self.assertIn("subagents", body)           # what.js renders the note
         self.assertNotIn('"title": "Shipped the widget"',
                          self.get("/where")[1])    # blob is what-view only
 
@@ -340,6 +349,10 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn("pend", by_id["s8"])
         self.assertEqual(by_id["s9"]["empty"], 1)  # #2: empty, not pending
         self.assertNotIn("pend", by_id["s9"])
+        # #13: the mechanical "N subagents" note, from the transcripts
+        # recorded against the session — only where there are any
+        self.assertEqual(by_id["s1"]["sub"], 1)
+        self.assertNotIn("sub", by_id["s2"])
 
     def test_what_ledger_files_a_session_under_each_active_day(self):
         """#9: s2 has usage on 2026-08-03 and 2026-08-06 — the full row
@@ -367,6 +380,8 @@ class ServerTest(unittest.TestCase):
         _, body = self.get("/where")
         self.assertIn('id="league"', body)
         self.assertIn('"tools"', body)
+        self.assertIn('"subd"', body)                 # #13 tile data
+        self.assertIn("% of tokens", body)            # where.js renders the tile
         self.assertNotIn('"cost', body)          # pricing never rendered
 
     def test_where_league_category_chips_default_deliberate_adds(self):
@@ -402,7 +417,14 @@ class ServerTest(unittest.TestCase):
         # session lens index reaches every usage row of the session
         cs = {(r["ty"], r["c"]): r["s"] for r in w["cs"]}
         s1_tokens = sum(sum(w["sess"][i]["t"]) for i in cs[("cli", "gh")])
-        self.assertEqual(s1_tokens, 1000 + 200 + 50 + 90000 + 500 + 100 + 10000)
+        self.assertEqual(s1_tokens, 1000 + 200 + 50 + 90000 + 500 + 100 + 10000 + 100)
+        # #13: the session's subagent count rides on its sess row (absent
+        # when none); subagent tokens at day grain, the tiles' own base
+        [s1] = [s for s in w["sess"] if s.get("na")]
+        self.assertEqual(s1["na"], 1)
+        self.assertEqual(s1["t"], [1600, 300, 50, 100000])
+        self.assertEqual(w["subd"], [{"d": "2026-08-01", "p": "big",
+                                      "t": [100, 0, 0, 0]}])
         # measured median: first usage row per session, per project
         self.assertEqual(w["med"]["big"]["n"], 2)
         self.assertEqual(w["med"]["big"]["med"], (91050 + 82060) // 2)

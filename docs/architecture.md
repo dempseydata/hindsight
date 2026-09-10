@@ -60,7 +60,7 @@ C4Container
     Container(backfill, "Backfill importer", "Python CLI · one-off", "Assembles cached model outputs from local-data/backfill into the store under their original prompt version. Import, not re-extraction.")
     Container(prompts, "Prompts", "text · build/prompts", "what-v3, merge-v1, status-v1. Frozen and versioned; the version is stored on every audit row.")
     Container(evalgate, "Eval floors", "Python · eval/score.py", "contract, parse, BOUNDS — the eval's floors are the write-time gate; the analysis run and the server both import them.")
-    ContainerDb(db, "Store", "SQLite · local-data/hindsight.db", "sessions, audit, tool_events, usage, command_grains, otel_events, otel_metrics, sunk_cost, change_events, status_narrative, blobs, project_presence, excluded_sessions, backstop_state")
+    ContainerDb(db, "Store", "SQLite · local-data/hindsight.db", "sessions, audit, tool_events, usage, command_grains, subagent_transcripts, otel_events, otel_metrics, sunk_cost, change_events, status_narrative, blobs, project_presence, excluded_sessions, backstop_state")
     Container(serve, "Serve", "Python stdlib http.server · :8321", "Read-only (mode=ro URI). GET /what /where /how; every request re-queries the DB and inlines tokens.css + assets. Never invokes the model.")
     Container(views, "Views", "HTML · CSS · JS, no framework", "what · where · how, sharing one chrome: project chips that filter, a per-day token chart, click-a-bar time filtering. Two token sets, dark and light (ADR-0017).")
   }
@@ -73,7 +73,7 @@ C4Container
   Rel(analyze, cli, "prompt + extract on stdin", "subprocess")
   Rel(analyze, prompts, "reads frozen prompt text", "")
   Rel(analyze, evalgate, "parse / contract gate output before write", "import")
-  Rel(analyze, db, "sessions, audit, tool_events, usage, command_grains, sunk_cost, change_events, status_narrative", "sqlite3")
+  Rel(analyze, db, "sessions, audit, tool_events, usage, command_grains, subagent_transcripts, sunk_cost, change_events, status_narrative", "sqlite3")
   Rel(backfill, db, "audit rows, sessions as done or pending", "sqlite3")
   Rel(serve, db, "SELECT only", "sqlite3 mode=ro")
   Rel(serve, evalgate, "BOUNDS — narrative group names", "import")

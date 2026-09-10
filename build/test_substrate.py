@@ -3,8 +3,10 @@ driven through the analysis-run entrypoint: tool_events/usage/command_grains
 filled at sync time, consumer classification, dedup, the mechanical ADR
 count, and the substrate-touching db migrations.
 """
+import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -429,6 +431,81 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         grains = self.rows("SELECT command FROM command_grains"
                            " WHERE session_id='sess-cmdgrow' ORDER BY at")
         self.assertEqual([g["command"] for g in grains], ["/one", "/two"])
+
+    # Issue #13: subagent transcripts (<session>/subagents/agent-<id>.jsonl)
+    # are filed under the parent session, agent id on every row.
+    def _parent_and_subagent(self, sid="sess-par", parent=True):
+        root = self.root / "proj-a"
+        if parent:
+            write_records(root / f"{sid}.jsonl", [
+                rec("user", "u0", "2026-08-01T10:00:00Z", "do the task"),
+                rec("assistant", "a0", "2026-08-01T10:00:05Z",
+                    [{"type": "text", "text": "spawning"},
+                     {"type": "tool_use", "id": "tu-p", "name": "Agent",
+                      "input": {"prompt": "go"}}],
+                    usage=USAGE, model="m-1", id="msg-p")])
+        write_records(root / sid / "subagents" / "agent-abc123.jsonl", [
+            {**rec("user", "s0", "2026-08-01T10:00:06Z", "go"),
+             "sessionId": sid, "agentId": "abc123", "isSidechain": True},
+            {**rec("assistant", "s1", "2026-08-01T10:00:08Z",
+                   [{"type": "text", "text": "subagent secret text"},
+                    {"type": "tool_use", "id": "tu-s", "name": "Skill",
+                     "input": {"skill": "grilling"}}],
+                   usage={**USAGE, "output_tokens": 7}, model="m-1", id="msg-s"),
+             "sessionId": sid, "agentId": "abc123", "isSidechain": True},
+            {"type": "attachment", "attachment": {}},  # a record the scan skips
+        ])
+        return root / f"{sid}.jsonl"
+
+    def test_subagent_transcript_is_filed_under_the_parent_session(self):
+        """Issue #13 acceptance: the session's usage is parent + subagent; the
+        subagent's tool calls carry its agent id, the parent's own rows carry
+        NULL; the subagent transcript is recorded against the parent, never as
+        a session of its own; its skipped records count on the parent."""
+        self._parent_and_subagent()
+        self.sync_and_fill()
+
+        self.assertEqual([r["id"] for r in self.rows("SELECT id FROM sessions")],
+                         ["sess-par"])
+        usage = self.rows("SELECT agent_id, output_tokens FROM usage"
+                          " WHERE session_id='sess-par' ORDER BY at")
+        self.assertEqual([(u["agent_id"], u["output_tokens"]) for u in usage],
+                         [(None, 20), ("abc123", 7)])
+        events = {e["tool_use_id"]: e["agent_id"] for e in self.rows(
+            "SELECT tool_use_id, agent_id FROM tool_events WHERE session_id='sess-par'")}
+        self.assertEqual(events, {"tu-p": None, "tu-s": "abc123"})
+        subs = self.rows("SELECT * FROM subagent_transcripts")
+        self.assertEqual([(s["session_id"], s["agent_id"]) for s in subs],
+                         [("sess-par", "abc123")])
+        self.assertTrue(subs[0]["path"].endswith("agent-abc123.jsonl"))
+        self.assertEqual(subs[0]["size"], Path(subs[0]["path"]).stat().st_size)
+        self.assertEqual(self.rows("SELECT skipped_records FROM sessions")[0]
+                         ["skipped_records"], 1)
+
+    def test_excluded_parent_subagent_transcript_writes_no_rows(self):
+        """Self-exclusion is inherited from the parent id: a subagent has no
+        prompt signature of its own and is never scanned alone."""
+        root = self.root / "proj-a"
+        write_records(root / "sess-self.jsonl", [
+            rec("user", "u0", "2026-08-01T10:00:00Z",
+                "You are generating one audit-log entry for...")])
+        self._parent_and_subagent("sess-self", parent=False)
+        self.sync_and_fill()
+        self.assertEqual(self.rows("SELECT * FROM usage"), [])
+        self.assertEqual(self.rows("SELECT * FROM subagent_transcripts"), [])
+        self.assertEqual(self.rows("SELECT * FROM sessions"), [])
+
+    def test_fresh_subagent_transcript_holds_the_parent_live(self):
+        """The live-session guard covers the parent when any of its subagent
+        transcripts is fresh — scanning then would cache a truncated agent."""
+        path = self._parent_and_subagent()
+        sub = path.parent / "sess-par" / "subagents" / "agent-abc123.jsonl"
+        now = time.time()
+        os.utime(sub, (now, now))
+        self.sync_and_fill()
+        self.assertIsNone(self.rows("SELECT skipped_records FROM sessions")[0]
+                          ["skipped_records"])
+        self.assertEqual(self.rows("SELECT * FROM usage"), [])
 
     def test_command_grain_migration_rescans_scanned_sessions(self):
         """Ticket #61: a pre-#61 db (user_version 2) has every scanned

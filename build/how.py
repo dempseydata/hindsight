@@ -385,7 +385,7 @@ if __name__ == "__main__":  # real-data smoke: python3 how.py [project]
     import sys
 
     from analyze import DEFAULT_DB
-    conn = sqlite3.connect(f"file:{DEFAULT_DB}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{DEFAULT_DB}?mode=ro", uri=True, timeout=30)
     d = how_data(conn, sys.argv[1] if len(sys.argv) > 1 else "hindsight")
     print(json.dumps({k: v for k, v in d.items() if k not in ("trail", "sessions")}, indent=1))
     print(len(d["trail"]), "trail events")

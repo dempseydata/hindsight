@@ -389,6 +389,16 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         finally:
             conn.close()
 
+    def test_init_db_switches_the_file_to_wal(self):
+        """Issue #12: WAL is a property of the file, set once by whichever
+        writer opens it first, so readers never queue behind a write."""
+        conn = analyze.init_db(self.db)
+        try:
+            self.assertEqual(
+                conn.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+        finally:
+            conn.close()
+
     def test_pruned_unextracted_session_is_lost_and_never_retried(self):
         """Ticket #78: no transcript and no cached extract — terminal, not
         retryable. The queue would otherwise never drain."""

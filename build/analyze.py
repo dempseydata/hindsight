@@ -340,6 +340,10 @@ def init_db(db_path):
     # The ingest listener writes beneath every run; a write after a
     # minute-long model call must wait for it, not fail at the 5 s default.
     conn = sqlite3.connect(db_path, timeout=30)
+    # WAL (issue #12): readers never queue behind a writer, and a page
+    # held open in serve.py never blocks a commit here or in the listener.
+    # Persistent in the file — whichever writer opens it first switches it.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     # PRAGMA user_version gates the accreting migration sniffs (ticket #50):
     # each runs exactly once per db, so the #43 drops are never a standing

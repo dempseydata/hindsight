@@ -83,7 +83,10 @@ CHIP_SHARE = 0.01
 
 
 def open_db(db_path):
-    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    # The file is WAL (issue #12), so a read never waits on a writer; the
+    # timeout covers the brief checkpoint lock and a db no writer has
+    # switched yet, where it means "wait for the write" instead of a 500.
+    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
 
 
 def chip_rows(projects):

@@ -49,7 +49,10 @@ CREATE TABLE IF NOT EXISTS otel_metrics (
 def init_db(db_path):
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    # launchd restarts the listener whenever it exits, nightly run or not:
+    # the schema DDL must wait for an analyze.py write, not fail at 5 s.
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")   # issue #12; see analyze.init_db
     conn.executescript(SCHEMA)
     conn.close()
 

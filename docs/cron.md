@@ -44,6 +44,13 @@ is loopback with no token (see [flows.md](flows.md) F2).
 
 ## Concurrency between the two jobs and the server
 
-Both writers and the reader open the same file with no WAL mode. A long `analyze.py` transaction
-can block a `serve.py` request into a 500 and can push a listener insert past its 5 s
-`busy_timeout` into a silently dropped batch. Nothing corrupts; data can be lost on the ingest side.
+The file is in WAL mode (issue #12): both writers' `init_db` set the pragma, and it is persistent
+in the file, so whichever opens it first switches it once. A reader never waits on a writer, and a
+page held open in `serve.py` never blocks a commit — the two ways a request used to 500 or a
+listener batch used to be dropped. The two writers still serialise against each other: `analyze.py`
+waits up to 30 s for the listener, the listener up to 5 s (`busy_timeout`) for `analyze.py`.
+The nightly run commits per session with the model call outside the transaction, so the residual
+is a single write held longer than 5 s landing on a listener insert: `capture_backstop` opens its
+transaction at the first blob and runs every repo's `git log`/`show` inside it, and the one-off
+`init_db` migrations. The readers (`serve.py`, `how.py`) carry a 30 s timeout as well, for the brief
+checkpoint lock and for a db no writer has switched yet.

@@ -522,6 +522,25 @@ class ServerTest(unittest.TestCase):
             conn.execute("CREATE TABLE scribble (x)")
         conn.close()
 
+    def test_page_renders_through_a_held_write(self):
+        """Issue #12: the db is WAL, so a reader never queues behind a
+        writer's lock — a request issued during a long analyze.py
+        transaction returns 200 now, not a 500 once the default 5 s
+        timeout expires."""
+        writer = sqlite3.connect(self.db)
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute("INSERT INTO sessions (id, project, transcript_path,"
+                       " date, status) VALUES ('held', 'big', 'x',"
+                       " '2026-08-06', 'pending')")
+        try:
+            t0 = time.monotonic()
+            r, _ = self.get("/what")
+            self.assertEqual(r.status, 200)
+            self.assertLess(time.monotonic() - t0, 2)
+        finally:
+            writer.rollback()
+            writer.close()
+
 
 class DriftTest(unittest.TestCase):
     """Ticket #81: the static where.html can't import the vocabulary (kept

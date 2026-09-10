@@ -204,8 +204,10 @@ class ListenerTest(unittest.TestCase):
         db = sqlite3.connect(self.db)
         n = db.execute("SELECT COUNT(*) FROM otel_events "
                        "WHERE session_id='sess-idem'").fetchone()[0]
+        mode = db.execute("PRAGMA journal_mode").fetchone()[0]   # issue #12
         db.close()
         self.assertEqual(n, 1)
+        self.assertEqual(mode, "wal")
 
 
 if __name__ == "__main__":

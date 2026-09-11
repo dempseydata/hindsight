@@ -943,6 +943,152 @@
     "launch",
     "shipped"
    ]
+  },
+  "content@2026-09-09": {
+   "project": "content",
+   "as_of": "2026-09-09",
+   "stages": [
+    "Discover",
+    "Brief",
+    "Draft",
+    "Verify",
+    "Publish"
+   ],
+   "runs": [
+    {
+     "stage": "Brief",
+     "start": "2026-07-18",
+     "end": "2026-07-22",
+     "titles": [
+      "Long-form article on Netflix culture: research, draft, fact-check, ship",
+      "Pivoted middle-management article thesis to organizational glue, integrated Clawson framework"
+     ]
+    },
+    {
+     "stage": "Draft",
+     "start": "2026-07-22",
+     "end": "2026-07-30",
+     "titles": [
+      "Pivoted middle-management article thesis; diagnosed voice mismatch"
+     ]
+    },
+    {
+     "stage": "off-script",
+     "start": "2026-07-30",
+     "end": "2026-09-01",
+     "titles": [
+      "Blog post voice rewrite \u2014 persona override mechanism",
+      "AI skills article for knowledge workers: five iterations to 80/100",
+      "Brief and draft on organizational knowledge graphs using W3C ontologies",
+      "Prose architecture system for content generation built from style-theory analysis"
+     ]
+    },
+    {
+     "stage": "Discover",
+     "start": "2026-09-04",
+     "end": "2026-09-04",
+     "titles": []
+    },
+    {
+     "stage": "Brief",
+     "start": "2026-09-04",
+     "end": "2026-09-04",
+     "titles": []
+    },
+    {
+     "stage": "Draft",
+     "start": "2026-09-04",
+     "end": "2026-09-08",
+     "titles": []
+    },
+    {
+     "stage": "off-script",
+     "start": "2026-09-08",
+     "end": "2026-09-09",
+     "titles": [
+      "Create content-specific process model; promote `/last30days` plugin"
+     ]
+    }
+   ],
+   "note": "Frozen 2026-09-11 after issue #17: two off-script runs, the current one included, and three runs with no titles (invention bait).",
+   "expected": [
+    {
+     "id": "B1",
+     "name": "Netflix culture article",
+     "group": "Built",
+     "anchors": [
+      "netflix"
+     ]
+    },
+    {
+     "id": "B2",
+     "name": "middle-management thesis pivoted to organizational glue",
+     "group": "Built",
+     "anchors": [
+      "middle-management",
+      "organizational glue",
+      "clawson"
+     ]
+    },
+    {
+     "id": "B3",
+     "name": "voice rewrite, persona override",
+     "group": "Built",
+     "anchors": [
+      "voice rewrite",
+      "persona override",
+      "voice mismatch"
+     ]
+    },
+    {
+     "id": "B4",
+     "name": "AI skills article",
+     "group": "Built",
+     "anchors": [
+      "ai skills"
+     ]
+    },
+    {
+     "id": "B5",
+     "name": "knowledge graphs, W3C ontologies",
+     "group": "Built",
+     "anchors": [
+      "knowledge graph",
+      "w3c"
+     ]
+    },
+    {
+     "id": "B6",
+     "name": "prose architecture system",
+     "group": "Built",
+     "anchors": [
+      "prose architecture"
+     ]
+    },
+    {
+     "id": "B7",
+     "name": "content-specific process model, last30days plugin",
+     "group": "Built",
+     "anchors": [
+      "process model",
+      "last30days"
+     ]
+    },
+    {
+     "id": "N1",
+     "name": "off-script since Sep 8: process model",
+     "group": "Now",
+     "anchors": [
+      "off-script"
+     ]
+    }
+   ],
+   "forbidden": [
+    "published",
+    "deployed",
+    "launched",
+    "verified"
+   ]
   }
  }
 }

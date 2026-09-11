@@ -23,6 +23,7 @@ by #67). Snapshots are cut at dates so **Now** moves:
 | hindsight@2026-08-27 | 5 declared | 10 | Plan since Aug 27 | full ledger; how-view in progress |
 | thisisme@2026-08-16 | 5 declared | 3 | Design since Aug 1 | sparse; no Build run — invention bait |
 | thisisme@2026-08-25 | 5 declared | 4 | Plan since Aug 16 | two Reversed facts from titles alone |
+| content@2026-09-09 | 5 declared | 7 | off-script since Sep 8 | added 2026-09-11 (issue #17): two off-script runs, the current one included; three title-less runs — invention bait |
 
 Fixtures were cut from `local-data/hindsight.db` via `build/how.py`'s trail with
 the greybox's event-run grain (≥3 fold, majority titling, ticket #64). They are
@@ -52,8 +53,19 @@ Per case, from `score.py`:
 | M6 | Bounded — all three groups present, Built ≤ 8 / Reversed ≤ 4 / Now ≤ 3, Built and Now non-empty | required | A bounded list, not prose |
 
 A case **passes** only when every floor holds. The set **ACCEPTs** a prompt/model
-only when **all five cases pass**; regression semantics as before — a candidate
+only when **every case passes**; regression semantics as before — a candidate
 also has to match-or-beat the recorded baseline's recall and line counts.
+
+**The sixth case (issue #17, 2026-09-11).** Off-script events form phase runs
+under the label `off-script`, which the ledger's `stages` list never carries,
+so the model meets a run whose stage is not a declared stage. The five frozen
+cases hold no such run and could not measure that; `content@2026-09-09` was
+cut from the live ledger the day the change landed, with the current run
+off-script and an earlier one mid-history. Its Now fact anchors on the label
+itself — the card must state the run as work done under `off-script`, not
+narrate it as a stage. Reversed is empty by expectation: the one candidate,
+"Pivoted … thesis", uses a verb the prompt's Reversed list does not name, and
+placement is the model's judgement — it is expected under Built as work done.
 
 **Misplaced** (anchor found only in the wrong group) is reported, not floored: it
 already costs M1, and placement is the model's one judgement, so it shows up as
@@ -128,11 +140,13 @@ The known ceiling stands: a true line can still fail M3 on short words —
 | r7 | (variance run) | REJECT 4/5 — bare `promote PRD` line (the M3 ceiling) |
 | r8 | ≥3 title words per line; fold short items into their run's line | ACCEPT 5/5 |
 | r9 | (variance run) | ACCEPT 5/5 |
+| r10 | (variance run — issue #17 landed, prompt untouched) | ACCEPT 5/5 — recall 9/9, 14/15, 16/18, 4/4, 5/6 |
+| r11 | (same prompt; sixth case `content@2026-09-09` added) | ACCEPT 6/6 — content 8/8, 8 lines; its Now line reads `off-script, since Sep 8: Create content-specific process model; …` — the run stated as work done under the label, not as a stage |
 
-All nine runs sit under the one label `status-v1` because no narrative was
+All runs sit under the one label `status-v1` because no narrative was
 ever stored under an earlier draft — a prompt edit *after* this baseline bumps
-the version. Baseline numbers a candidate must match-or-beat (r9): recall 9/9, 15/15,
-18/18, 4/4, 5/6; lines 8, 9, 11, 5, 9. The one residual misplacement is
+the version. Baseline numbers a candidate must match-or-beat (r9, and r11 for
+the sixth case): recall 9/9, 15/15, 18/18, 4/4, 5/6, 8/8; lines 8, 9, 11, 5, 9, 8. The one residual misplacement is
 "invert ticket ordering" (thisisme@08-25), which haiku reads as work done
 rather than a reversal in about half of runs — inside the recall floor, and
 placement is the model's one judgement. No escalation from haiku.

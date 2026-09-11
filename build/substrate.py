@@ -49,9 +49,12 @@ FIELD_CONTRACT = (
     ("assistant.message.content.tool_use", "input"),
     ("assistant.message.content.text", "text"),
 )
-# The scope every record counts under, keyed by its type — the "records by
-# type" distribution the histogram's denominators come from.
-RECORD_SCOPE = "record"
+
+
+def record_count(scopes):
+    """Records under one version of the histogram: the `*` of every
+    record-type scope (un-dotted); the dotted scopes count units within."""
+    return sum(s.get("*", 0) for name, s in scopes.items() if "." not in name)
 
 # Command grain (ticket #61): the name inside a genuine command message's
 # <command-name> marker, captured verbatim.
@@ -139,16 +142,14 @@ def _tally(hist, version, scope, obj):
 def tally_record(e, hist):
     """Count one record into the field histogram (issue #15), per the
     record's own `version` — never the session's: one transcript can hold
-    records from two CLIs. Scopes: RECORD_SCOPE holds the type
-    distribution; the type itself its top-level keys; then `message`, its
+    records from two CLIs. Scopes: the record type holds its top-level
+    keys (its `*` is the records-by-type count); then `message`, its
     `usage`, the content block-type distribution under `content`, and each
     block type's keys.
     ponytail: a record with no `version` files under '' — a CLI dropping
     the version key itself is the one drift this cannot see (its records
     fall into the oldest bucket); sessions.cli_version going NULL is the tell."""
     v, t = str(e.get("version") or ""), str(e.get("type"))
-    hist[(v, RECORD_SCOPE, "*")] += 1
-    hist[(v, RECORD_SCOPE, t)] += 1
     _tally(hist, v, t, e)
     m = e.get("message")
     if not isinstance(m, dict):
@@ -370,7 +371,7 @@ def fill_substrate(conn):
         conn.commit()  # per session — short write transactions on a shared db
         # records = JSON objects seen (unparseable lines are in skipped only)
         run_records += sum(n for (_, s, k), n in hist.items()
-                           if s == RECORD_SCOPE and k == "*")
+                           if k == "*" and "." not in s)
         run_skipped += total_skipped
     return run_records, run_skipped
 

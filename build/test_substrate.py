@@ -750,9 +750,10 @@ class FieldHistogramTest(DbHelpers, unittest.TestCase):
         write_records(self.root / "p" / "s1.jsonl", recs)
         self.sync_and_fill()
         h = self.hist()
-        self.assertEqual(h["2.1.1"]["record"], {"*": 6, "user": 3, "assistant": 3})
-        self.assertEqual(h["2.1.2"]["record"]["*"], 4)
-        self.assertEqual(h[""]["record"], {"*": 1, "attachment": 1})
+        self.assertEqual((h["2.1.1"]["user"]["*"], h["2.1.1"]["assistant"]["*"]), (3, 3))
+        self.assertEqual(analyze.record_count(h["2.1.2"]), 4)
+        self.assertEqual(analyze.record_count(h[""]), 1)
+        self.assertEqual(h[""]["attachment"], {"*": 1, "type": 1, "attachment": 1})
         for scope, key in analyze.FIELD_CONTRACT:
             self.assertEqual(h["2.1.1"][scope][key], h["2.1.1"][scope]["*"],
                              (scope, key))
@@ -782,7 +783,7 @@ class FieldHistogramTest(DbHelpers, unittest.TestCase):
         analyze.invalidate_grown(conn, self.tmp.name)
         analyze.fill_substrate(conn)
         conn.close()
-        self.assertEqual(self.hist()["2.1.1"]["record"]["*"], 12)
+        self.assertEqual(analyze.record_count(self.hist()["2.1.1"]), 12)
 
 
 if __name__ == "__main__":

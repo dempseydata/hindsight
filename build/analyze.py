@@ -95,8 +95,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-from substrate import (FIELD_CONTRACT, RECORD_SCOPE, _is_live,  # noqa: E402
-                       adr_count, fill_substrate, subagent_transcripts)
+from substrate import (FIELD_CONTRACT, _is_live, adr_count,  # noqa: E402
+                       fill_substrate, record_count, subagent_transcripts)
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 
 DEFAULT_TRANSCRIPTS = Path.home() / ".claude" / "projects"
@@ -294,7 +294,7 @@ CREATE TABLE IF NOT EXISTS field_histogram (
   -- rescan wipe keeps it exact; the guard SUMs it per record version
   session_id TEXT NOT NULL REFERENCES sessions(id),
   version TEXT NOT NULL,   -- the record's own `version`; '' when it has none
-  scope TEXT NOT NULL,     -- 'record' | <type> | <type>.message[.usage|.content[.<block>]]
+  scope TEXT NOT NULL,     -- <type> | <type>.message[.usage|.content[.<block>]]
   key TEXT NOT NULL,       -- a key present under scope; '*' = units counted
   n INTEGER NOT NULL
 );
@@ -916,8 +916,7 @@ def check_drift(conn, at, records, skipped, notify=False):
     baseline = max((v for (v,) in conn.execute(
         "SELECT new_version FROM breakage WHERE acknowledged_at IS NOT NULL"
         " AND new_version IS NOT NULL")), key=_vkey, default="")
-    versions = sorted((v for v in h
-                       if h[v].get(RECORD_SCOPE, {}).get("*", 0) >= MIN_RECORDS
+    versions = sorted((v for v in h if record_count(h[v]) >= MIN_RECORDS
                        and _vkey(v) >= _vkey(baseline)), key=_vkey)
     trips = []
     if len(versions) >= 2:
@@ -938,7 +937,7 @@ def check_drift(conn, at, records, skipped, notify=False):
             if a is not None and b is not None and a > THINNED_BEFORE and b < THINNED_AFTER:
                 trips.append(("problem", 1, old, new, f"{scope}.{key}", a, b, since))
         for scope in h[new]:
-            if scope == RECORD_SCOPE or "." in scope:
+            if "." in scope:
                 continue  # a record type's own top-level keys only
             for key in h[new][scope]:
                 a, b = share(old, scope, key), share(new, scope, key)
@@ -981,17 +980,15 @@ def check_drift(conn, at, records, skipped, notify=False):
 
 def breakage_text(r):
     """One breakage row as one line — the banner's and the notification's."""
-    def pct(x):
-        return f"{round(x * 100)}%"
     if r["condition"] == 3:
-        return (f"skipped records are {pct(r['new_share'])} of this run's, over {SPIKE}×"
-                f" the recent median {pct(r['old_share'])} — run {r['at'][:10]}")
+        return (f"skipped records are {r['new_share']:.0%} of this run's, over {SPIKE}×"
+                f" the recent median {r['old_share']:.0%} — run {r['at'][:10]}")
     since = f"sessions since {r['since'] or '?'}"
     if r["condition"] == 1:
-        return (f"{r['key']} present in {pct(r['old_share'])} of records under"
-                f" {r['old_version']}, {pct(r['new_share'])} under {r['new_version']}"
+        return (f"{r['key']} present in {r['old_share']:.0%} of records under"
+                f" {r['old_version']}, {r['new_share']:.0%} under {r['new_version']}"
                 f" — {since}")
-    return (f"{r['key']} is new under {r['new_version']} ({pct(r['new_share'])} of"
+    return (f"{r['key']} is new under {r['new_version']} ({r['new_share']:.0%} of"
             f" records; absent under {r['old_version']}) — {since}")
 
 
@@ -1665,7 +1662,7 @@ def cli_version_line():
         v = subprocess.run(["claude", "--version"], capture_output=True,
                            text=True, timeout=30).stdout.strip()
     except (OSError, subprocess.TimeoutExpired):
-        v = "unavailable"
+        v = ""
     print(f"claude --version: {v or 'unavailable'}")
 
 

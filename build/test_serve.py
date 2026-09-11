@@ -173,6 +173,15 @@ def fixture_db(path):
         " last_seen, present) VALUES (7, ?, ?, '2026-08-05T00:00:00Z', ?)",
         [("old-big", "2026-07-01T00:00:00Z", 0), ("big", "2026-08-05T00:00:00Z", 1)])
     conn.execute("UPDATE sessions SET folder_identity = 7 WHERE project = 'big'")
+    # breakage (issue #15): one open problem row, one acknowledged
+    conn.executemany(
+        "INSERT INTO breakage (at, tier, condition, old_version, new_version,"
+        " key, old_share, new_share, since, acknowledged_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [("2026-08-05T03:00:00Z", "problem", 1, "2.1.1", "2.1.2",
+          "assistant.message.usage", 1.0, 0.12, "2026-08-04", None),
+         ("2026-08-04T03:00:00Z", "informational", 2, "2.1.0", "2.1.1",
+          "user.effort", 0.0, 0.98, "2026-08-02", "2026-08-04T09:00:00Z")])
     conn.execute("INSERT INTO tool_events (session_id, name, at, file_path,"
                  " consumer_type, consumer) VALUES ('s1', 'Write',"
                  " '2026-08-01T09:50:00Z', ?, 'builtin', 'Write')",
@@ -617,6 +626,18 @@ class ServerTest(unittest.TestCase):
         finally:
             writer.rollback()
             writer.close()
+
+    def test_breakage_banner_on_every_view_open_rows_only(self):
+        """Issue #15: the open breakage row is a tier-coloured banner on
+        what, where and how; the acknowledged one is gone."""
+        for view in ("what", "where", "how"):
+            _, body = self.get(f"/{view}")
+            self.assertIn('class="breakage problem"', body, view)
+            self.assertIn("assistant.message.usage present in 100% of records"
+                          " under 2.1.1, 12% under 2.1.2 — sessions since 2026-08-04",
+                          body, view)
+            self.assertIn("acknowledge-breakage 1", body, view)
+            self.assertNotIn("user.effort", body, view)
 
 
 class DriftTest(unittest.TestCase):

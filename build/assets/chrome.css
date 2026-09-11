@@ -44,6 +44,14 @@ header nav a[aria-current] { color: var(--o-accent); border-bottom: 1px solid va
   stroke-width: 1.5; }
 #chart .col.sel { fill: var(--o-compare); fill-opacity: var(--o-wash-sel); }
 #chart .selrule { fill: var(--o-compare); fill-opacity: var(--o-wash-rule); }
+/* Breakage banner (issue #15): one per open row, every view. Tier reads
+   through the semantic roles — problem red, informational blue (Few). */
+.breakage { margin: 1.1rem 0 0; padding: .55rem .9rem; font-size: 12px;
+  border: 1px solid; border-radius: var(--o-radius); background: var(--o-panel); }
+.breakage + .breakage { margin-top: .4rem; }
+.breakage.problem { color: var(--o-problem-text); border-color: var(--o-problem); }
+.breakage.informational { color: var(--o-ok-text); border-color: var(--o-ok); }
+.breakage code { font: 11px var(--o-mono); }
 main { margin-top: 1.1rem; }
 .panel { background: var(--o-panel); border: 1px solid var(--o-border);
   border-radius: var(--o-radius); box-shadow: var(--o-elev); padding: .9rem 1.1rem; }

@@ -3,6 +3,7 @@ driven through the analysis-run entrypoint: tool_events/usage/command_grains
 filled at sync time, consumer classification, dedup, the mechanical ADR
 count, and the substrate-touching db migrations.
 """
+import json
 import os
 import sqlite3
 import tempfile
@@ -13,7 +14,7 @@ from pathlib import Path
 import analyze
 from analyze import run_analysis
 from test_helpers import (DbHelpers, ENTRY_A, ENTRY_B, REFUSAL_MD,
-                          StubRunner, USAGE, rec, write_records)
+                          StubRunner, USAGE, _backdate, rec, write_records)
 
 
 class SubstrateTest(DbHelpers, unittest.TestCase):
@@ -548,7 +549,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 7)
+                conn.execute("PRAGMA user_version").fetchone()[0], 8)
         finally:
             conn.close()
 
@@ -604,7 +605,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 7)
+                conn.execute("PRAGMA user_version").fetchone()[0], 8)
             tables = {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("runs", tables)
@@ -639,7 +640,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 7)
+                conn.execute("PRAGMA user_version").fetchone()[0], 8)
         finally:
             conn.close()
 
@@ -699,6 +700,89 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
                          [("Bash", None)])
         self.assertEqual(self.rows("SELECT skipped_records FROM sessions"
                                    " WHERE id='sess-gone'")[0]["skipped_records"], 2)
+
+
+def shaped(version, i, extra=None):
+    """One full-shaped user/assistant record pair under `version` — every
+    FIELD_CONTRACT key present (issue #15)."""
+    u = {**rec("user", f"u{i}", "2026-08-01T10:00:00Z",
+               [{"type": "tool_result", "tool_use_id": f"t{i-1}", "content": "ok"},
+                {"type": "text", "text": "go"}]), "version": version, **(extra or {})}
+    a = {**rec("assistant", f"a{i}", "2026-08-01T10:00:01Z",
+               [{"type": "text", "text": "ok"},
+                {"type": "tool_use", "id": f"t{i}", "name": "Bash",
+                 "input": {"command": "ls"}}],
+               usage=USAGE, model="m", id=f"m{i}"), "version": version, **(extra or {})}
+    return [u, a]
+
+
+class FieldHistogramTest(DbHelpers, unittest.TestCase):
+    """The field histogram (issue #15): counted in the one scan, per record
+    version, stored per session, summed per version by the guard."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.db = base / "hindsight.db"
+
+    def sync_and_fill(self):
+        conn = analyze.init_db(self.db)
+        try:
+            analyze.sync_sessions(conn, self.root)
+            analyze.fill_substrate(conn)
+        finally:
+            conn.close()
+
+    def hist(self):
+        conn = analyze.init_db(self.db)
+        try:
+            return analyze.version_histogram(conn)
+        finally:
+            conn.close()
+
+    def test_every_contract_key_counted_per_record_version(self):
+        # one transcript, records from two CLIs (never per session)
+        recs = [r for i in range(3) for r in shaped("2.1.1", i)]
+        recs += [r for i in range(3, 5) for r in shaped("2.1.2", i)]
+        recs += [{"type": "attachment", "attachment": {}}]  # no version: ''
+        write_records(self.root / "p" / "s1.jsonl", recs)
+        self.sync_and_fill()
+        h = self.hist()
+        self.assertEqual(h["2.1.1"]["record"], {"*": 6, "user": 3, "assistant": 3})
+        self.assertEqual(h["2.1.2"]["record"]["*"], 4)
+        self.assertEqual(h[""]["record"], {"*": 1, "attachment": 1})
+        for scope, key in analyze.FIELD_CONTRACT:
+            self.assertEqual(h["2.1.1"][scope][key], h["2.1.1"][scope]["*"],
+                             (scope, key))
+        # block-type distribution and a non-contract key both counted
+        self.assertEqual(h["2.1.1"]["assistant.message.content"],
+                         {"text": 3, "tool_use": 3})
+        self.assertEqual(h["2.1.1"]["user.message.content.tool_result"]["content"], 3)
+
+    def test_rescan_leaves_counts_equal_to_a_fresh_scan(self):
+        """A schema-bump rescan and a growth top-up both wipe per session,
+        so the summed histogram never double-counts."""
+        write_records(self.root / "p" / "s1.jsonl",
+                      [r for i in range(4) for r in shaped("2.1.1", i)])
+        self.sync_and_fill()
+        fresh = self.hist()
+        conn = analyze.init_db(self.db)
+        analyze._reset_scanned(conn)         # the schema-bump path
+        analyze.fill_substrate(conn)
+        conn.close()
+        self.assertEqual(self.hist(), fresh)
+        # growth: the transcript gains two pairs; the top-up rescans whole
+        with (self.root / "p" / "s1.jsonl").open("a") as f:
+            for r in [r for i in range(4, 6) for r in shaped("2.1.1", i)]:
+                f.write(json.dumps(r) + "\n")
+        _backdate(self.root / "p" / "s1.jsonl")
+        conn = analyze.init_db(self.db)
+        analyze.invalidate_grown(conn, self.tmp.name)
+        analyze.fill_substrate(conn)
+        conn.close()
+        self.assertEqual(self.hist()["2.1.1"]["record"]["*"], 12)
 
 
 if __name__ == "__main__":

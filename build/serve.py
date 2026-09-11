@@ -62,7 +62,8 @@ from pathlib import Path
 # already resolve build/ — no path insert needed (the #50 shadowing lesson).
 import how
 from analyze import (DEFAULT_PROJECTS_DIR, DEFAULT_DB, LOST, REPO,  # noqa: E402 — one authority on paths
-                     SECTIONS, audit_title, day_sql, local_day)
+                     BREAKAGE_COLS, SECTIONS, audit_title, breakage_text, day_sql,
+                     local_day)
 from score import BOUNDS  # noqa: E402 — narrative group names; eval/ on sys.path via analyze
 
 TOKENS_CSS = REPO / "design" / "tokens.css"
@@ -119,6 +120,26 @@ def hidden_projects(conn):
         return set()
     return {p for (p,) in conn.execute(
         "SELECT name FROM project_presence GROUP BY name HAVING MAX(present) = 0")}
+
+
+def breakage_banner(conn):
+    """The open breakage rows (issue #15) as one banner per row, on every
+    view — it shows wherever the operator lands. Tier-coloured with the
+    semantic roles; the acknowledge command is on the banner because that
+    is the one place the operator meets the id. Empty when none is open,
+    and on a db predating the table (read-only: only a run can add it)."""
+    if not conn.execute("SELECT 1 FROM sqlite_master"
+                        " WHERE name = 'breakage'").fetchone():
+        return ""
+    rows = [dict(zip(BREAKAGE_COLS, r)) for r in conn.execute(
+        f"SELECT {', '.join(BREAKAGE_COLS)} FROM breakage WHERE acknowledged_at IS NULL"
+        " ORDER BY id")]
+    return "".join(
+        f'<div class="breakage {r["tier"]}"><b>transcript shape changed · {r["tier"]}</b> '
+        f"{html.escape(breakage_text(r))} · ingest continued; rows since may be"
+        f'{" thin" if r["tier"] == "problem" else " unaffected"}. '
+        f"<code>analyze.py acknowledge-breakage {r['id']}</code> to close</div>"
+        for r in rows)
 
 
 def header_data(conn):
@@ -646,7 +667,7 @@ def render(view, conn, query="", projects_dir=DEFAULT_PROJECTS_DIR):
 <p class="cov">synced through {synced or "never"} · the process actually followed,
 per project: a status over phase runs beside the stated process — no order rules,
 no verdicts (ADR-0010)</p>
-</header><main>{how_html(conn, project, projects_dir)}</main></body></html>"""
+</header>{breakage_banner(conn)}<main>{how_html(conn, project, projects_dir)}</main></body></html>"""
     data = header_data(conn)
     if view == "what":
         main = _asset("what.html")
@@ -687,7 +708,7 @@ pruned transcripts read unknown, never zero</p>
 <span class="hint">click a bar to filter to a day, a second bar for a range,
 the same bar again to deselect — a chart click overrides the preset</span></div>
 <div id="chart"></div>
-</header>
+</header>{breakage_banner(conn)}
 <main>{main}</main>
 <script>const DATA = {blob};{_asset("chrome.js")}{view_js}</script>
 </body></html>"""

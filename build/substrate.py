@@ -14,9 +14,44 @@ import json
 import re
 import shutil
 import time
+from collections import Counter
 from pathlib import Path
 
 from extract import FILE_TOOLS  # the create/modify tool set
+
+# The field contract (issue #15): every transcript key this scan, the
+# extract (build/extract.py msg_texts) and analyze.head_scan depend on
+# being *present*, as (scope, key) — scope is the record type, then the
+# dotted path into it; a `content.<block type>` scope is one content block.
+# Enumerated from the three readers, not from memory. Keys read but not
+# expected present are deliberately absent: `isMeta` (its absence is the
+# common case), `tool_result.is_error` (written only on error),
+# `tool_use.input.file_path` / `notebook_path` (file tools only).
+# The schema-drift guard (analyze.check_drift) walks this list against the
+# per-version field histogram scan_transcript accumulates, so the guard and
+# the readers cannot drift apart — a key added to a reader is added here.
+FIELD_CONTRACT = (
+    ("user", "type"), ("user", "message"), ("user", "timestamp"),
+    ("user", "uuid"), ("user", "version"),
+    ("user.message", "content"),
+    ("user.message.content.tool_result", "tool_use_id"),
+    ("user.message.content.text", "text"),
+    ("assistant", "type"), ("assistant", "message"), ("assistant", "timestamp"),
+    ("assistant", "uuid"), ("assistant", "version"),
+    ("assistant.message", "content"), ("assistant.message", "id"),
+    ("assistant.message", "usage"), ("assistant.message", "model"),
+    ("assistant.message.usage", "input_tokens"),
+    ("assistant.message.usage", "output_tokens"),
+    ("assistant.message.usage", "cache_creation_input_tokens"),
+    ("assistant.message.usage", "cache_read_input_tokens"),
+    ("assistant.message.content.tool_use", "id"),
+    ("assistant.message.content.tool_use", "name"),
+    ("assistant.message.content.tool_use", "input"),
+    ("assistant.message.content.text", "text"),
+)
+# The scope every record counts under, keyed by its type — the "records by
+# type" distribution the histogram's denominators come from.
+RECORD_SCOPE = "record"
 
 # Command grain (ticket #61): the name inside a genuine command message's
 # <command-name> marker, captured verbatim.
@@ -91,10 +126,50 @@ def classify(name, tool_input):
     return "builtin", name, None
 
 
+def _tally(hist, version, scope, obj):
+    """One unit under `scope`: its `*` count and one count per key present.
+    Every key one level deep, not just the contract's — a superset, so an
+    upstream addition is visible (drift condition 2) and the contract is a
+    filter on the check, never on the count."""
+    hist[(version, scope, "*")] += 1
+    for k in (obj if isinstance(obj, dict) else ()):
+        hist[(version, scope, k)] += 1
+
+
+def tally_record(e, hist):
+    """Count one record into the field histogram (issue #15), per the
+    record's own `version` — never the session's: one transcript can hold
+    records from two CLIs. Scopes: RECORD_SCOPE holds the type
+    distribution; the type itself its top-level keys; then `message`, its
+    `usage`, the content block-type distribution under `content`, and each
+    block type's keys.
+    ponytail: a record with no `version` files under '' — a CLI dropping
+    the version key itself is the one drift this cannot see (its records
+    fall into the oldest bucket); sessions.cli_version going NULL is the tell."""
+    v, t = str(e.get("version") or ""), str(e.get("type"))
+    hist[(v, RECORD_SCOPE, "*")] += 1
+    hist[(v, RECORD_SCOPE, t)] += 1
+    _tally(hist, v, t, e)
+    m = e.get("message")
+    if not isinstance(m, dict):
+        return
+    _tally(hist, v, f"{t}.message", m)
+    if isinstance(m.get("usage"), dict):
+        _tally(hist, v, f"{t}.message.usage", m["usage"])
+    if isinstance(m.get("content"), list):
+        for c in m["content"]:
+            if isinstance(c, dict):
+                bt = str(c.get("type"))
+                hist[(v, f"{t}.message.content", bt)] += 1
+                _tally(hist, v, f"{t}.message.content.{bt}", c)
+
+
 def scan_transcript(path):
     """One full parse of a transcript into the where-view substrate (tickets
     #22, #42) plus command grains (ticket #61). Returns (events, usage_rows,
-    commands, skipped): events as dicts keyed by tool_events column name,
+    commands, skipped, hist): hist the field histogram (issue #15), a
+    Counter keyed (record version, scope, key) over every record parsed —
+    see tally_record. events as dicts keyed by tool_events column name,
     with tool_use/tool_result paired by id — a tool_use without an id (older
     CLIs) keeps its row with result_at/is_error NULL, a tool_result without
     a tool_use_id is ignored. Duplicate tool_use ids (the records streaming
@@ -111,6 +186,7 @@ def scan_transcript(path):
     lines and record types the scan doesn't consume — counted, never
     fatal."""
     events, results, usage, commands, skipped, seen_ids = [], {}, {}, [], 0, set()
+    hist = Counter()
     with Path(path).open() as f:
         for line in f:
             try:
@@ -118,6 +194,10 @@ def scan_transcript(path):
             except json.JSONDecodeError:
                 skipped += 1
                 continue
+            if not isinstance(e, dict):
+                skipped += 1  # a bare JSON scalar or list is not a record
+                continue
+            tally_record(e, hist)
             t, m = e.get("type"), e.get("message")
             content = m.get("content") if isinstance(m, dict) else None
             if t == "assistant":
@@ -177,7 +257,7 @@ def scan_transcript(path):
         r = results.get(ev["tool_use_id"]) if ev["tool_use_id"] else None
         if r:
             ev["result_at"], ev["is_error"] = r
-    return events, list(usage.values()), commands, skipped
+    return events, list(usage.values()), commands, skipped, hist
 
 
 def former_names(conn, project):
@@ -240,17 +320,26 @@ def fill_substrate(conn):
     pass (issue #13): their rows file under the parent id with agent_id set
     (NULL on the parent's own rows), their skipped records count on the
     parent, and each is recorded in subagent_transcripts with its size so
-    growth is detected per transcript the way sessions.size does it."""
+    growth is detected per transcript the way sessions.size does it.
+
+    The field histogram (issue #15) is stored per session too, so the
+    per-session wipe every rescan path runs (SUBSTRATE_TABLES) keeps it
+    exact — a growth top-up or a schema-bump rescan can never double-count;
+    the per-version view the guard compares is a SUM at check time.
+    Returns (records, skipped) scanned by this call: the run's own parse
+    figures, for drift condition 3."""
     todo = conn.execute("SELECT id, transcript_path FROM sessions"
                         " WHERE skipped_records IS NULL").fetchall()
+    run_records = run_skipped = 0
     for sid, path in todo:
         if not Path(path).exists() or _is_live(path):
             continue
         subs = subagent_transcripts(path)
-        total_skipped = 0
+        total_skipped, hist = 0, Counter()
         for aid, p in [(None, Path(path)), *subs]:
-            events, usage_rows, commands, skipped = scan_transcript(p)
+            events, usage_rows, commands, skipped, h = scan_transcript(p)
             total_skipped += skipped
+            hist += h
             conn.executemany(
                 "INSERT INTO tool_events (session_id, agent_id, tool_use_id, name,"
                 " at, result_at, file_path, message_id, consumer_type, consumer,"
@@ -270,11 +359,20 @@ def fill_substrate(conn):
             "INSERT INTO subagent_transcripts (session_id, agent_id, path, size)"
             " VALUES (?, ?, ?, ?)",
             [(sid, aid, str(p), p.stat().st_size) for aid, p in subs])
+        conn.executemany(
+            "INSERT INTO field_histogram (session_id, version, scope, key, n)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [(sid, v, s, k, n) for (v, s, k), n in hist.items()])
         conn.execute("UPDATE sessions SET skipped_records=? WHERE id=?",
                      (total_skipped, sid))
         conn.execute("UPDATE audit SET adr_count=? WHERE session_id=?",
                      (adr_count(conn, sid), sid))
         conn.commit()  # per session — short write transactions on a shared db
+        # records = JSON objects seen (unparseable lines are in skipped only)
+        run_records += sum(n for (_, s, k), n in hist.items()
+                           if s == RECORD_SCOPE and k == "*")
+        run_skipped += total_skipped
+    return run_records, run_skipped
 
 
 LIVE_WINDOW_S = 300  # transcript written this recently = session still live

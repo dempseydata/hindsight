@@ -56,6 +56,14 @@ Every day bucket is the operator's local day off the stored UTC instant
 (ADR-0014); `HINDSIGHT_TZ=<IANA name>` pins that zone, unset is the host's
 (issue #1). `sessions.date`, the one stored bucket, re-derives each run.
 
+The schema-drift guard (issue #15, ADR-0020) runs after the substrate
+fill: the scan counts every key it sees per record `version` into
+`field_histogram`, and check_drift compares the newest version's shape
+with the nearest earlier one against substrate.FIELD_CONTRACT. A trip is a
+`breakage` row — banner on every view, notification when the rows may be
+thin — and the run carries on; `acknowledge-breakage` closes it. The CLI's
+own version is a log line per run, never a trigger.
+
 Usage: analyze.py [--root DIR] [--db PATH] [--work-dir DIR]
        analyze.py install       write + start the nightly launchd calendar job
        analyze.py uninstall     stop the job + remove the plist
@@ -63,6 +71,9 @@ Usage: analyze.py [--root DIR] [--db PATH] [--work-dir DIR]
                             [--db PATH] [--projects-dir DIR]
                                 stamp a folder's identity onto pre-hook sessions
                                 (ADR-0018); the next run re-keys them
+       analyze.py acknowledge-breakage <id> [--db PATH]
+                                close one breakage row; its new version is the
+                                drift comparison's baseline from then. Never rescans
 
 The nightly is a scheduled *invocation* of this on-demand command, not a
 background process (ADR-0001 amendment 2026-08-24). launchd calendar jobs
@@ -75,6 +86,7 @@ import os
 import plistlib
 import re
 import sqlite3
+import statistics
 import subprocess
 import sys
 import time
@@ -83,8 +95,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-from substrate import (_is_live, adr_count, fill_substrate,  # noqa: E402
-                       subagent_transcripts)
+from substrate import (FIELD_CONTRACT, RECORD_SCOPE, _is_live,  # noqa: E402
+                       adr_count, fill_substrate, subagent_transcripts)
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 
 DEFAULT_TRANSCRIPTS = Path.home() / ".claude" / "projects"
@@ -277,6 +289,36 @@ CREATE TABLE IF NOT EXISTS subagent_transcripts (
   size INTEGER NOT NULL,
   PRIMARY KEY (session_id, agent_id)
 );
+CREATE TABLE IF NOT EXISTS field_histogram (
+  -- the schema-drift guard's evidence (issue #15): per session so every
+  -- rescan wipe keeps it exact; the guard SUMs it per record version
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  version TEXT NOT NULL,   -- the record's own `version`; '' when it has none
+  scope TEXT NOT NULL,     -- 'record' | <type> | <type>.message[.usage|.content[.<block>]]
+  key TEXT NOT NULL,       -- a key present under scope; '*' = units counted
+  n INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scan_runs (
+  -- one row per analysis run that scanned anything: condition 3's baseline
+  at TEXT PRIMARY KEY,
+  records INTEGER NOT NULL,
+  skipped INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS breakage (
+  -- a run-level observation that the transcript shape moved (issue #15):
+  -- ingest continued, the rows since may be thin; cleared by the operator
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,          -- the run that saw it
+  tier TEXT NOT NULL,        -- 'problem' | 'informational'
+  condition INTEGER NOT NULL,  -- 1 key thinned | 2 key added | 3 skipped spike
+  old_version TEXT,          -- the comparison version (NULL for condition 3)
+  new_version TEXT,          -- the newest version
+  key TEXT,                  -- '<scope>.<key>' (NULL for condition 3)
+  old_share REAL NOT NULL,   -- presence share under old (3: the recent median)
+  new_share REAL NOT NULL,   -- presence share under new (3: this run's share)
+  since TEXT,                -- first session day under new_version
+  acknowledged_at TEXT       -- NULL = open, on every view's banner
+);
 CREATE TABLE IF NOT EXISTS excluded_sessions (
   id TEXT PRIMARY KEY
 );
@@ -334,7 +376,21 @@ SECTIONS = ("Did", "Decided", "Setup changes")
 # The per-session substrate tables the scan fills — every wipe-for-rescan
 # site (growth invalidation, migration resets) must clear all of them, or a
 # rescan silently duplicates the forgotten table's rows.
-SUBSTRATE_TABLES = ("tool_events", "usage", "command_grains", "subagent_transcripts")
+SUBSTRATE_TABLES = ("tool_events", "usage", "command_grains", "subagent_transcripts",
+                    "field_histogram")
+
+# The schema-drift guard (issue #15). A version needs this many units in a
+# scope before its shares mean anything; a run needs this many records
+# before its skipped share can trip condition 3.
+MIN_RECORDS = 20
+MIN_RUN_RECORDS = 1000
+THINNED_BEFORE, THINNED_AFTER = 0.9, 0.5  # condition 1: >90% before, <50% after
+ADDED = 0.5             # condition 2: absent before, >50% after
+SPIKE = 3               # condition 3: this run's skipped share vs the median
+SPIKE_WINDOW = 7        # ... of the last N runs
+# The breakage row as the guard writes it and the banner reads it (serve.py).
+BREAKAGE_COLS = ("id", "at", "tier", "condition", "old_version", "new_version",
+                 "key", "old_share", "new_share", "since")
 
 
 class LimitExhausted(Exception):
@@ -398,13 +454,7 @@ def init_db(db_path):
         # (the forced rescan also heals the two prefix-truncated event tails
         # found by #59). Wipe and refill in one call, per the #50 rule: no
         # caller-dependent window. A vanished transcript keeps its old rows.
-        stale = [(sid,) for sid, path in conn.execute(
-            "SELECT id, transcript_path FROM sessions"
-            " WHERE skipped_records IS NOT NULL") if Path(path).exists()]
-        for table in SUBSTRATE_TABLES:
-            conn.executemany(f"DELETE FROM {table} WHERE session_id=?", stale)
-        conn.executemany("UPDATE sessions SET skipped_records=NULL WHERE id=?",
-                         stale)
+        _reset_scanned(conn)
         conn.execute("PRAGMA user_version = 3")
         conn.commit()
         fill_substrate(conn)
@@ -459,13 +509,37 @@ def init_db(db_path):
                 [(name, now, now, present) for name, present in old])
         conn.execute("PRAGMA user_version = 7")
         conn.commit()
+    if v < 8:
+        # Issue #15: the field histogram is new — rescan every scanned
+        # session whose transcript survives so the drift baseline covers
+        # the whole corpus (after #13's subagent fix, per ADR-0019). Same
+        # wipe-and-refill as v3; a vanished transcript keeps its old rows.
+        _reset_scanned(conn)
+        conn.execute("PRAGMA user_version = 8")
+        conn.commit()
+        fill_substrate(conn)
     # Message-lens join indexes — after the gate, so a pre-#42 db grows the
     # columns before they're indexed.
     conn.executescript(
         "CREATE INDEX IF NOT EXISTS idx_tool_events_message"
         " ON tool_events(message_id);"
-        " CREATE INDEX IF NOT EXISTS idx_usage_message ON usage(message_id);")
+        " CREATE INDEX IF NOT EXISTS idx_usage_message ON usage(message_id);"
+        " CREATE INDEX IF NOT EXISTS idx_field_histogram_session"
+        " ON field_histogram(session_id);")
     return conn
+
+
+def _reset_scanned(conn):
+    """The schema-bump rescan: drop the substrate of every scanned session
+    whose transcript survives and clear its scanned marker, so the caller's
+    fill_substrate refills them in one place (the #50 rule). A vanished
+    transcript keeps its old rows — unknown, never less."""
+    stale = [(sid,) for sid, path in conn.execute(
+        "SELECT id, transcript_path FROM sessions"
+        " WHERE skipped_records IS NOT NULL") if Path(path).exists()]
+    for table in SUBSTRATE_TABLES:
+        conn.executemany(f"DELETE FROM {table} WHERE session_id=?", stale)
+    conn.executemany("UPDATE sessions SET skipped_records=NULL WHERE id=?", stale)
 
 
 def _migrate(conn):
@@ -487,13 +561,7 @@ def _migrate(conn):
         for col in ("message_id TEXT", "consumer_type TEXT", "consumer TEXT",
                     "mcp_tool TEXT", "is_error INTEGER"):
             conn.execute(f"ALTER TABLE tool_events ADD COLUMN {col}")
-        stale = [(sid,) for sid, path in conn.execute(
-            "SELECT id, transcript_path FROM sessions"
-            " WHERE skipped_records IS NOT NULL") if Path(path).exists()]
-        for table in SUBSTRATE_TABLES:
-            conn.executemany(f"DELETE FROM {table} WHERE session_id=?", stale)
-        conn.executemany("UPDATE sessions SET skipped_records=NULL WHERE id=?",
-                         stale)
+        _reset_scanned(conn)
         # The surviving old rows were scanned before dedup existed — the
         # records streaming one response repeated its tool_use blocks. One
         # row per call, in place, since their transcripts can't be rescanned.
@@ -802,6 +870,154 @@ def _subagents_grew(conn, sid, path):
                               " WHERE session_id=?", (sid,)))
     return any(aid not in known or p.stat().st_size > known[aid]
                for aid, p in subagent_transcripts(path))
+
+
+def _vkey(v):
+    """Record-version order: numeric dotted, so 2.1.91 < 2.1.233. '' (records
+    carrying no version) sorts oldest."""
+    return tuple(int(x) for x in re.findall(r"\d+", v))
+
+
+def version_histogram(conn):
+    """{version: {scope: {key: n}}} — the field histogram per record
+    version, the per-session rows summed (issue #15)."""
+    h = {}
+    for v, s, k, n in conn.execute("SELECT version, scope, key, SUM(n)"
+                                   " FROM field_histogram GROUP BY 1, 2, 3"):
+        h.setdefault(v, {}).setdefault(s, {})[k] = n
+    return h
+
+
+def check_drift(conn, at, records, skipped, notify=False):
+    """The schema-drift guard (issue #15, ADR-0020): a histogram delta
+    between record versions, never a version pin. The newest version with
+    MIN_RECORDS records is compared with the nearest earlier one that has
+    them; an acknowledged breakage makes its new version the comparison
+    baseline, so the versions below it are never the comparison again. Trips:
+
+    1. a FIELD_CONTRACT key present in >90% of a scope's units under the
+       comparison version and <50% under the newest — *problem*, the rows
+       since may be thin;
+    2. a top-level key absent under the comparison version present in >50%
+       of a record type's units under the newest — *informational*,
+       upstream added something, the rows cannot be wrong;
+    3. this run's skipped share exceeds SPIKE× the median of the last
+       SPIKE_WINDOW runs — *problem*; the one per-run condition, because a
+       parse failure is a run-time event. Runs under MIN_RUN_RECORDS
+       neither trip nor enter the baseline.
+
+    One breakage row per trip, deduplicated against the open rows, carrying
+    the two versions, the key, the shares and the first session day under
+    the newest version. Ingest never halts: this runs after the substrate
+    fill and the run carries on. A macOS notification for conditions 1 and
+    3 only, when `notify` — a notification always means a decision is
+    needed. Returns the rows written."""
+    h = version_histogram(conn)
+    baseline = max((v for (v,) in conn.execute(
+        "SELECT new_version FROM breakage WHERE acknowledged_at IS NOT NULL"
+        " AND new_version IS NOT NULL")), key=_vkey, default="")
+    versions = sorted((v for v in h
+                       if h[v].get(RECORD_SCOPE, {}).get("*", 0) >= MIN_RECORDS
+                       and _vkey(v) >= _vkey(baseline)), key=_vkey)
+    trips = []
+    if len(versions) >= 2:
+        old, new = versions[-2:]
+        # ponytail: `since` reads sessions.cli_version, the head-scan version
+        # — a session opened under the old CLI and resumed under the new one
+        # is missed, so the day can run late (or read '?'). Query the
+        # histogram by session for the exact day if that ever matters.
+        since = conn.execute("SELECT MIN(date) FROM sessions WHERE cli_version=?",
+                             (new,)).fetchone()[0]
+
+        def share(v, scope, key):
+            s = h[v].get(scope, {})
+            return s.get(key, 0) / s["*"] if s.get("*", 0) >= MIN_RECORDS else None
+
+        for scope, key in FIELD_CONTRACT:
+            a, b = share(old, scope, key), share(new, scope, key)
+            if a is not None and b is not None and a > THINNED_BEFORE and b < THINNED_AFTER:
+                trips.append(("problem", 1, old, new, f"{scope}.{key}", a, b, since))
+        for scope in h[new]:
+            if scope == RECORD_SCOPE or "." in scope:
+                continue  # a record type's own top-level keys only
+            for key in h[new][scope]:
+                a, b = share(old, scope, key), share(new, scope, key)
+                if key != "*" and a == 0 and b is not None and b > ADDED:
+                    trips.append(("informational", 2, old, new, f"{scope}.{key}",
+                                  0.0, b, since))
+    if records >= MIN_RUN_RECORDS:
+        prior = [s / r for r, s in conn.execute(
+            "SELECT records, skipped FROM scan_runs ORDER BY at DESC LIMIT ?",
+            (SPIKE_WINDOW,))]
+        mine = skipped / records
+        # ponytail: a median of zero makes any skipped record a spike — real
+        # corpora skip ~20% (attachment, mode, … records), so it never is.
+        # And a spiked run enters the window like any other, so a new
+        # normal stops tripping after ~4 runs; the open row stays until
+        # acknowledged, so the alarm is never silently lost.
+        if prior and mine > SPIKE * statistics.median(prior):
+            trips.append(("problem", 3, None, None, None,
+                          statistics.median(prior), mine, None))
+        conn.execute("INSERT OR REPLACE INTO scan_runs (at, records, skipped)"
+                     " VALUES (?, ?, ?)", (at, records, skipped))
+    written = []
+    for tier, cond, old, new, key, a, b, since in trips:
+        if conn.execute("SELECT 1 FROM breakage WHERE acknowledged_at IS NULL"
+                        " AND condition=? AND old_version IS ? AND new_version IS ?"
+                        " AND key IS ?", (cond, old, new, key)).fetchone():
+            continue
+        cur = conn.execute(
+            "INSERT INTO breakage (at, tier, condition, old_version, new_version,"
+            " key, old_share, new_share, since) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (at, tier, cond, old, new, key, a, b, since))
+        written.append(dict(zip(BREAKAGE_COLS, (cur.lastrowid, at, tier, cond, old,
+                                                new, key, a, b, since))))
+    conn.commit()
+    loud = [r for r in written if r["condition"] in (1, 3)]
+    if notify and loud:
+        _notify(f"{len(loud)} breakage(s) — {breakage_text(loud[0])}")
+    return written
+
+
+def breakage_text(r):
+    """One breakage row as one line — the banner's and the notification's."""
+    def pct(x):
+        return f"{round(x * 100)}%"
+    if r["condition"] == 3:
+        return (f"skipped records are {pct(r['new_share'])} of this run's, over {SPIKE}×"
+                f" the recent median {pct(r['old_share'])} — run {r['at'][:10]}")
+    since = f"sessions since {r['since'] or '?'}"
+    if r["condition"] == 1:
+        return (f"{r['key']} present in {pct(r['old_share'])} of records under"
+                f" {r['old_version']}, {pct(r['new_share'])} under {r['new_version']}"
+                f" — {since}")
+    return (f"{r['key']} is new under {r['new_version']} ({pct(r['new_share'])} of"
+            f" records; absent under {r['old_version']}) — {since}")
+
+
+def _notify(text):
+    """A macOS notification (issue #15). Only when the run was told to
+    notify; tests never pop one."""
+    text = text.replace("\\", "\\\\").replace('"', '\\"')
+    try:
+        subprocess.run(["osascript", "-e",
+                        f'display notification "{text}" with title "hindsight"'],
+                       capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass  # no osascript: the banner still shows; never halt the run
+
+
+def acknowledge_breakage(conn, bid):
+    """The operator closes a breakage row (issue #15): a judgement about the
+    alert and nothing else. From then the row's new version is the
+    comparison baseline (check_drift). Never a rescan — a parser fix ships as
+    a code change plus a schema-version bump, which rescans through the
+    existing mechanism. Returns whether an open row was closed."""
+    cur = conn.execute("UPDATE breakage SET acknowledged_at=? WHERE id=?"
+                       " AND acknowledged_at IS NULL",
+                       (datetime.now(timezone.utc).isoformat(), bid))
+    conn.commit()
+    return cur.rowcount == 1
 
 
 def part_files(extracts_dir, session_id):
@@ -1279,7 +1495,10 @@ def canonicalize_projects(conn):
 
 def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
                   work_dir=DEFAULT_WORK_DIR, model_runner=None,
-                  claude_dir=DEFAULT_CLAUDE_DIR, projects_dir=DEFAULT_PROJECTS_DIR):
+                  claude_dir=DEFAULT_CLAUDE_DIR, projects_dir=DEFAULT_PROJECTS_DIR,
+                  notify=False):
+    """`notify`: pop a macOS notification on a thin-rows breakage (issue
+    #15) — on from the command line, off by default so no test pops one."""
     model_runner = model_runner or default_model_runner
     conn = init_db(db_path)
     try:
@@ -1293,7 +1512,15 @@ def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
         observe_presence(conn, projects_dir)
         canonicalize_projects(conn)
         invalidate_grown(conn, work_dir)
-        fill_substrate(conn)
+        records, skipped = fill_substrate(conn)
+        # The drift guard reads what the scan just wrote; ingest never
+        # halts on it — not on a trip, and not on a bug in the guard itself
+        # (the #77 rule: never trade mechanical fact for a nicety).
+        try:
+            check_drift(conn, datetime.now(timezone.utc).isoformat(), records,
+                        skipped, notify)
+        except Exception as e:
+            print(f"drift guard failed: {e!r}", file=sys.stderr)
         classify_and_extract(conn, work_dir)
         todo = conn.execute(
             "SELECT id, project, transcript_path, date FROM sessions"
@@ -1408,6 +1635,40 @@ def attribute_main(argv):
           f" with the identity of {args.folder}")
 
 
+def acknowledge_main(argv):
+    ap = argparse.ArgumentParser(
+        prog="analyze.py acknowledge-breakage",
+        description="Close one breakage row (issue #15). Its new version is"
+                    " the drift comparison's baseline from then on. Never rescans.")
+    ap.add_argument("id", type=int, help="the row id shown on the banner")
+    ap.add_argument("--db", type=Path, default=DEFAULT_DB)
+    args = ap.parse_args(argv)
+    if not args.db.exists():
+        print(f"no database at {args.db}", file=sys.stderr)
+        sys.exit(1)
+    conn = init_db(args.db)
+    try:
+        closed = acknowledge_breakage(conn, args.id)
+    finally:
+        conn.close()
+    if not closed:
+        print(f"acknowledge-breakage: no open breakage row {args.id}", file=sys.stderr)
+        sys.exit(1)
+    print(f"acknowledge-breakage: closed breakage {args.id}")
+
+
+def cli_version_line():
+    """The installed CLI's version, one log line per run (issue #15). A
+    record, never a trigger: the guard fires on the transcript shape, not
+    on the version string — seven versions in three months would be noise."""
+    try:
+        v = subprocess.run(["claude", "--version"], capture_output=True,
+                           text=True, timeout=30).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        v = "unavailable"
+    print(f"claude --version: {v or 'unavailable'}")
+
+
 def main(argv):
     if argv[:1] == ["install"]:
         return install_nightly()
@@ -1415,6 +1676,8 @@ def main(argv):
         return uninstall_nightly()
     if argv[:1] == ["attribute"]:
         return attribute_main(argv[1:])
+    if argv[:1] == ["acknowledge-breakage"]:
+        return acknowledge_main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=DEFAULT_TRANSCRIPTS)
@@ -1423,8 +1686,10 @@ def main(argv):
     ap.add_argument("--claude-dir", type=Path, default=DEFAULT_CLAUDE_DIR)
     ap.add_argument("--projects-dir", type=Path, default=DEFAULT_PROJECTS_DIR)
     args = ap.parse_args(argv)
+    cli_version_line()
     run_analysis(args.root, args.db, args.work_dir,
-                 claude_dir=args.claude_dir, projects_dir=args.projects_dir)
+                 claude_dir=args.claude_dir, projects_dir=args.projects_dir,
+                 notify=True)
 
 
 if __name__ == "__main__":

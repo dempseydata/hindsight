@@ -16,9 +16,11 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import analyze
@@ -671,7 +673,7 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 7)
+                conn.execute("PRAGMA user_version").fetchone()[0], 8)
         finally:
             conn.close()
         row = self.identity_row("sess-old")
@@ -939,7 +941,7 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 7)
+                conn.execute("PRAGMA user_version").fetchone()[0], 8)
             row = conn.execute("SELECT folder_identity, name, present"
                                " FROM project_presence").fetchone()
         finally:
@@ -1502,6 +1504,164 @@ class NarrativeTest(DbHelpers, unittest.TestCase):
             raise analyze.LimitExhausted("limit")
         with self.assertRaises(analyze.LimitExhausted):
             analyze.refresh_narratives(self.conn, self.projects, runner)
+
+
+class DriftTest(DbHelpers, unittest.TestCase):
+    """The schema-drift guard (issue #15): a histogram delta between record
+    versions writes a breakage row and the run carries on."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.db = base / "hindsight.db"
+        self.work = base / "analysis"
+        self.notified = []
+        self.enterContext(unittest.mock.patch.object(
+            analyze, "_notify", self.notified.append))
+
+    def corpus(self, sid, version, pairs=25, strip=(), extra=None, junk=0):
+        """A session of `pairs` user/assistant pairs under `version`;
+        `strip` removes message-level keys from assistant records, `extra`
+        adds top-level keys, `junk` appends unknown-type records."""
+        recs = []
+        for i in range(pairs):
+            u = {**rec("user", f"{sid}u{i}", "2026-08-01T10:00:00Z", "go"),
+                 "version": version, **(extra or {})}
+            a = {**rec("assistant", f"{sid}a{i}", "2026-08-01T10:00:01Z",
+                       [{"type": "text", "text": "ok"}],
+                       usage=USAGE, model="m", id=f"{sid}m{i}"),
+                 "version": version, **(extra or {})}
+            for k in strip:
+                del a["message"][k]
+            recs += [u, a]
+        recs += [{"type": "flurble"}] * junk
+        write_records(self.root / "p" / f"{sid}.jsonl", recs)
+
+    def run_pipeline(self, notify=False):
+        base = Path(self.tmp.name)
+        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                      model_runner=StubRunner([SKIP_MD] * 20),
+                      claude_dir=base / "claude", projects_dir=base / "repos",
+                      notify=notify)
+
+    def open_rows(self):
+        return self.rows("SELECT * FROM breakage WHERE acknowledged_at IS NULL ORDER BY id")
+
+    def test_thinned_contract_key_is_a_problem_breakage_and_ingest_continues(self):
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2", strip=("usage",))
+        self.run_pipeline(notify=True)
+        rows = self.open_rows()
+        self.assertEqual([(r["tier"], r["condition"], r["old_version"],
+                           r["new_version"], r["key"], r["since"]) for r in rows],
+                         [("problem", 1, "2.1.1", "2.1.2", "assistant.message.usage",
+                           "2026-08-01")])
+        self.assertGreater(rows[0]["old_share"], 0.9)
+        self.assertLess(rows[0]["new_share"], 0.5)
+        # the run completed: both sessions analysed, statuses untouched by it
+        self.assertEqual(self.session_statuses(), {"old": "done", "new": "done"})
+        self.assertEqual(len(self.notified), 1)
+        self.assertIn("assistant.message.usage", self.notified[0])
+        # the next run, same shape: no duplicate row
+        self.run_pipeline()
+        self.assertEqual(len(self.open_rows()), 1)
+
+    def test_same_shape_under_a_new_version_is_quiet(self):
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2")
+        self.run_pipeline(notify=True)
+        self.assertEqual(self.open_rows(), [])
+        self.assertEqual(self.notified, [])
+
+    def test_added_top_level_key_is_informational_and_silent(self):
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2", extra={"effort": "high"})
+        self.run_pipeline(notify=True)
+        rows = self.open_rows()
+        self.assertEqual({(r["tier"], r["condition"], r["key"]) for r in rows},
+                         {("informational", 2, "user.effort"),
+                          ("informational", 2, "assistant.effort")})
+        self.assertEqual(self.notified, [])
+
+    def test_tiny_new_version_waits_for_evidence(self):
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2", pairs=5, strip=("usage",))  # 10 < MIN_RECORDS
+        self.run_pipeline()
+        self.assertEqual(self.open_rows(), [])
+
+    def test_skipped_spike_trips_once_and_a_run_within_baseline_does_not(self):
+        n = analyze.MIN_RUN_RECORDS
+        self.corpus("r1", "2.1.1", pairs=n // 2, junk=n // 10)   # ~9% skipped
+        self.run_pipeline(notify=True)
+        self.assertEqual(self.open_rows(), [])          # no prior run: no baseline
+        self.corpus("r2", "2.1.1", pairs=n // 2, junk=n)          # 50% skipped
+        self.run_pipeline(notify=True)
+        rows = self.open_rows()
+        self.assertEqual([(r["tier"], r["condition"]) for r in rows], [("problem", 3)])
+        self.assertEqual(len(self.notified), 1)
+        self.corpus("r3", "2.1.1", pairs=n // 2, junk=n // 10)   # back in baseline
+        self.run_pipeline(notify=True)
+        self.assertEqual(len(self.open_rows()), 1)
+        self.assertEqual(len(self.notified), 1)
+        # a tiny run neither trips nor enters the baseline
+        self.corpus("r4", "2.1.1", pairs=5, junk=50)
+        self.run_pipeline()
+        self.assertEqual(len(self.rows("SELECT * FROM scan_runs")), 3)
+
+    def test_acknowledge_closes_the_row_and_moves_the_baseline(self):
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2", strip=("usage",))
+        self.run_pipeline()
+        bid = self.open_rows()[0]["id"]
+        conn = analyze.init_db(self.db)
+        self.assertTrue(analyze.acknowledge_breakage(conn, bid))
+        self.assertFalse(analyze.acknowledge_breakage(conn, bid))  # already closed
+        conn.close()
+        self.assertEqual(self.open_rows(), [])
+        self.run_pipeline()                              # same shape: quiet
+        self.assertEqual(self.open_rows(), [])
+        # a newer version with the key back compares against 2.1.2, not 2.1.1
+        self.corpus("newer", "2.1.3")
+        self.run_pipeline()
+        self.assertEqual(self.open_rows(), [])
+        # the acknowledged version is now the comparison: thinning again trips
+        self.corpus("newest", "2.1.4", strip=("model",))
+        self.run_pipeline()
+        self.assertEqual([(r["old_version"], r["new_version"], r["key"])
+                          for r in self.open_rows()],
+                         [("2.1.3", "2.1.4", "assistant.message.model")])
+
+    def test_version_line_is_logged_never_a_trigger(self):
+        """The CLI's own version is one stdout line per run; it fires nothing
+        — the guard reads the shape, and the command line is its only caller."""
+        fake = subprocess.CompletedProcess([], 0, stdout="2.1.270 (Claude Code)\n", stderr="")
+        with unittest.mock.patch.object(analyze.subprocess, "run", return_value=fake), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            analyze.cli_version_line()
+        self.assertEqual(out.getvalue(), "claude --version: 2.1.270 (Claude Code)\n")
+        with unittest.mock.patch.object(analyze.subprocess, "run",
+                                        side_effect=FileNotFoundError), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            analyze.cli_version_line()
+        self.assertEqual(out.getvalue(), "claude --version: unavailable\n")
+
+    def test_acknowledge_command(self):
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2", strip=("usage",))
+        self.run_pipeline()
+        bid = self.open_rows()[0]["id"]
+        r = subprocess.run([sys.executable, str(analyze.REPO / "build" / "analyze.py"),
+                            "acknowledge-breakage", str(bid), "--db", str(self.db)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.open_rows(), [])
+        r = subprocess.run([sys.executable, str(analyze.REPO / "build" / "analyze.py"),
+                            "acknowledge-breakage", "99", "--db", str(self.db)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no open breakage row 99", r.stderr)
 
 
 class SectionDrift(unittest.TestCase):

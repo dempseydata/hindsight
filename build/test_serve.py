@@ -186,6 +186,13 @@ def fixture_db(path):
                  " consumer_type, consumer) VALUES ('s1', 'Write',"
                  " '2026-08-01T09:50:00Z', ?, 'builtin', 'Write')",
                  (str(Path(path).parent / "old-big" / "notes.md"),))
+    # three off-script writes under .claude/ after the Build run: a run of
+    # their own, the current one (issue #17)
+    conn.executemany("INSERT INTO tool_events (session_id, name, at, file_path,"
+                     " consumer_type, consumer) VALUES ('s2', 'Write', ?, ?,"
+                     " 'builtin', 'Write')",
+                     [(f"2026-08-04T1{i}:00:00Z", str(Path(path).parent / "big" / ".claude" / f))
+                      for i, f in enumerate(("skills/x/SKILL.md", "agents/y.md", "my-process.md"))])
     conn.commit()
     conn.close()
 
@@ -311,10 +318,15 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn("?p=pruned", body)        # undeclared: no view
         self.assertIn("Widget shipped", body)      # narrative shown...
         self.assertIn("stale", body)               # ...but marked stale
-        self.assertIn("<b>Build</b> since 2026-08-01 · 2 runs", body)
-        # stage hue on both sides, current run badged (ticket #71)
-        self.assertIn('class="panel run" style="--stage: var(--o-stage-2)"><div class="who"><b>Build<span class=now>now</span>', body)
+        self.assertIn("<b>off-script</b> since 2026-08-04 · 3 runs", body)
+        self.assertIn("Ideate ×1 · Build ×1 · off-script ×1</p>", body)
+        # stage hue on both sides, current run badged (ticket #71); the
+        # off-script run carries no --stage, so it wears the off hue (#17)
+        self.assertIn('class="panel run"><div class="who"><b>off-script<span class=now>now</span>', body)
+        self.assertIn('class="panel run" style="--stage: var(--o-stage-2)"><div class="who"><b>Build</b>', body)
         self.assertIn('class="panel stage" style="--stage: var(--o-stage-2)"><b>Build', body)
+        self.assertIn("write .claude/skills/x/SKILL.md ×1", body)   # still in the aside's list
+        self.assertNotIn('class="panel stage"><b>off-script', body)  # never a stated stage
         self.assertIn("used: grilling, implement", body)
         self.assertIn("Stated process", body)
         self.assertNotIn('id="chart"', body)       # no shared filter chrome

@@ -480,8 +480,11 @@ def declaring_projects(conn, projects_dir):
 
 def _hue(d, stage):
     """Inline `--stage` for a declared stage: -1..-5 in declaration order,
-    cycling past five (tokens.css)."""
+    cycling past five (tokens.css). An off-script run (#17) sets nothing, so
+    how.css's `var(--stage, …)` falls back to the contract's `--o-stage-off`."""
     names = [s["name"] for s in d["declaration"]["stages"]]
+    if stage not in names:
+        return ""
     return f' style="--stage: var(--o-stage-{names.index(stage) % 5 + 1})"'
 
 
@@ -521,7 +524,9 @@ def _status(conn, d):
                    f" · {len(runs)} runs · {len(d['sessions'])} sessions"
                    f" · {_span(d['trail'][0]['at'], d['trail'][-1]['at'])} · "
                    + " · ".join(f"{html.escape(s['name'])} ×{tally.get(s['name'], 0)}"
-                                     for s in d["declaration"]["stages"]) + "</p>")
+                                     for s in d["declaration"]["stages"])
+                   + (f" · {how.OFF_SCRIPT} ×{tally[how.OFF_SCRIPT]}" if tally[how.OFF_SCRIPT] else "")
+                   + "</p>")
     out.append("</div>")
     return "".join(out)
 

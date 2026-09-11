@@ -259,6 +259,10 @@ class Trail(unittest.TestCase):
         # /clear is a session boundary (#70): set aside, stated, not listed;
         # wayfinder is declared under Plan above, so the declaration wins
         self.assertEqual(data["boundaries"], {"/clear": 1})
+        # the two trailing off-script events fold into Build (#17); the
+        # stated-process summary above is untouched by them
+        self.assertEqual([(r["stage"], r["end"]) for r in data["runs"]], [("Plan", "2026-08-03")])
+        self.assertEqual(data["run_detail"][0]["minor"], {"Build": 2, how.OFF_SCRIPT: 2})
         self.assertEqual(data["off_script"], [
             {"kind": "skill", "name": "ponytail:ponytail-review", "count": 1,
              "first_seen": "2026-08-03T10:30:00Z", "last_seen": "2026-08-03T10:30:00Z"},
@@ -289,10 +293,11 @@ class RunLedger(unittest.TestCase):
                     "b": {"date": "2026-08-02", "title": "B"},
                     "c": {"date": "2026-08-04", "title": None}}
         runs = how.run_ledger(trail, sessions)
-        # the 2-event Build band folds into Plan; b's 3 events all sit there
+        # the 2-event Build band folds into Plan; b's 3 events all sit there;
+        # the lone off-script event folds into Build like any short band (#17)
         self.assertEqual([(r["stage"], r["start"], r["end"], r["titles"]) for r in runs],
                          [("Plan", "2026-08-01", "2026-08-03", ["A", "B"]),
-                          ("Build", "2026-08-04", "2026-08-04", [])])
+                          ("Build", "2026-08-04", "2026-08-05", [])])
 
     def test_first_band_always_opens_a_run_and_ties_go_newest(self):
         trail = [self.ev(1, "s", "Ideate")] * 2 + [self.ev(2, "s", "Plan")] * 3 \
@@ -311,8 +316,42 @@ class RunLedger(unittest.TestCase):
         self.assertEqual((runs[0]["start"], runs[0]["end"]),
                          ("2026-08-01", "2026-08-02"))
 
-    def test_unbucketed_trail_gives_no_runs(self):
-        self.assertEqual(how.run_ledger([self.ev(1, "a", None)], {}), [])
+    def test_unbucketed_trail_forms_an_off_script_run(self):
+        runs = how.run_ledger([self.ev(1, "a", None)], {})
+        self.assertEqual([(r["stage"], r["start"]) for r in runs], [(how.OFF_SCRIPT, "2026-08-01")])
+
+    def test_off_script_events_form_runs_of_their_own(self):
+        """Issue #17: three consecutive off-script writes under .claude/ are a
+        run — the off-script label, the right span, the used names — and a
+        short off-script band between staged runs still folds back."""
+        def w(at, name):
+            return {**self.ev(at, "u", None), "kind": "write", "name": name}
+        upkeep = [w(8, ".claude/skills/a/SKILL.md"), w(9, ".claude/agents/b.md"),
+                  w(10, ".claude/my-process.md")]
+        trail = ([self.ev(1, "a", "Plan")] * 3
+                 + [w(2, "README.md"), w(2, "CLAUDE.md")]        # 2: folds into Plan
+                 + [self.ev(4, "c", "Build")] * 3
+                 + upkeep + [{**self.ev(10, "u", None), "name": "/ponytail"}])
+        runs, detail = how.run_ledger(trail, {"u": {"date": None, "title": "Upkeep"}},
+                                      detail=True)
+        self.assertEqual([(r["stage"], r["start"], r["end"], r["titles"]) for r in runs],
+                         [("Plan", "2026-08-01", "2026-08-02", []),
+                          ("Build", "2026-08-04", "2026-08-04", []),
+                          (how.OFF_SCRIPT, "2026-08-08", "2026-08-10", ["Upkeep"])])
+        self.assertEqual(detail[0]["minor"], {how.OFF_SCRIPT: 2})
+        self.assertEqual(detail[2]["names"], ["ponytail"])
+        self.assertEqual(detail[2]["events"], 4)
+
+    def test_compact_is_a_boundary_never_a_run_event(self):
+        """/compact opens a session as /clear does (#17): with it, an
+        off-script band of three would form a run; set aside, the two left
+        fold into the run before them."""
+        trail = ([self.ev(1, "a", "Plan")] * 3
+                 + [{**self.ev(2, "a", None), "kind": "command", "name": "/compact"},
+                    self.ev(3, "a", None), self.ev(3, "a", None)])
+        runs = how.run_ledger(trail, {})
+        self.assertEqual([(r["stage"], r["end"]) for r in runs], [("Plan", "2026-08-03")])
+        self.assertTrue(how.is_boundary({"kind": "command", "name": "/compact"}))
 
 
 class Narrative(unittest.TestCase):

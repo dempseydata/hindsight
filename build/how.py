@@ -26,7 +26,8 @@ Output of how_data() (the greybox ticket consumes it directly):
   runs:        [{stage, start, end, titles}]  the run ledger (ticket #64):
                phase runs in date order, empty unless the declaration is
                valid — the sole input to the status narrative (ADR-0012).
-               start/end are local days (ADR-0014); trail `at` stays UTC
+               stage is a declared name or OFF_SCRIPT (#17); start/end are
+               local days (ADR-0014); trail `at` stays UTC
   run_detail:  [{sessions, events, names, minor}]  parallel to runs — what
                the view shows per run beyond the ledger (ticket #65);
                kept apart so the ledger's content hash stays the narrative's
@@ -49,11 +50,14 @@ from substrate import former_names
 NAME_KEYS = ("commands", "skills")
 MARKER_KEYS = NAME_KEYS + ("paths",)
 MIN_RUN = 3  # a shorter band of one stage folds into the run before it (#64)
-# ticket #70: session boundaries — Claude Code's own /clear and /model, and
-# wayfinder as the house pipeline's session front door — open sessions, they
-# don't mark process steps. Applied only to events no stage claimed, so a
-# declaration that lists wayfinder under a stage still wins.
-SESSION_BOUNDARIES = ("clear", "model", "wayfinder")
+# issue #17: events no stage claimed band into runs of their own under this
+# label — the declaration's rot detector made visible. Never a declared stage.
+OFF_SCRIPT = "off-script"
+# ticket #70: session boundaries — Claude Code's own /clear, /model and
+# /compact (#17), and wayfinder as the house pipeline's session front door —
+# open sessions, they don't mark process steps. Applied only to events no
+# stage claimed, so a declaration that lists wayfinder under a stage still wins.
+SESSION_BOUNDARIES = ("clear", "model", "compact", "wayfinder")
 
 
 class DeclarationInvalid(Exception):
@@ -247,6 +251,11 @@ def _agg(rows, key):
     return out
 
 
+def lane(e):
+    """The run label an event bands under: its stage, else OFF_SCRIPT (#17)."""
+    return e["stage"] or OFF_SCRIPT
+
+
 def used_names(events):
     """Distinct command/skill names in first-seen order, slash stripped."""
     return list(dict.fromkeys(e["name"].lstrip("/") for e in events if e["kind"] != "write"))
@@ -254,23 +263,26 @@ def used_names(events):
 
 def run_ledger(trail, sessions, detail=False):
     """Phase runs over the bucketed trail (ticket #64, CONTEXT "Phase run"):
-    consecutive same-stage events form a run; a band shorter than MIN_RUN
-    folds into the preceding run (the first band always opens one). A
+    consecutive same-stage events form a run — off-script events under
+    their own label (#17) — and a band shorter than MIN_RUN folds into the
+    preceding run (the first band always opens one). A
     session straddling runs is titled only in the run holding most of its
     events (ties to the newest). Dates are day-granular; a run's titles
     are its majority sessions' audit titles, in order of first appearance.
     detail=True returns (ledger, run_detail) — see the module docstring."""
     bands, cur = [], None
     for e in trail:
-        # no stage, no band; no timestamp, no date — a run's start/end is a
-        # day, and an undated event cannot supply one. It stays in the trail,
-        # the aggregates and the off-script list; only the band skips it.
-        if not e["stage"] or not e["at"]:
+        # no timestamp, no date — a run's start/end is a day, and an undated
+        # event cannot supply one; a session boundary opens a session, it is
+        # no step. Both stay in the trail and the aggregates; only the band
+        # skips them. Unclaimed events band under OFF_SCRIPT (#17).
+        if not e["at"] or (not e["stage"] and is_boundary(e)):
             continue
-        if cur and cur[0] == e["stage"]:
+        stage = lane(e)
+        if cur and cur[0] == stage:
             cur[1].append(e)
         else:
-            cur = (e["stage"], [e]); bands.append(cur)
+            cur = (stage, [e]); bands.append(cur)
     runs = []
     for stage, es in bands:
         if runs and (len(es) < MIN_RUN or runs[-1]["stage"] == stage):
@@ -300,7 +312,7 @@ def run_ledger(trail, sessions, detail=False):
             "sessions": sum(v[1] == i for v in majority.values()),
             "events": len(r["events"]),
             "names": used_names(r["events"]),
-            "minor": dict(Counter(e["stage"] for e in r["events"] if e["stage"] != r["stage"]))})
+            "minor": dict(Counter(lane(e) for e in r["events"] if lane(e) != r["stage"]))})
     return out, extra
 
 

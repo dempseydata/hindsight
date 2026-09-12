@@ -8,33 +8,36 @@ ADR-0021 made Stage B conditional: a design-time eval over real project-windows 
 
 Facts the decision rests on, read from `local-data/` on 2026-09-12 (never committed):
 
-- **Windows exist.** At 14 days, twelve project-windows clear ADR-0022's sparsity floor and carry at least one pattern under the prototype's floors: hindsight-old ×4, career-ops ×4, content ×2, hindsight-new ×1, thisisme ×1. Three windows are controls — thisisme@2026-09-11 is empty (*too thin*), thisisme@2026-07-31 has activity and nothing above the floor (*nothing to report*), content@2026-08-28 has two sessions over two days (*too thin*). Five pattern windows plus two controls leaves seven pattern windows in reserve for a frozen eval set if Stage B goes.
-- **A window's typed turns fit one call.** Distinct typed user turns per (session, text) — the universe #21 defined — run 80–190 per active window, 6–18k characters. Every session in the candidate windows has an audit; titles average 64 characters, so the largest window's titles are about 3k characters. The whole digest for the richest window is under 30k characters.
+- **Windows exist.** At 14 days, twelve project-windows clear ADR-0022's sparsity floor and carry at least one pattern under the prototype's floors: hindsight-old ×4, career-ops ×4, content ×2, hindsight-new ×1, thisisme ×1 (thisisme@2026-08-28, one cost-trend pattern). Three control windows are available — thisisme@2026-09-11 is empty (*too thin*), thisisme@2026-07-31 has activity and nothing above the floor (*nothing to report*), content@2026-08-28 has two sessions over two days (*too thin*). The dry run uses five pattern windows and two controls (§8); seven pattern windows and the third control stay in reserve for a frozen eval set if Stage B goes.
+- **A window's typed turns fit one call.** Distinct typed user turns per (session, text) — the universe #21 defined — run 80–190 per active window, 6–18k characters. Every session in the named windows has an audit; titles average 64 characters, so the largest window's titles are about 3k characters. The whole digest for the richest window is under 30k characters.
 - **The signals are numbers, not prose.** A pattern row is a consumer with call count, error share and token share against a baseline; a per-day median lift; a newly off-script name or path with a count. Rendered as one sentence each, a row reads like a finding — which is what makes a blind comparison possible.
+- **Typed turns are already model-read.** The what-pass sends every session's extract, typed user turns included, to the same pinned model; a *typed turn* is a `USER:` piece of 2–1,500 characters that is not an injection, an interruption or a command grain, counted once per (session, text) — #21's universe.
 - **Two arms are needed, not one.** #21 resolved repeated correction as *model-only* and exported the placement question here: the only cheap home for it is the window's typed turns inside Stage B's digest. A finding drawn from turns traces to no pattern, so admitting turns amends ADR-0021's traceability rule. Testing that in the same run as "does B add anything over A" would confound the two questions.
 
 ## Decision
 
 ### 1. The question, and what B is measured against
 
-*Does a model synthesis over the digest surface anything the operator would act on that the ranked pattern list does not already state?* The comparator — **A's list** — is the window's patterns as the view will render them: every row that clears its magnitude floor, one sentence per row from a fixed per-signal template, no verdict. Nothing else is held back from A to make B look better.
+*Does a model synthesis over the digest surface anything the operator would act on that the ranked pattern list does not already state?* The comparator — **A's list** — is the window's patterns as the view will render them: every row that clears its magnitude floor, one sentence per row from a fixed per-signal template, no verdict. A rendered row, or a rendered finding, is a **card** — the unit the operator rates (§7). Nothing else is held back from A to make B look better.
+
+Floors for the dry run: ADR-0022's shape with the #19 prototype's values — calls ≥ 10, error share ≥ 0.10 or token share ≥ 0.25, |median lift| ≥ 0.30, new name or path ≥ 3 — and ADR-0022's sparsity floor (3 sessions, 3 active days) for window and baselines in place of the prototype's five base days. The greybox may move these values later; the values used are recorded on #27 so the comparator is known.
 
 ### 2. The criterion — two numbers, fixed now
 
 - **Additive.** On **at least 3 of the 5** pattern windows, at least one surviving B finding is rated *act* under the blind protocol below **and** is not a restatement of a single A card. Restatement is mechanical first: a finding that cites exactly one pattern row and states only that row's numbers restates it. A finding citing two or more rows (a relation A does not state), or two or more turn locators, or one the operator marks after unblinding as saying something its cited row does not, is additive. Overrides are recorded.
-- **Faithful.** Both control windows return exactly *nothing to report* — one finding on a control is no-go, whatever the additive count. Across the five pattern windows, **at most one** finding carries a claim absent from its digest (a number, a name, a session id, a turn). Two is no-go, whatever the additive count.
+- **Faithful.** Both control windows return an **empty findings list** — the digest already states *too thin* or *nothing to report* (ADR-0022's words are Stage A's, never B's), and one finding on a control is no-go, whatever the additive count. Across the five pattern windows, **at most one** finding carries a claim absent from its digest (a number, a name, a session id, a turn). Two is no-go, whatever the additive count.
 
 Go needs both. Neither number moves after the run. *Act* means the operator names, before the key is revealed, a concrete action they would take this week — open a session, change a declaration, drop or reconfigure a tool, change a habit — not "interesting".
 
 ### 3. The model
 
-The pin, `claude-haiku-4-5-20251001`, via `claude -p` as `eval/run.py` does. **No escalation.** The map's scope guard holds the pin; the question is whether Stage B earns its place *on this machine's model*, so a failure on Haiku is a no-go, not a reason to try the next tier. One prompt (v1) is written before any digest is read; one revision (v2) is permitted for **shape** failures only — non-JSON, cap exceeded, findings dropped for traceability — never for content after a rating exists. The operator rates once, on the final arm outputs; both versions are reported.
+The pin, `claude-haiku-4-5-20251001`, via `claude -p` as `eval/run.py` does. **No escalation.** The map's scope guard holds the pin; the question is whether Stage B earns its place *on this machine's model*, so a failure on Haiku is a no-go, not a reason to try the next tier. One prompt (v1) is written before any digest is read; one revision (v2) is permitted, and it may change only the **shape** instructions — output format, the cap, the traceability fields — after a shape failure (non-JSON, cap exceeded, findings dropped for traceability). The content instructions are frozen at v1. The operator rates once, on the final arm outputs; both versions are reported.
 
 ### 4. The digest — three blocks, JSON, per project-window
 
 - **`patterns`** — Stage A's output with ids. Pattern id `{signal}@{project}:{lo}..{hi}`; row id `{pattern-id}#{key}` where the key is the consumer name, the baseline kind, or the new name or path. Rows carry exactly the numbers the view will show (the #19 schema minus tool-use and message ids, ADR-0023) and their session ids. The window state (*too thin* / *nothing to report* / patterns) and each baseline's state (*preceding* / *history* / *no baseline*) are stated, so an empty window is a digest, not an absence.
 - **`sessions`** — one line per session with usage in the window: id, date, audit title (`SKIP` or *unaudited* where that is what the table holds). Titles are already model-gated prose, the same input class as the status narrative (ADR-0012); the Did/Decided bodies are not sent.
-- **`turns`** — *second arm only*: the window's distinct typed user turns, verbatim, each with its `(session id, piece index)` locator, ordered by session then index; #21's universe (2–1,500 characters, injections, interruptions and command grains excluded; one copy per (session, text)).
+- **`turns`** — *arm A+T only (§5)*: the window's distinct typed turns, verbatim, each with its `(session id, piece index)` locator, ordered by session then index; #21's universe (2–1,500 characters, injections, interruptions and command grains excluded; one copy per (session, text)).
 
 Never in the digest: raw JSONL, tool output, assistant text. Typed user turns already reach the same model in the what-pass, so the turn block moves no scope guard.
 
@@ -43,6 +46,8 @@ Never in the digest: raw JSONL, tool output, assistant text. Typed user turns al
 Every window runs twice: **arm A** over `patterns` + `sessions`; **arm A+T** over all three blocks. The criterion in §2 is applied to each arm. Stage B goes if **either** arm clears. The turn block is admitted as a **second evidence class** only if arm A+T clears the additive criterion on **at least 3 windows by findings that cite turns**; otherwise it is struck, and repeated correction leaves the product — Stage A cannot hold it (#21) and nothing else can.
 
 If admitted, ADR-0021's traceability rule is amended to: *a finding traces to at least one pattern id, or to at least two turn locators from at least two distinct sessions.* One turn is a one-off, the rubric's *suggested* tier (#23), and is not a finding. Traceability is enforced in code before rating — set membership on row ids and locators — and the drop count is reported.
+
+Two consequences follow on a go with turns admitted, so they are fixed now rather than discovered. **Click-through:** the piece index is for the code-side check and the eval only; the served target of a turn-traced finding is the session anchor, `/what#<session-id>` (ADR-0023) — nothing served follows a piece, exactly as nothing follows a tool-use id. **Storage key:** ADR-0024 keys a stored Stage B row on the hash of the window's pattern set; with turns in the digest the key is the hash of the **whole digest**, patterns and turn set, or a new session's turns would move B's input and leave a stale row unhidden.
 
 ### 6. The dry-run finding shape
 
@@ -55,7 +60,9 @@ Four fields: `patterns` (row ids), `turns` (locators), `statement` (one sentence
 3. Unblind. Per B card rated *act*: the restatement test (§2), operator override recorded. Per B card: the faithfulness check — numbers as substrings of the digest, ids and locators as set membership, the residue read by the operator.
 4. Rating sheets live under `local-data/eval/so-what/`, never committed; #27's resolution carries counts, window ids and session ids only.
 
-The known limit: model prose and template prose may be tellable apart. The shared card shape and a prompt that asks for it are the mitigation; the residual bias is reported, not solved. The rater is the operator, and the operator is the product's only user — a second rater would measure someone else's product.
+Two known limits. Model prose and template prose may be tellable apart — the shared card shape and a prompt that asks for it are the mitigation; the residual bias is reported, not solved. And without the rubric's `kind` field (#23), a cost cluster restated as a behavioural lesson can read as additive — the restatement test is the mitigation, and the unblinded pass names any such case.
+
+The too-thin control tests a case production never runs — ADR-0024 computes Stage B only where a pattern set exists — and is kept because an empty digest is the cheapest probe of whether the prompt manufactures findings from nothing. The rater is the operator, and the operator is the product's only user — a second rater would measure someone else's product.
 
 ### 8. The five windows and two controls
 
@@ -63,8 +70,8 @@ Fixed now so the run cannot pick them: **hindsight-old@2026-09-07** (rich: three
 
 ### 9. What each verdict leaves behind
 
-- **No-go.** Stage A ships alone. ADR-0021's conditional clause resolves *not built*; this ADR is accepted with that verdict written in. The map's fog items for Stage B (finding schema, digest format, frozen set and threshold) are struck; ADR-0024's `status_narrative` mirror has no table to build; CONTEXT.md's *finding* is marked not built. Repeated correction leaves the product with it; the 164 labelled turns stay under `local-data/`.
-- **Go.** The fog items graduate into tickets: the frozen eval set (seeded from these seven digests plus the seven reserve windows, with the two controls as its empty cases per ADR-0022), the finding schema (tiers and kinds from #23), and the pass itself mirroring `refresh_narratives` (ADR-0024). Stage B's fixed production window is decided in the schema ticket; the dry run's 14 days is the default preset, not that decision.
+- **No-go.** Stage A ships alone. ADR-0021's conditional clause resolves *not built*; this ADR is accepted with that verdict written in. The map's fog items for Stage B (finding schema, digest format, frozen set and threshold) are struck; ADR-0024's `status_narrative` mirror has no table to build; CONTEXT.md's *finding* is marked not built. Repeated correction leaves the product with it; the 164 labelled turns from #21 stay under `local-data/`, unused.
+- **Go.** The fog items graduate into tickets: the frozen eval set (seeded from the dry run's fourteen digests plus the reserve windows, the controls as its empty cases per ADR-0022, and — if the turn class is admitted — #21's 164 labelled turns as the ground truth for turn-citing findings, reviewed before anything enters `eval/`), the finding schema (tiers and kinds from #23), and the pass itself mirroring `refresh_narratives` (ADR-0024). Stage B's fixed production window is decided in the schema ticket; the dry run's 14 days is the default preset, not that decision.
 
 ## Considered options
 
@@ -78,7 +85,7 @@ Fixed now so the run cannot pick them: **hindsight-old@2026-09-07** (rich: three
 
 ## Consequences
 
-- #27 is a throwaway script on a throwaway branch: builds the fourteen digests (seven windows × two arms), calls the pin, enforces traceability, renders the cards, records the ratings, prints the two numbers against §2. It runs only after the operator confirms this ADR on #26.
-- CONTEXT.md gains *digest*; *finding* names the traceability rule and its conditional amendment.
+- #27 is a throwaway script on a throwaway branch: builds the fourteen digests (seven windows × two arms), calls the pin, enforces traceability, renders the cards, records the ratings, prints the two numbers against §2 — and, as a reported statistic only, how many turn-citing findings land on a turn #21 labelled corrective. It runs only after the operator confirms this ADR on #26, and its resolution flips this ADR's status line to *accepted* with the verdict written in.
+- CONTEXT.md gains *digest* and *typed turn*; *finding* names the traceability rule and points here for the conditional amendment. The cap and the finding schema stay out of CONTEXT.md until a go.
 - The map's Decisions-so-far carries the criterion in one line; the Stage B fog items are marked as waiting on #27.
 - The credit for the borrowed rubric criteria (#23) lands in `docs/` with the pass if Stage B goes, not before.

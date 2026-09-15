@@ -1,6 +1,6 @@
 # ADR-0025: Stage B's go/no-go — criterion, model, digest and blind rating fixed before the dry run
 
-**Date:** 2026-09-12 · **Status:** proposed — accepted with #27's verdict, whichever way it falls · **Decides:** [issue #26](https://github.com/dempseydata/hindsight/issues/26); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0012
+**Date:** 2026-09-12 · **Status:** proposed — confirmed by the operator on #26 (2026-09-15), accepted with #27's verdict, whichever way it falls · **Decides:** [issue #26](https://github.com/dempseydata/hindsight/issues/26); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0012
 
 ## Context
 
@@ -24,7 +24,7 @@ Floors for the dry run: ADR-0022's shape with the #19 prototype's values — cal
 
 ### 2. The criterion — two numbers, fixed now
 
-- **Additive.** On **at least 3 of the 5** pattern windows, at least one surviving B finding is rated *act* under the blind protocol below **and** is not a restatement of a single A card. Restatement is mechanical first: a finding that cites exactly one pattern row and states only that row's numbers restates it. A finding citing two or more rows (a relation A does not state), or two or more turn locators, or one the operator marks after unblinding as saying something its cited row does not, is additive. Overrides are recorded.
+- **Additive.** On **at least 3 of the 5** pattern windows, at least one surviving B finding is rated *act* under the blind protocol below **and** is not a restatement of a single A card. Restatement is mechanical first: a finding that cites exactly one pattern row and states only that row's numbers restates it. A finding citing two or more rows, or two or more turn locators, is additive by default; the operator's override after unblinding runs **both ways** — a single-row finding may be marked additive when it says something its cited row does not, and a multi-row finding may be marked a restatement when it says nothing its cited rows do not jointly say (a concatenation of two cards is not a relation). Overrides are recorded either way.
 - **Faithful.** Both control windows return an **empty findings list** — the digest already states *too thin* or *nothing to report* (ADR-0022's words are Stage A's, never B's), and one finding on a control is no-go, whatever the additive count. Across the five pattern windows, **at most one** finding carries a claim absent from its digest (a number, a name, a session id, a turn). Two is no-go, whatever the additive count.
 
 Go needs both. Neither number moves after the run. *Act* means the operator names, before the key is revealed, a concrete action they would take this week — open a session, change a declaration, drop or reconfigure a tool, change a habit — not "interesting".
@@ -43,7 +43,7 @@ Never in the digest: raw JSONL, tool output, assistant text. Typed user turns al
 
 ### 5. Two arms, and what admits the turn class
 
-Every window runs twice: **arm A** over `patterns` + `sessions`; **arm A+T** over all three blocks. The criterion in §2 is applied to each arm. Stage B goes if **either** arm clears. The turn block is admitted as a **second evidence class** only if arm A+T clears the additive criterion on **at least 3 windows by findings that cite turns**; otherwise it is struck, and repeated correction leaves the product — Stage A cannot hold it (#21) and nothing else can.
+Every window runs twice: **arm A** over `patterns` + `sessions`; **arm A+T** over all three blocks. The criterion in §2 is applied to each arm. Stage B goes if **arm A clears**, or if **arm A+T clears the additive criterion on at least 3 windows by findings that cite turns** — the same condition that admits the turn block as a **second evidence class**. Arm A+T clearing on pattern-only findings where arm A did not is the same input sampled twice, not evidence: it is reported and does not count. If the turn condition fails, the turn block is struck and repeated correction leaves the product — Stage A cannot hold it (#21) and nothing else can.
 
 If admitted, ADR-0021's traceability rule is amended to: *a finding traces to at least one pattern id, or to at least two turn locators from at least two distinct sessions.* One turn is a one-off, the rubric's *suggested* tier (#23), and is not a finding. Traceability is enforced in code before rating — set membership on row ids and locators — and the drop count is reported.
 

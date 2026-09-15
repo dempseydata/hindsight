@@ -906,9 +906,10 @@ def check_drift(conn, at, records, skipped, notify=False):
        parse failure is a run-time event. Runs under MIN_RUN_RECORDS
        neither trip nor enter the baseline.
 
-    One breakage row per trip, deduplicated against the open rows, carrying
-    the two versions, the key, the shares and the first session day under
-    the newest version. Ingest never halts: this runs after the substrate
+    One breakage row per trip — except that the keys added under one version
+    pair are one row (issue #30), its key the sorted list and its share the
+    lowest — deduplicated against the open rows, carrying the two versions,
+    the key, the shares and the first session day under the newest version. Ingest never halts: this runs after the substrate
     fill and the run carries on. A macOS notification for conditions 1 and
     3 only, when `notify` — a notification always means a decision is
     needed. Returns the rows written."""
@@ -936,14 +937,17 @@ def check_drift(conn, at, records, skipped, notify=False):
             a, b = share(old, scope, key), share(new, scope, key)
             if a is not None and b is not None and a > THINNED_BEFORE and b < THINNED_AFTER:
                 trips.append(("problem", 1, old, new, f"{scope}.{key}", a, b, since))
+        added = {}
         for scope in h[new]:
             if "." in scope:
                 continue  # a record type's own top-level keys only
             for key in h[new][scope]:
                 a, b = share(old, scope, key), share(new, scope, key)
                 if key != "*" and a == 0 and b is not None and b > ADDED:
-                    trips.append(("informational", 2, old, new, f"{scope}.{key}",
-                                  0.0, b, since))
+                    added[f"{scope}.{key}"] = b
+        if added:  # issue #30: a release adds several keys at once — one row
+            trips.append(("informational", 2, old, new, ", ".join(sorted(added)),
+                          0.0, min(added.values()), since))
     if records >= MIN_RUN_RECORDS:
         prior = [s / r for r, s in conn.execute(
             "SELECT records, skipped FROM scan_runs ORDER BY at DESC LIMIT ?",
@@ -961,9 +965,11 @@ def check_drift(conn, at, records, skipped, notify=False):
                      " VALUES (?, ?, ?)", (at, records, skipped))
     written = []
     for tier, cond, old, new, key, a, b, since in trips:
+        # Condition 2 dedups on the version pair: a key first seen on a later
+        # run joins nothing, the open row is the operator's one judgement.
         if conn.execute("SELECT 1 FROM breakage WHERE acknowledged_at IS NULL"
                         " AND condition=? AND old_version IS ? AND new_version IS ?"
-                        " AND key IS ?", (cond, old, new, key)).fetchone():
+                        " AND (condition=2 OR key IS ?)", (cond, old, new, key)).fetchone():
             continue
         cur = conn.execute(
             "INSERT INTO breakage (at, tier, condition, old_version, new_version,"
@@ -988,8 +994,13 @@ def breakage_text(r):
         return (f"{r['key']} present in {r['old_share']:.0%} of records under"
                 f" {r['old_version']}, {r['new_share']:.0%} under {r['new_version']}"
                 f" — {since}")
-    return (f"{r['key']} is new under {r['new_version']} ({r['new_share']:.0%} of"
-            f" records; absent under {r['old_version']}) — {since}")
+    keys = r["key"].split(", ")
+    if len(keys) == 1:
+        return (f"{r['key']} is new under {r['new_version']} ({r['new_share']:.0%} of"
+                f" records; absent under {r['old_version']}) — {since}")
+    return (f"{len(keys)} keys are new under {r['new_version']} (each in"
+            f" ≥ {r['new_share']:.0%} of records; absent under {r['old_version']})"
+            f" — {since}: {r['key']}")
 
 
 def _notify(text):

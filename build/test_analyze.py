@@ -1575,15 +1575,21 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.assertEqual(self.open_rows(), [])
         self.assertEqual(self.notified, [])
 
-    def test_added_top_level_key_is_informational_and_silent(self):
+    def test_added_top_level_keys_are_one_informational_row_and_silent(self):
+        # Issue #30: a release adds several keys at once — one judgement, one row.
         self.corpus("old", "2.1.1")
-        self.corpus("new", "2.1.2", extra={"effort": "high"})
+        self.corpus("new", "2.1.2", extra={"effort": "high", "agentId": "x"})
         self.run_pipeline(notify=True)
         rows = self.open_rows()
-        self.assertEqual({(r["tier"], r["condition"], r["key"]) for r in rows},
-                         {("informational", 2, "user.effort"),
-                          ("informational", 2, "assistant.effort")})
+        self.assertEqual([(r["tier"], r["condition"], r["key"]) for r in rows],
+                         [("informational", 2, "assistant.agentId, assistant.effort,"
+                           " user.agentId, user.effort")])
+        self.assertIn("4 keys are new under 2.1.2", analyze.breakage_text(rows[0]))
         self.assertEqual(self.notified, [])
+        # A key first seen on a later run joins nothing: the open row stands alone.
+        self.corpus("new2", "2.1.2", extra={"effort": "high", "agentId": "x", "mode": 1})
+        self.run_pipeline(notify=True)
+        self.assertEqual(len(self.open_rows()), 1)
 
     def test_tiny_new_version_waits_for_evidence(self):
         self.corpus("old", "2.1.1")

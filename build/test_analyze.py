@@ -1587,7 +1587,7 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.assertIn("4 keys are new under 2.1.2", analyze.breakage_text(rows[0]))
         self.assertEqual(self.notified, [])
         # A key first seen on a later run joins nothing: the open row stands alone.
-        self.corpus("new2", "2.1.2", extra={"effort": "high", "agentId": "x", "mode": 1})
+        self.corpus("new2", "2.1.2", pairs=30, extra={"effort": "high", "agentId": "x", "mode": 1})  # mode in 30/55 > ADDED
         self.run_pipeline(notify=True)
         self.assertEqual(len(self.open_rows()), 1)
 

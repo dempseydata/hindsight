@@ -1,6 +1,6 @@
 # ADR-0025: Stage B's go/no-go — criterion, model, digest and blind rating fixed before the dry run
 
-**Date:** 2026-09-12 · **Status:** proposed — confirmed by the operator on #26 (2026-09-15), accepted with #27's verdict, whichever way it falls · **Decides:** [issue #26](https://github.com/dempseydata/hindsight/issues/26); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0012
+**Date:** 2026-09-12 · **Status:** accepted — confirmed by the operator on #26 (2026-09-15); the dry run ([#27](https://github.com/dempseydata/hindsight/issues/27), 2026-09-16) returned **no-go on both arms** (arm A: additive 1/5, 2 unsupported claims; arm A+T: additive 0/5, no turn-citing finding on a corrective label; controls empty), so §9's no-go branch applies: Stage A ships alone, the turn class is not admitted, and the numbers here are the record of what was fixed before the run · **Decides:** [issue #26](https://github.com/dempseydata/hindsight/issues/26); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0012
 
 ## Context
 

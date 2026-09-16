@@ -1,6 +1,6 @@
 # ADR-0021: The so-what view — patterns are mechanical and carry no verdict; a verdict lives only in an evaluated synthesis, and only if it earns its place
 
-**Date:** 2026-09-11 · **Status:** accepted · **Decides:** [issue #16](https://github.com/dempseydata/hindsight/issues/16) (the charting session); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0006, ADR-0010
+**Date:** 2026-09-11 · **Status:** accepted — the conditional clause resolved *not built* by the Stage B dry run ([#27](https://github.com/dempseydata/hindsight/issues/27), ADR-0025, 2026-09-16); Stage A ships alone and the ADR-0006/0010 rule stands unreversed · **Decides:** [issue #16](https://github.com/dempseydata/hindsight/issues/16) (the charting session); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0006, ADR-0010
 
 ## Context
 

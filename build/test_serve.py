@@ -87,6 +87,26 @@ def fixture_db(path):
     conn.executemany("""INSERT INTO tool_events (session_id, tool_use_id,
         name, at, result_at, message_id, consumer_type, consumer, mcp_tool,
         is_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", tool_events)
+    # ADR-0027: failed calls with their result text, one per real header
+    # shape (synthetic strings shaped like the corpus — public repo). t2
+    # above is the pruned case: is_error=1, error_text NULL.
+    errors = [
+        ("t5", "mcp__brw__click", "mcp", "brw", "click",
+         "### Error\nTimeout 5000ms exceeded while waiting for element"),
+        ("t6", "Bash", "cli", "python3", None,
+         "Exit code 1\nTraceback (most recent call last):\n"
+         '  File "x.py", line 1, in <module>\n'
+         "sqlite3.OperationalError: database is locked\n"),
+        ("t7", "Skill", "skill", "foo", None,
+         "<tool_use_error>Unknown skill: foo</tool_use_error>"),
+        ("t8", "Bash", "shell", "bash", None,
+         "Exit code 2\nbash: line 1: ${x:y}: bad substitution"),
+        ("t9", "mcp__brw__sel", "mcp", "brw", "sel", "### Error"),
+    ]
+    conn.executemany("""INSERT INTO tool_events (session_id, tool_use_id,
+        name, at, result_at, message_id, consumer_type, consumer, mcp_tool,
+        is_error, error_text) VALUES ('s3', ?, ?, '2026-08-03T10:01:00Z',
+        '2026-08-03T10:01:01Z', NULL, ?, ?, ?, 1, ?)""", errors)
     otel = [
         ("api_request", "s1", "2026-08-03T09:00:00Z",
          '{"model": "claude-sonnet-5", "duration_ms": "1500",'
@@ -435,10 +455,48 @@ class ServerTest(unittest.TestCase):
         _, body = self.get("/where")
         for cat in ("mcp", "cli", "skill"):
             self.assertIn(f'<button class="on" aria-pressed="true"'
-                          f' data-t="{cat}">{cat}</button>', body)
+                          f' data-t="{cat}">{cat}<span class="ec"></span></button>', body)
         for cat in ("shell", "builtin"):
             self.assertIn(f'<button aria-pressed="false"'
-                          f' data-t="{cat}">{cat}</button>', body)
+                          f' data-t="{cat}">{cat}<span class="ec"></span></button>', body)
+        self.assertIn('"errs"', body)     # #33: the error list rides in the blob
+
+    def test_error_line_per_header_shape(self):
+        """#33 / ADR-0027: two mechanical rules, one assertion per real
+        header shape; nothing left after stripping is an empty line."""
+        el = serve.error_line
+        self.assertEqual(el("### Error\nTimeout 5000ms exceeded"),
+                         "Timeout 5000ms exceeded")
+        self.assertEqual(el("Exit code 1\nTraceback (most recent call last):\n"
+                            '  File "x.py", line 1\nKeyError: \'a\'\n'),
+                         "KeyError: 'a'")
+        self.assertEqual(el("<tool_use_error>Unknown skill: foo</tool_use_error>"),
+                         "Unknown skill: foo")
+        self.assertEqual(el("Exit code 2\nbash: line 1: bad substitution"),
+                         "bash: line 1: bad substitution")
+        self.assertEqual(el("### Error"), "")
+        self.assertEqual(el("Exit code 1\n\n"), "")
+
+    def test_where_data_errors(self):
+        """#33: one per-call error row, line derived server-side, a NULL
+        text shipped with neither line nor text, same day/project keys as
+        the tools rows so the client filter applies untouched."""
+        conn = serve.open_db(self.db)
+        w = serve.where_data(conn)
+        conn.close()
+        by = {r["sid"] + "|" + r["c"] + "|" + r.get("mt", ""): r for r in w["errs"]}
+        self.assertEqual(by["s3|brw|click"]["l"], "Timeout 5000ms exceeded while waiting for element")
+        self.assertEqual(by["s3|python3|"]["l"], "sqlite3.OperationalError: database is locked")
+        self.assertEqual(by["s3|foo|"]["l"], "Unknown skill: foo")
+        self.assertEqual(by["s3|bash|"]["l"], "bash: line 1: ${x:y}: bad substitution")
+        self.assertEqual(by["s3|brw|sel"]["l"], "")
+        self.assertEqual(by["s3|brw|click"]["t"], "### Error\nTimeout 5000ms exceeded while waiting for element")
+        self.assertEqual(by["s1|srv|do"], {"d": "2026-08-01", "p": "big", "ty": "mcp",
+                                           "c": "srv", "mt": "do", "sid": "s1"})
+        keys = {(r["d"], r["p"], r["ty"], r["c"], r.get("mt")) for r in w["tools"]}
+        for r in w["errs"]:
+            self.assertIn((r["d"], r["p"], r["ty"], r["c"], r.get("mt")), keys)
+        self.assertEqual(len(w["errs"]), 6)
 
     def test_where_data_shape(self):
         conn = serve.open_db(self.db)

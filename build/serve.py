@@ -452,10 +452,48 @@ def where_data(conn):
                     if has_otel else ""),
            "hook": min((h["d"] for h in hooks), default=None),
            "excluded": one("SELECT COUNT(*) FROM excluded_sessions")}
+    # errors behind the count (#33, ADR-0027): one row per failed call at
+    # the tools rows' (day, project) keys so the client filter applies
+    # untouched; the error line is derived here, the client only groups.
+    # A NULL text ships with neither line nor text — counted, not captured.
+    errs = []
+    for d, p, ty, c, mt, sid, text in conn.execute(f"""
+            SELECT {day_sql("t.at")}, s.project,
+                   COALESCE(t.consumer_type, ''), COALESCE(t.consumer, ''),
+                   t.mcp_tool, t.session_id, t.error_text
+            FROM tool_events t JOIN sessions s ON s.id = t.session_id
+            WHERE t.is_error = 1 ORDER BY t.at"""):
+        r = {"d": d, "p": p, "ty": ty, "c": c, "sid": sid}
+        if mt:
+            r["mt"] = mt
+        if text is not None:
+            r["l"], r["t"] = error_line(text), text
+        errs.append(r)
+
     return {"tools": tools, "lens": lens, "sess": sess, "subd": subd, "cs": cons_sess,
             "models": models, "lat": lat_rows, "hooks": hooks,
-            "retries": retries, "conn": mcp_conn,
+            "retries": retries, "conn": mcp_conn, "errs": errs,
             "sunk": sunk, "med": medians, "cov": cov}
+
+
+_ERR_HEADER = re.compile(r"^(### Error|Exit code \d+)$")
+
+
+def error_line(text):
+    """The one line an error is listed and grouped by (ADR-0027 §3): under
+    a Python traceback header the last non-empty line; otherwise the first
+    non-empty line after dropping the fixed header set (`### Error`,
+    `Exit code N`) and the <tool_use_error> wrapper, which is stripped
+    from around the text rather than counted as a line. Nothing left is
+    ''. A display key, never a class.
+    """
+    # ponytail: a traceback followed by stray script output groups under
+    # that output (4 of 24 real ones); upgrade path is to scan backwards
+    # for the last `Name: message` line.
+    if "Traceback (most recent call last)" in text:
+        return next((l.strip() for l in reversed(text.splitlines()) if l.strip()), "")
+    lines = text.replace("<tool_use_error>", "").replace("</tool_use_error>", "").splitlines()
+    return next((l for l in map(str.strip, lines) if l and not _ERR_HEADER.match(l)), "")
 
 
 def _ms(v):

@@ -100,13 +100,37 @@ const KNOWN = new Set([...document.querySelectorAll("#cats button")]
 const CATS = new Set([...document.querySelectorAll("#cats button.on")]
   .map(b => b.dataset.t));
 
+// #33: the errors behind a consumer's count — grouped by exact error line
+// (the server derived it; no normalisation, no class), count-first, full
+// text and session anchors nested; NULL text stated, never dropped
+function errorsHtml(k, rows, open) {
+  const by = {};
+  let nc = 0;
+  for (const r of rows) {
+    if (r.t == null) { nc++; continue; }
+    (by[r.l] ??= []).push(r);
+  }
+  let out = Object.entries(by)
+    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .map(([l, rs]) => {
+      const key = k + "|" + l;
+      return `<details class="sub errg" data-k="${esc(key)}"${open.has(key) ? " open" : ""}><summary>
+        <span class="err">${rs.length} ×</span> ${l ? esc(l) : '<span class="dim">(no message)</span>'}</summary>
+        ${rs.map(r => `<div class="occ"><a href="/what#${encodeURIComponent(r.sid)}">${esc(r.sid)}</a> · ${r.d || "undated"}<pre>${esc(r.t)}</pre></div>`).join("")}</details>`;
+    }).join("");
+  if (nc) out += `<p>${nc} errors, text not captured (transcript pruned before capture)</p>`;
+  return out;
+}
+
 function leagueHtml(open) {
-  const g = {};
-  let unclassified = 0, hidden = 0;
+  const g = {}, catErr = {}, errs = {};
+  let unclassified = 0, hidden = 0, hiddenErr = 0;
+  for (const r of WHERE.errs) if (r.ty && keep(r)) (errs[r.ty + "|" + r.c] ??= []).push(r);
   for (const r of WHERE.tools) {
     if (!r.ty) { if (keep(r)) unclassified += r.n; continue; }
+    if (keep(r)) catErr[r.ty] = (catErr[r.ty] || 0) + r.e;
     if (KNOWN.has(r.ty) && !CATS.has(r.ty)) {
-      if (keep(r)) hidden += r.n;
+      if (keep(r)) { hidden += r.n; hiddenErr += r.e; }
       continue;
     }
     if (!keep(r)) continue;
@@ -151,6 +175,7 @@ function leagueHtml(open) {
       <p><b>${o.days.size}</b> active days in window \u00b7 first used ${span[0]} \u00b7 last used ${span[1]} (all time)</p>
       <p>latency p50 ${ms(pct(durs, 50))} \u00b7 p95 ${ms(pct(durs, 95))} \u00b7 max ${ms(durs[durs.length - 1])}
          \u00b7 errors <b>${o.e}</b>${o.nu ? ` (+${o.nu} unpaired \u2014 unknown, not ok)` : ""}</p>
+      ${errs[k] ? errorsHtml(k, errs[k], open) : ""}
       ${mcp.length ? `<p>tools: ${mcp.map(([t, n]) => `${esc(t)} \u00d7${n}`).join(" \u00b7 ")}</p>` : ""}
       <p>projects: ${projs.slice(0, 6).map(([p, n]) => `${esc(p)} \u00d7${n}`).join(" \u00b7 ")}${projs.length > 6 ? ` \u00b7 +${projs.length - 6} more` : ""}</p>
       </div></details>`;
@@ -161,8 +186,12 @@ function leagueHtml(open) {
       <p class="detail dim">${tail.sort((a, b) => b[1].n - a[1].n).map(([, o]) =>
         `${esc(o.c)} <span class="pchip">${o.ty}</span> \u00d7${o.n}`).join(" \u00b7 ")}</p></details>`;
   out = out ? head + out : '<p class="dim">none in filter</p>';
+  // chip labels carry the in-window error count whether on or off, so a
+  // switched-off category's errors are visible without clicking it
+  for (const b of document.querySelectorAll("#cats button"))
+    b.querySelector(".ec").textContent = catErr[b.dataset.t] ? ` \u00b7 ${catErr[b.dataset.t]} err` : "";
   if (hidden)
-    out += `<p class="note">${fmt(hidden)} calls in window sit in switched-off
+    out += `<p class="note">${fmt(hidden)} calls \u00b7 ${fmt(hiddenErr)} errors in window sit in switched-off
       categories \u2014 the chips above re-add them; always counted in the tiles.</p>`;
   if (unclassified)
     out += `<p class="note">${fmt(unclassified)} calls in window carry no consumer grain

@@ -34,6 +34,7 @@ function rowHtml(r, open) {
   return `<details class="row" ${attrs}${op}><summary>${chip}<span class="ttl">${inline(r.title)}</span><span class="cnt">${cnt}${adr}</span></summary><div class="entry">${secs}</div></details>`;
 }
 
+let anchored = false;   // the session anchor scrolls once, on the render that finds it
 function renderWhat() {
   const open = new Set([...document.querySelectorAll("#ledger details[open]")]
     .map(d => d.dataset.id + "@" + d.dataset.day));
@@ -56,6 +57,15 @@ function renderWhat() {
     `${sess.length} sessions in view \u00b7 ${triv} trivial`
     + (pend ? ` \u00b7 ${pend} awaiting analysis` : "")
     + (lost ? ` \u00b7 ${lost} unrecoverable` : "");
+  // session anchor (ADR-0023): /what#<sid> opens and scrolls to the first
+  // row carrying the id, never touches filter state; a row outside the
+  // filter is stated under the ledger, not silently nothing
+  const want = decodeURIComponent(location.hash.slice(1));
+  if (!want) return;
+  const el = document.querySelector(`#ledger details[data-id="${CSS.escape(want)}"]`);
+  if (el) { if (!anchored) { el.open = true; el.scrollIntoView(); anchored = true; } }
+  else document.getElementById("ledger").insertAdjacentHTML("beforeend",
+    `<p class="note">session ${esc(want)} is outside the current filter \u2014 widen the window or project chips</p>`);
 }
 hs.onFilter(renderWhat);
 renderWhat();

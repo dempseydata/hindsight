@@ -41,6 +41,17 @@
 #where .lg .detail p { margin: .15rem 0; color: var(--o-dim); }
 #where .lg .detail b { color: var(--o-text); font-weight: 600; }
 #where details.sub summary { cursor: pointer; color: var(--o-dim); }
+/* #33: error groups nest inside a league row's detail — plain summaries,
+   not the league grid; verbatim text wraps, never scrolls the page */
+#where .lg .detail .errg { margin: .15rem 0 .15rem .6rem; }
+#where .lg .detail .errg summary { display: block; border-top: none;
+  background: none; padding: .1rem 0; color: var(--o-text); font: 12px var(--o-mono); }
+#where .lg .detail .errg summary .err { font-weight: 600; }
+#where .lg .detail .occ { margin: .2rem 0 .3rem 1rem; color: var(--o-dim);
+  font: 11px var(--o-mono); }
+#where .lg .detail .occ pre { margin: .15rem 0 0; white-space: pre-wrap;
+  word-break: break-word; font: 11px/1.5 var(--o-mono); color: var(--o-dim); }
+#where #cats .ec { color: var(--o-problem-text); }
 #where .sunk details { margin-top: .3rem; }
 #where .sunk summary { cursor: pointer; padding: .25rem 0; }
 #where .sunk summary::-webkit-details-marker { display: none; }

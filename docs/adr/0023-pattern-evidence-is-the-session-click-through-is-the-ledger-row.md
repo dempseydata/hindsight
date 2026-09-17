@@ -30,3 +30,5 @@ Two facts settle most of the question before it is asked. A pattern's window *is
 - CONTEXT.md's *pattern* names session ids per row as its evidence; the served UI gains the *session anchor*.
 - The what-view build ticket, when cut, carries the fragment handler and the miss line; the so-what view renders session ids as links to it.
 - Stage B's digest, if built, cites patterns by id and sessions by id; it inherits no finer grain.
+
+**Amendment (2026-09-16, ADR-0027, issue #32):** the served UI will render one kind of transcript text — the error line of a failed tool call, derived from its stored `error_text` — in the league row's detail, with session ids as session anchors. The rule that no other transcript text is served stands.

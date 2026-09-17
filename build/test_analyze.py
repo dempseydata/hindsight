@@ -673,7 +673,7 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 8)
+                conn.execute("PRAGMA user_version").fetchone()[0], 9)
         finally:
             conn.close()
         row = self.identity_row("sess-old")
@@ -941,7 +941,7 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 8)
+                conn.execute("PRAGMA user_version").fetchone()[0], 9)
             row = conn.execute("SELECT folder_identity, name, present"
                                " FROM project_presence").fetchone()
         finally:

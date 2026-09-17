@@ -251,7 +251,8 @@ CREATE TABLE IF NOT EXISTS tool_events (
   consumer_type TEXT,  -- 'skill' | 'mcp' | 'cli' | 'shell' | 'builtin' (ticket #42)
   consumer TEXT,
   mcp_tool TEXT,
-  is_error INTEGER     -- from the paired tool_result; NULL when never paired
+  is_error INTEGER,    -- from the paired tool_result; NULL when never paired
+  error_text TEXT      -- a failed result's content, verbatim (ADR-0027); NULL = not captured
 );
 CREATE TABLE IF NOT EXISTS status_narrative (
   project TEXT PRIMARY KEY,
@@ -428,11 +429,14 @@ def init_db(db_path):
     # gate for the same refills. Existing rows are the parent's own (NULL);
     # subagent transcripts of already-synced sessions arrive through
     # invalidate_grown on the next run — no data migration.
+    # ADR-0027 likewise: error_text on tool_events, ahead of the gate
+    # because every refill below inserts it; the v9 sniff does the refill.
     for table, col in (("sessions", "folder_identity INTEGER"),
                        ("sessions", "attribution_source TEXT"),
                        ("tool_events", "agent_id TEXT"),
                        ("usage", "agent_id TEXT"),
-                       ("command_grains", "agent_id TEXT")):
+                       ("command_grains", "agent_id TEXT"),
+                       ("tool_events", "error_text TEXT")):
         if col.split()[0] not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
     if v < 1:
@@ -516,6 +520,15 @@ def init_db(db_path):
         # wipe-and-refill as v3; a vanished transcript keeps its old rows.
         _reset_scanned(conn)
         conn.execute("PRAGMA user_version = 8")
+        conn.commit()
+        fill_substrate(conn)
+    if v < 9:
+        # ADR-0027 / ticket #32: error text is new — rescan every scanned
+        # session whose transcript survives so its failed calls carry their
+        # text. Same wipe-and-refill as v3/v8; a vanished transcript keeps
+        # its old rows with error_text NULL: counted, not captured.
+        _reset_scanned(conn)
+        conn.execute("PRAGMA user_version = 9")
         conn.commit()
         fill_substrate(conn)
     # Message-lens join indexes — after the gate, so a pre-#42 db grows the

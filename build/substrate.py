@@ -25,7 +25,8 @@ from extract import FILE_TOOLS  # the create/modify tool set
 # dotted path into it; a `content.<block type>` scope is one content block.
 # Enumerated from the three readers, not from memory. Keys read but not
 # expected present are deliberately absent: `isMeta` (its absence is the
-# common case), `tool_result.is_error` (written only on error),
+# common case), `tool_result.is_error` (written only on error) and
+# `tool_result.content` (read only under it — ADR-0027),
 # `tool_use.input.file_path` / `notebook_path` (file tools only).
 # The schema-drift guard (analyze.check_drift) walks this list against the
 # per-version field histogram scan_transcript accumulates, so the guard and
@@ -172,9 +173,14 @@ def scan_transcript(path):
     Counter keyed (record version, scope, key) over every record parsed —
     see tally_record. events as dicts keyed by tool_events column name,
     with tool_use/tool_result paired by id — a tool_use without an id (older
-    CLIs) keeps its row with result_at/is_error NULL, a tool_result without
-    a tool_use_id is ignored. Duplicate tool_use ids (the records streaming
-    one response repeat its blocks) keep one row; a tool_use whose name
+    CLIs) keeps its row with result_at/is_error/error_text NULL, a tool_result
+    without a tool_use_id is ignored. error_text (ADR-0027) is the failed
+    result's content verbatim — a string as-is, a block list as its text
+    blocks joined, '' when there is nothing — and None on a successful
+    result: the one tool-result content the product keeps. `content` and
+    `is_error` are read outside the field contract, so the histogram and
+    the drift guard are unchanged by them. Duplicate tool_use ids (the
+    records streaming one response repeat its blocks) keep one row; a tool_use whose name
     holds command text (whitespace — the #38 parse wart) or is not a string
     at all is malformed and counts as skipped once. commands as
     [command, at]: a user-typed slash command injects its skill with no
@@ -238,7 +244,7 @@ def scan_transcript(path):
                         "file_path": inp.get("file_path") or inp.get("notebook_path"),
                         "message_id": mid, "consumer_type": ctype,
                         "consumer": consumer, "mcp_tool": mcp_tool,
-                        "is_error": None})
+                        "is_error": None, "error_text": None})
             elif t == "user":
                 # ponytail: string content only — every real command message
                 # observed is plain-string (209/209 across 69 transcripts);
@@ -250,15 +256,28 @@ def scan_transcript(path):
                 for c in (content if isinstance(content, list) else []):
                     if (isinstance(c, dict) and c.get("type") == "tool_result"
                             and c.get("tool_use_id")):
-                        results[c["tool_use_id"]] = (
-                            e.get("timestamp"), 1 if c.get("is_error") else 0)
+                        err = bool(c.get("is_error"))
+                        results[c["tool_use_id"]] = {
+                            "result_at": e.get("timestamp"), "is_error": 1 if err else 0,
+                            "error_text": _result_text(c.get("content")) if err else None}
             else:
                 skipped += 1
     for ev in events:
-        r = results.get(ev["tool_use_id"]) if ev["tool_use_id"] else None
-        if r:
-            ev["result_at"], ev["is_error"] = r
+        if ev["tool_use_id"]:
+            ev.update(results.get(ev["tool_use_id"], {}))
     return events, list(usage.values()), commands, skipped, hist
+
+
+def _result_text(content):
+    """A tool_result's content as text: a string as-is, a block list as its
+    text blocks joined by newline, anything else ''."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b["text"] for b in content
+                         if isinstance(b, dict) and b.get("type") == "text"
+                         and isinstance(b.get("text"), str))
+    return ""
 
 
 def former_names(conn, project):
@@ -344,9 +363,9 @@ def fill_substrate(conn):
             conn.executemany(
                 "INSERT INTO tool_events (session_id, agent_id, tool_use_id, name,"
                 " at, result_at, file_path, message_id, consumer_type, consumer,"
-                " mcp_tool, is_error) VALUES (:session_id, :agent_id, :tool_use_id,"
-                " :name, :at, :result_at, :file_path, :message_id, :consumer_type,"
-                " :consumer, :mcp_tool, :is_error)",
+                " mcp_tool, is_error, error_text) VALUES (:session_id, :agent_id,"
+                " :tool_use_id, :name, :at, :result_at, :file_path, :message_id,"
+                " :consumer_type, :consumer, :mcp_tool, :is_error, :error_text)",
                 [{**ev, "session_id": sid, "agent_id": aid} for ev in events])
             conn.executemany(
                 "INSERT INTO usage (session_id, agent_id, message_id, at, model,"

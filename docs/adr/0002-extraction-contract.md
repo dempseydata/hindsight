@@ -36,3 +36,5 @@ The what/why pipeline hangs on model extraction over session-transcript extracts
 - The unresolved-evidence state is visible in the why-view rather than papered over, and its rate is monitored; a rising rate is an early signal of extract or prompt drift.
 
 **Amendment (2026-08-30, ticket #79, ADR-0016):** the what-pass has a mechanical gate again — a frozen regression set of 20 extract parts scored by `valid_entry` (`eval/what_cases.json`, `eval/what_run.py`), the price named above now paid. The prompt is `what-v3`, which brackets the extract rather than prefixing it.
+
+**Amendment (2026-09-16, ADR-0027, issue #32):** one tool-result content is now stored — the verbatim text of a *failed* call, on its `tool_events` row (`error_text`). Nothing of a successful call, and no other transcript text; the exclusion above otherwise stands.

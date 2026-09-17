@@ -294,6 +294,88 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         self.assertEqual(ev["t-bad"]["is_error"], 1)
         self.assertEqual(ev["t-ok"]["is_error"], 0)
         self.assertIsNone(ev["t-lost"]["is_error"])
+        # ADR-0027: the failed call's text rides beside the flag; nothing of
+        # a successful call; an unpaired call is unknown on both.
+        self.assertEqual(ev["t-bad"]["error_text"], "boom")
+        self.assertIsNone(ev["t-ok"]["error_text"])
+        self.assertIsNone(ev["t-lost"]["error_text"])
+
+    def test_error_text_verbatim_blocks_joined_empty_kept(self):
+        """ADR-0027: error text is stored verbatim and uncapped (the
+        `### Error` header and every line kept); a list-of-blocks result
+        contributes its text blocks joined; an erroring result with empty
+        content stores '' — captured-and-empty, not NULL's not-captured."""
+        long_err = "### Error\nTimeoutError: locator.click: Timeout 5000ms exceeded.\n" \
+                   + "\n".join(f"  frame {i}" for i in range(200))
+        write_records(self.root / "proj-a" / "sess-errtext.jsonl", [
+            rec("user", "u0", "2026-08-01T10:00:00Z", "task"),
+            rec("assistant", "a1", "2026-08-01T10:00:05Z", [
+                {"type": "tool_use", "id": "t-str", "name": "mcp__pw__browser_click",
+                 "input": {"ref": "e1"}},
+                {"type": "tool_use", "id": "t-blocks", "name": "Bash",
+                 "input": {"command": "ls"}},
+                {"type": "tool_use", "id": "t-empty", "name": "Bash",
+                 "input": {"command": "ls"}},
+                {"type": "tool_use", "id": "t-nolist", "name": "Bash",
+                 "input": {"command": "ls"}},
+            ], usage=USAGE, model="m-1", id="msg-1"),
+            rec("user", "u2", "2026-08-01T10:00:07Z", [
+                {"type": "tool_result", "tool_use_id": "t-str",
+                 "content": long_err, "is_error": True},
+                {"type": "tool_result", "tool_use_id": "t-blocks", "is_error": True,
+                 "content": [{"type": "text", "text": "Exit code 1"},
+                             {"type": "image", "source": {}},
+                             {"type": "text", "text": "bash: bad substitution"}]},
+                {"type": "tool_result", "tool_use_id": "t-empty",
+                 "content": "", "is_error": True},
+                {"type": "tool_result", "tool_use_id": "t-nolist",
+                 "content": [{"type": "image", "source": {}}], "is_error": True},
+            ]),
+        ])
+        self.sync_and_fill()
+        ev = {e["tool_use_id"]: e["error_text"] for e in self.rows(
+            "SELECT tool_use_id, error_text FROM tool_events"
+            " WHERE session_id='sess-errtext'")}
+        self.assertEqual(ev["t-str"], long_err)
+        self.assertEqual(ev["t-blocks"], "Exit code 1\nbash: bad substitution")
+        self.assertEqual(ev["t-empty"], "")
+        self.assertEqual(ev["t-nolist"], "")
+        # The read of `content` sits outside the field contract (ADR-0020):
+        # no contract entry, so the guard's histogram and its breakage rows
+        # are untouched by it.
+        self.assertNotIn(("user.message.content.tool_result", "content"),
+                         analyze.FIELD_CONTRACT)
+        self.assertNotIn(("user.message.content.tool_result", "is_error"),
+                         analyze.FIELD_CONTRACT)
+        self.assertEqual(self.rows("SELECT * FROM breakage"), [])
+
+    def test_error_text_arrives_by_growth_top_up(self):
+        """A resumed session's new error rides the ordinary top-up (ticket
+        #73): no second capture path."""
+        path = self.root / "proj-a" / "sess-errgrow.jsonl"
+        # bulk keeps the tail under REAUDIT_SHARE: a top-up, not a re-audit
+        recs = [rec("user", "u0", "2026-08-01T10:00:00Z", "task " * 2000),
+                rec("assistant", "a1", "2026-08-01T10:00:05Z",
+                    [{"type": "tool_use", "id": "t-ok", "name": "Bash",
+                      "input": {"command": "ls"}}], usage=USAGE, model="m-1", id="msg-1"),
+                rec("user", "u2", "2026-08-01T10:00:07Z",
+                    [{"type": "tool_result", "tool_use_id": "t-ok", "content": "ok"}])]
+        write_records(path, recs)
+        self.run_pipeline(StubRunner([ENTRY_A]))
+        recs += [rec("assistant", "a3", "2026-08-01T10:10:00Z",
+                     [{"type": "tool_use", "id": "t-bad", "name": "Bash",
+                       "input": {"command": "ls"}}], usage=USAGE, model="m-1", id="msg-2"),
+                 rec("user", "u4", "2026-08-01T10:10:02Z",
+                     [{"type": "tool_result", "tool_use_id": "t-bad",
+                       "content": "Exit code 2\nls: nope: No such file or directory",
+                       "is_error": True}])]
+        write_records(path, recs)
+        self.run_pipeline(StubRunner([]))
+        ev = {e["tool_use_id"]: e["error_text"] for e in self.rows(
+            "SELECT tool_use_id, error_text FROM tool_events"
+            " WHERE session_id='sess-errgrow'")}
+        self.assertEqual(ev, {"t-ok": None,
+                              "t-bad": "Exit code 2\nls: nope: No such file or directory"})
 
     def test_message_lens_links_tool_events_to_usage(self):
         """Ticket #42: each tool_use carries the API id of the message that
@@ -454,6 +536,10 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
                      "input": {"skill": "grilling"}}],
                    usage={**USAGE, "output_tokens": 7}, model="m-1", id="msg-s"),
              "sessionId": sid, "agentId": "abc123", "isSidechain": True},
+            {**rec("user", "s2", "2026-08-01T10:00:09Z",
+                   [{"type": "tool_result", "tool_use_id": "tu-s", "is_error": True,
+                     "content": "### Error\nTimeoutError: skill took too long"}]),
+             "sessionId": sid, "agentId": "abc123", "isSidechain": True},
             {"type": "attachment", "attachment": {}},  # a record the scan skips
         ])
         return root / f"{sid}.jsonl"
@@ -475,6 +561,10 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         events = {e["tool_use_id"]: e["agent_id"] for e in self.rows(
             "SELECT tool_use_id, agent_id FROM tool_events WHERE session_id='sess-par'")}
         self.assertEqual(events, {"tu-p": None, "tu-s": "abc123"})
+        # ADR-0027: the subagent's error text files under the parent too
+        self.assertEqual(self.rows("SELECT error_text FROM tool_events"
+                                   " WHERE tool_use_id='tu-s'")[0]["error_text"],
+                         "### Error\nTimeoutError: skill took too long")
         subs = self.rows("SELECT * FROM subagent_transcripts")
         self.assertEqual([(s["session_id"], s["agent_id"]) for s in subs],
                          [("sess-par", "abc123")])
@@ -549,9 +639,58 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 8)
+                conn.execute("PRAGMA user_version").fetchone()[0], 9)
         finally:
             conn.close()
+
+    def test_error_text_migration_adds_column_and_rescans(self):
+        """ADR-0027 / ticket #32: a v8 db gains tool_events.error_text and
+        every scanned session whose transcript survives is rescanned with
+        the text filled (the v8 wipe-and-refill); a vanished transcript
+        keeps its rows with text NULL — counted, not captured. Ends at 9."""
+        live = self.root / "proj-a" / "sess-v8.jsonl"
+        write_records(live, [
+            rec("user", "u0", "2026-08-01T10:00:00Z", "task"),
+            rec("assistant", "a1", "2026-08-01T10:00:05Z",
+                [{"type": "tool_use", "id": "t1", "name": "Bash",
+                  "input": {"command": "ls"}}]),
+            rec("user", "u2", "2026-08-01T10:00:07Z",
+                [{"type": "tool_result", "tool_use_id": "t1",
+                  "content": "Exit code 1\nls: nope", "is_error": True}]),
+        ])
+        conn = analyze.init_db(self.db)
+        conn.execute("ALTER TABLE tool_events DROP COLUMN error_text")  # the v8 shape
+        conn.execute("INSERT INTO sessions (id, project, transcript_path,"
+                     " status, skipped_records) VALUES"
+                     " ('sess-v8', 'proj-a', ?, 'done', 0)", (str(live),))
+        conn.execute("INSERT INTO sessions (id, project, transcript_path,"
+                     " status, skipped_records) VALUES"
+                     " ('sess-gone', 'proj-a', '/nowhere/g.jsonl', 'done', 0)")
+        for sid in ("sess-v8", "sess-gone"):
+            conn.execute("INSERT INTO tool_events (session_id, tool_use_id, name,"
+                         " is_error) VALUES (?, 't1', 'Bash', 1)", (sid,))
+        conn.execute("PRAGMA user_version = 8")
+        conn.commit()
+        conn.close()
+
+        analyze.init_db(self.db).close()  # the migration itself must refill
+        rows = {r["session_id"]: r for r in self.rows(
+            "SELECT session_id, is_error, error_text FROM tool_events")}
+        self.assertEqual((rows["sess-v8"]["is_error"], rows["sess-v8"]["error_text"]),
+                         (1, "Exit code 1\nls: nope"))
+        self.assertEqual((rows["sess-gone"]["is_error"], rows["sess-gone"]["error_text"]),
+                         (1, None))
+        self.assertEqual(len(self.rows("SELECT * FROM tool_events")), 2)
+        conn = sqlite3.connect(self.db)
+        try:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 9)
+        finally:
+            conn.close()
+        # the sniff runs once: a second init_db neither wipes nor refills
+        ids = [r["id"] for r in self.rows("SELECT id FROM tool_events ORDER BY id")]
+        analyze.init_db(self.db).close()
+        self.assertEqual([r["id"] for r in self.rows(
+            "SELECT id FROM tool_events ORDER BY id")], ids)
 
     def test_local_day_buckets_by_operator_clock(self):
         """Ticket #74 / ADR-0014: a stored UTC timestamp buckets to the
@@ -605,7 +744,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 8)
+                conn.execute("PRAGMA user_version").fetchone()[0], 9)
             tables = {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("runs", tables)
@@ -640,7 +779,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 8)
+                conn.execute("PRAGMA user_version").fetchone()[0], 9)
         finally:
             conn.close()
 

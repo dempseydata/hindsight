@@ -20,7 +20,7 @@ Every error count in the league has the errors behind it. Opening a consumer's r
 
 ## What it is for
 
-Three questions about a heavy Claude Code setup that nothing on disk answers directly: where the tokens went, what was actually done, and whether the process ran as declared. Hindsight answers them from the transcripts and telemetry already on the machine — no account, no upload, no daemon beyond an optional listener. The audience is one operator reviewing their own history months later, and the product is built to that bar: acted-upon insights, not dashboards.
+Three questions about a heavy Claude Code setup that nothing on disk answers directly: where the tokens went, what was actually done, and how you followed your general process, or didn't. Hindsight answers them from the transcripts and telemetry already on the machine — no account, no upload, no daemon beyond an optional listener. The audience is you, reviewing your own history, and the product is built to that bar.
 
 Everything runs on the operator's machine and nothing leaves it: Claude Code writes the transcripts, an analysis run reads them and calls the `claude` CLI for the model pass, and the views read the resulting database on localhost.
 

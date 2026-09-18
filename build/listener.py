@@ -5,19 +5,22 @@ Receives OTLP/HTTP JSON on /v1/logs and /v1/metrics, writes otel_events and
 otel_metrics rows to the local SQLite store, and does nothing else. Ingest
 contract (ADR-0003, definition/ingest-schema-verification.md): chunked bodies
 handled explicitly, every attribute optional-by-default kept as JSON, per-row
-count-and-skip, always return 200. Stdlib only.
+count-and-skip, always return 200 once a body is accepted. Two guards run
+before the body is read (#34): Content-Type must be application/json (415)
+and the declared, chunked or inflated body must fit MAX_BODY (413 / dropped).
+Stdlib only.
 
 Usage:
   listener.py [--port N] [--db PATH]   run in the foreground (default :4318)
   listener.py install                  write launchd plist + start the agent
   listener.py uninstall                stop the agent + remove the plist
 """
-import gzip
 import json
 import os
 import sqlite3
 import subprocess
 import sys
+import zlib
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,6 +28,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_DB = REPO / "local-data" / "hindsight.db"
 DEFAULT_PORT = 4318
+MAX_BODY = 8 * 1024 * 1024   # #34: declared, chunked and inflated body ceiling
 LAUNCHD_LABEL = "com.hindsight.ingest"
 
 SCHEMA = """
@@ -138,19 +142,40 @@ class Handler(BaseHTTPRequestHandler):
                 if size == 0:
                     self.rfile.readline()
                     break
+                if len(body) + size > MAX_BODY:
+                    raise ValueError(f"chunked body over {MAX_BODY} bytes")
                 body += self.rfile.read(size)
                 self.rfile.readline()
             return body
         return self.rfile.read(int(self.headers.get("Content-Length", 0)))
 
+    def _refuse(self, status, why):
+        print(f"{self.path}: refused {status}, {why}", file=sys.stderr, flush=True)
+        self.send_response(status)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_POST(self):
+        # #34: both guards run before the body is read. A browser cannot send
+        # application/json cross-origin without a preflight, and there is no
+        # OPTIONS handler, so the type check alone closes the page vector.
+        if not self.headers.get("Content-Type", "").startswith("application/json"):
+            return self._refuse(415, "content-type not application/json")
+        length = self.headers.get("Content-Length", "")
+        if length.isdecimal() and int(length) > MAX_BODY:
+            return self._refuse(413, f"content-length over {MAX_BODY} bytes")
         rejected_key = ("rejectedDataPoints" if self.path == "/v1/metrics"
                         else "rejectedLogRecords")
         bad = 0
         try:
             body = self._read_body()
             if self.headers.get("Content-Encoding") == "gzip":
-                body = gzip.decompress(body)
+                z = zlib.decompressobj(31)
+                body = z.decompress(body, MAX_BODY + 1)
+                if len(body) > MAX_BODY:
+                    raise ValueError(f"inflated body over {MAX_BODY} bytes")
+                if not z.eof:
+                    raise ValueError("truncated gzip stream")
             payload = json.loads(body)
             conn = sqlite3.connect(self.server.db_path)
             conn.execute("PRAGMA busy_timeout = 5000")

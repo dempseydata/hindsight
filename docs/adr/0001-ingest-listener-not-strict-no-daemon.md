@@ -26,3 +26,7 @@ The Context above lists "hook timings" among what OTEL uniquely carries. That cl
 ## Amendment (2026-08-24)
 
 "Schedules nothing" constrains the *listener*: a launchd calendar job that invokes the on-demand analysis command (the nightly, ADR-0008) is a scheduled *invocation* of a foreground process, not a background process, and does not breach the boundary test.
+
+## Amendment (2026-09-18)
+
+"Always return 200" applies to a body the listener has accepted: once read, a batch is never refused, only counted and skipped. Issue #34 adds two guards that run *before* the body is read, and they do refuse: a `Content-Type` that is not `application/json` gets `415`, a declared `Content-Length` over `MAX_BODY` (8 MiB) gets `413`. The first closes the one vector the loopback bind does not — a web page the operator visits can issue a cross-origin simple POST to `127.0.0.1:4318`, but cannot send `application/json` without a preflight the listener never answers. The second, with the same ceiling on the chunked reader and the inflated gzip size, bounds memory. Both real senders already send the JSON type. No authentication: the trust boundary remains the machine.

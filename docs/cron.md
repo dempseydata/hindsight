@@ -4,7 +4,7 @@ Two launchd user agents and one Claude Code hook. `serve.py` is a foreground pro
 
 | Job | Schedule | Entry point | Secrets | Limits | Retry |
 | --- | --- | --- | --- | --- | --- |
-| Ingest listener `com.hindsight.ingest` | `RunAtLoad` + `KeepAlive` — always up, restarted by launchd on exit | `<sys.executable> build/listener.py` (no args → `127.0.0.1:4318`, default DB) | none | `busy_timeout` 5 s per request; no body cap; no auth | none — a lost batch is one `partialSuccess` rejection and `200` |
+| Ingest listener `com.hindsight.ingest` | `RunAtLoad` + `KeepAlive` — always up, restarted by launchd on exit | `<sys.executable> build/listener.py` (no args → `127.0.0.1:4318`, default DB) | none | `busy_timeout` 5 s per request; `Content-Type` must start with `application/json` (`415`); bodies over `MAX_BODY` 8 MiB refused (`413`) or dropped (#34); no auth | none — a lost batch is one `partialSuccess` rejection and `200` |
 | Nightly analysis `com.hindsight.nightly` | `StartCalendarInterval` 03:00 local; launchd runs it on wake if asleep, skips it if powered off | `<sys.executable> build/analyze.py`, `PATH` (and `HINDSIGHT_TZ`) baked from the installing shell | none | serial `claude -p` calls, 300 s each (`CALL_TIMEOUT`); drift notification via `osascript`, 30 s | pauses on `LimitExhausted` (rate limit, or no `claude` on `PATH`) — unreached sessions stay `pending`/`partial`; a failed extract or a gated-out output is retried next night |
 | Self-instrumentation hook | per Claude Code hook event registered in `~/.claude/settings.json` (config, not code — snippet in `build/hook.py`'s docstring) | `python3 <clone>/build/hook.py [--port N]` | none | 0.5 s per blocking leg (stdin, connect, response) | none — fails silently; the firing is simply not recorded |
 
@@ -41,7 +41,7 @@ Replaced wholesale each run: `sunk_cost`. Appended: substrate tables, `change_ev
 
 ## Internal-call authentication
 
-None present. The nightly job calls no HTTP endpoint. The hook → listener POST (`http://127.0.0.1:<port>/v1/logs`) carries no token, and the listener checks nothing — no auth, no content-type, no size cap; the protection is the loopback bind (see [flows.md](flows.md) F1/F2). Anything on the machine can write rows into `otel_events`.
+None present. The nightly job calls no HTTP endpoint. The hook → listener POST (`http://127.0.0.1:<port>/v1/logs`) carries no token. The listener checks two things (#34): `Content-Type` must start with `application/json` (`415` otherwise — a browser cannot send that cross-origin without a preflight, and there is no `OPTIONS` handler, so a web page the operator visits cannot post rows), and the body must stay under `MAX_BODY` 8 MiB declared, chunked or inflated. No auth beyond that; the protection is the loopback bind (see [flows.md](flows.md) F1/F2). Any local process sending JSON can write rows into `otel_events`.
 
 ## Where to see last runs
 

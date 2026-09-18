@@ -56,7 +56,7 @@ No row-level security: SQLite has none and there is one owner.
 
 | Gap | Fact | Consequence |
 | --- | --- | --- |
-| Listener accepts any local writer | No auth, no size cap, unknown paths return 200 (`Handler.do_POST`) | Any local process can pollute `otel_events`; on a single-user Mac the writer set is the operator's own processes |
+| Listener accepts any local JSON writer | No auth; `Content-Type` must start with `application/json` (`415`) and the body is capped at `MAX_BODY` 8 MiB (`413`, or dropped once chunked/inflated), so a web page's cross-origin simple POST is refused (#34); unknown paths still return 200 (`Handler.do_POST`) | Any local process can pollute `otel_events`; on a single-user Mac the writer set is the operator's own processes |
 | Server has no auth | `serve.py` serves every view to any loopback client | Session titles, model prose, project and consumer names, and — since ADR-0027 — verbatim, uncapped error text including tracebacks that carry paths on every frame. Not `blobs`. |
 | `blobs` holds config verbatim | `capture_backstop` snapshots the whole `BACKSTOP_SURFACE` file and every `.claude/` commit's before/after | Reading the DB file reveals every settings/MCP file, current and historical; protected only by the file's Unix mode and the gitignore. See [variables.md](variables.md). |
 | Model output gated by shape, not content | `valid_entry`, `score.contract` | A well-formed but wrong entry is written; `eval/` is the standing check. See [automation.md](automation.md). |

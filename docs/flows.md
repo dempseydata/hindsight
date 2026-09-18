@@ -17,12 +17,12 @@ denylist (`.githooks/pre-commit`, home paths / key shapes / transcript filenames
 
 | Step | Where | Check | Side effect |
 | --- | --- | --- | --- |
-| 1. POST `/v1/logs` or `/v1/metrics` | `listener.py:146-176, 184` | Bind `127.0.0.1` only. No auth, no content-type check, no size cap. Any other path → `200 {}` with nothing stored | — |
-| 2. Dechunk / gunzip / `json.loads` | `listener.py:131-154` | Any failure → whole batch dropped, `200` with `partialSuccess` | — |
+| 1. POST `/v1/logs` or `/v1/metrics` | `listener.py:158-166, 209` | Bind `127.0.0.1` only. No auth. `Content-Type` not `application/json` → `415`; `Content-Length` over `MAX_BODY` 8 MiB → `413`, body unread (#34). Any other path → `200 {}` with nothing stored | — |
+| 2. Dechunk / gunzip / `json.loads` | `listener.py:135-150, 170-179` | Chunked or inflated body over `MAX_BODY`, or any other failure → whole batch dropped, `200` with `partialSuccess` | — |
 | 3. Per-row insert | `listener.py:84-127` | Bad row counted and skipped; batch commits the rest. A malformed *container* yields zero rows and is not counted | INSERT `otel_events(event_name, session_id, timestamp, attributes)` / `otel_metrics(...)`, attributes stored as the full JSON dict |
-| 4. Respond | `listener.py:168-176` | Always `200` | stderr → `~/Library/Logs/hindsight/listener.log` (exception text and skip counts; never bodies) |
+| 4. Respond | `listener.py:195-201` | `200` for any accepted body | stderr → `~/Library/Logs/hindsight/listener.log` (exception text and skip counts; never bodies) |
 
-**Deny case:** none exists; the protection is the bind address. **Failure that loses data:** DB locked past `busy_timeout=5000` → batch lost, reported as one rejected row, `200` (`listener.py:156, 165-167`).
+**Deny case:** `415` on a non-JSON content type, `413` on an over-cap declared length (`Handler._refuse`, one stderr line each); otherwise the protection is the bind address. **Failure that loses data:** DB locked past `busy_timeout=5000` → batch lost, reported as one rejected row, `200` (`listener.py:181, 190-194`).
 
 ## F2 — Self-instrumentation hook (Claude Code → hook.py → listener)
 

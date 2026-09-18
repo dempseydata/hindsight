@@ -8,7 +8,10 @@ Fixtures mirror the verified 2.1.91 shapes (definition/ingest-schema-
 verification.md) with identifiers scrubbed; when the real gitignored
 captures exist locally they are replayed too.
 """
+import contextlib
+import gzip
 import http.client
+import io
 import json
 import sqlite3
 import tempfile
@@ -63,20 +66,22 @@ class ListenerTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
+        cls.server.server_close()
         cls.tmp.cleanup()
 
-    def post(self, path, body, chunked=False, raw=False):
+    def post(self, path, body, chunked=False, raw=False, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         data = body if raw else json.dumps(body).encode()
-        if chunked:
-            conn.request("POST", path, iter([data]), {"Content-Type": "application/json"},
-                         encode_chunked=True)
-        else:
-            conn.request("POST", path, data, {"Content-Type": "application/json"})
-        resp = conn.getresponse()
-        out = (resp.status, json.loads(resp.read() or b"{}"))
-        conn.close()
-        return out
+        headers = {"Content-Type": "application/json", **(headers or {})}
+        try:
+            if chunked:
+                conn.request("POST", path, iter([data]), headers, encode_chunked=True)
+            else:
+                conn.request("POST", path, data, headers)
+            resp = conn.getresponse()
+            return resp.status, json.loads(resp.read() or b"{}")
+        finally:
+            conn.close()
 
     def rows(self, table):
         db = sqlite3.connect(self.db)
@@ -195,6 +200,64 @@ class ListenerTest(unittest.TestCase):
     def test_unknown_path_still_200(self):
         status, _ = self.post("/v1/traces", {"resourceSpans": []})
         self.assertEqual(status, 200)
+
+    # Issue #34: the browser vector and the body ceiling.
+
+    def test_text_plain_refused_415_and_inserts_nothing(self):
+        # A cross-origin "simple" POST from a web page is text/plain; a
+        # browser cannot send application/json without a CORS preflight.
+        before = self.count("otel_events")
+        status, _ = self.post("/v1/logs", logs_payload(log_record(session_id="sess-cors")),
+                              headers={"Content-Type": "text/plain"})
+        self.assertEqual(status, 415)
+        self.assertEqual(self.count("otel_events"), before)
+
+    def test_content_length_over_cap_refused_413_unread(self):
+        # Declare a body far over the cap but send almost none of it: the
+        # listener must answer from the header alone, not block reading.
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.putrequest("POST", "/v1/logs")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(listener.MAX_BODY + 1))
+        conn.endheaders()
+        conn.send(b"{")
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 413)
+        conn.close()
+
+    def test_gzip_inflating_past_cap_dropped_with_one_stderr_line(self):
+        big = json.dumps(logs_payload(log_record(session_id="sess-gz", pad="0" * (listener.MAX_BODY + 1))))
+        before = self.count("otel_events")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            status, body = self.post("/v1/logs", gzip.compress(big.encode()), raw=True,
+                                     headers={"Content-Encoding": "gzip"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"partialSuccess": {"rejectedLogRecords": 1}})
+        self.assertEqual(self.count("otel_events"), before)
+        self.assertEqual(len([l for l in err.getvalue().splitlines() if "ingest error" in l]), 1)
+
+    def test_truncated_gzip_dropped(self):
+        # decompressobj does not check end-of-stream by itself; a body cut
+        # before the trailer must not be parsed as if complete.
+        gz = gzip.compress(json.dumps(logs_payload(log_record(session_id="sess-trunc"))).encode())
+        before = self.count("otel_events")
+        status, body = self.post("/v1/logs", gz[:-8], raw=True,
+                                 headers={"Content-Encoding": "gzip"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"partialSuccess": {"rejectedLogRecords": 1}})
+        self.assertEqual(self.count("otel_events"), before)
+
+    def test_chunked_body_over_cap_dropped(self):
+        # The listener stops reading at the cap and closes, so the client
+        # may see a reset mid-send; what matters is nothing was stored.
+        big = b'{"pad":"' + b"0" * (listener.MAX_BODY + 1) + b'"}'
+        before = self.count("otel_events")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.suppress(ConnectionError):
+            self.post("/v1/logs", big, chunked=True, raw=True)
+        self.assertEqual(self.count("otel_events"), before)
+        self.assertIn("chunked body over", err.getvalue())
 
     def test_store_init_idempotent(self):
         listener.init_db(self.db)

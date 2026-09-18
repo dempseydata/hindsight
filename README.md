@@ -14,9 +14,9 @@ Every error count in the league has the errors behind it. Opening a consumer's r
 
 ![A consumer row opened in the league, one project in view: three errors grouped by error line, the category chips carrying their error counts](docs/screenshots/errors.png)
 
-**How — the process trail.** One project's declared process beside what actually happened: phase runs, a model-written status narrative, and the mechanical trail behind it.
+**How — the process trail.** One project's declared process beside what actually happened: phase runs, a model-written status narrative, and the mechanical trail behind it. Work that matches no declared stage is off-script, and it is shown rather than hidden: listed beside the stated process, tallied on every run, and forming runs of its own when nothing declared was going on.
 
-![The how view: declared process beside the phase-run trail](docs/screenshots/how.png)
+![The how view: declared process beside the phase-run trail, with the off-script events listed](docs/screenshots/how.png)
 
 ## What it is for
 

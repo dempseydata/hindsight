@@ -253,7 +253,7 @@ Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels,
 - **How-view cards:** `.stage` and `.run` panels add a 3px left rule in the stage hue (inline `--stage`, falling back to `--o-stage-off` for off-script runs); their `h2` headings sit in the Label tier; the current run wears the accent `now` badge.
 
 ### Stat Tiles
-- **Style:** panel treatment at padding 0.55rem 1rem 0.5rem, min-width 7rem; a 28px/1.25 600 mono tabular numeral over an 11px `--o-dim` label. Where-view tiles are static (input · output · cache create · cache read · sessions · tool calls · subagents).
+- **Style:** panel treatment at padding 0.55rem 1rem 0.5rem, min-width 7rem; a 28px/1.25 600 mono tabular numeral over an 11px `--o-dim` label. Where-view tiles are static (input · output · cache create · cache read · sessions · tool calls · errors · subagents); the errors sub-label carries `+n unknown` when unpaired calls are in view, and the subagents sub-label their share of tokens.
 - **Radio tiles (what-view):** the four tiles — sessions (sub-label carries the trivial · awaiting analysis · unrecoverable qualifiers) · actions · decisions · ADRs — are `<button aria-pressed>`; the pressed one keys the heatmap and takes an `--o-accent` border and label, nothing else changes.
 
 ### Ledger Rows (what-view)

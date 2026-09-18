@@ -98,8 +98,10 @@ function tilesHtml() {
   const t = [0, 0, 0, 0];
   for (const r of DATA.days) if (keep(r)) r.t.forEach((n, k) => t[k] += n);
   const sessions = WHERE.sess.filter(keep).length;
-  let calls = 0;
-  for (const r of WHERE.tools) if (keep(r)) calls += r.n;
+  // #36: errors beside tool calls — paired failures counted, unpaired
+  // (unknown, not ok) named in the sub-label and never added to the number
+  let calls = 0, errs = 0, nu = 0;
+  for (const r of WHERE.tools) if (keep(r)) { calls += r.n; errs += r.e; nu += r.nu; }
   // #13: two numbers, no list — subagents spawned by sessions in view
   // (first-day attributed, like the sessions tile) and the share of the
   // view's tokens they spent (day grain, the same base as the token tiles)
@@ -110,6 +112,7 @@ function tilesHtml() {
   const share = all ? Math.round(subTok / all * 100) : 0;
   return [["input", t[0]], ["output", t[1]], ["cache create", t[2]],
           ["cache read", t[3]], ["sessions", sessions], ["tool calls", calls],
+          [`errors${nu ? ` \u00b7 +${nu} unknown` : ""}`, errs],
           [`subagents · ${share}% of tokens`, agents]]
     .map(([l, v]) => `<div class="tile"><b>${fmt(v)}</b><span>${l}</span></div>`).join("");
 }

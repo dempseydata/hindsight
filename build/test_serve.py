@@ -447,6 +447,7 @@ class ServerTest(unittest.TestCase):
         self.assertIn('"tools"', body)
         self.assertIn('"subd"', body)                 # #13 tile data
         self.assertIn("% of tokens", body)            # where.js renders the tile
+        self.assertIn("[`errors${nu", body)           # #36 errors tile beside tool calls
         self.assertNotIn('"cost', body)          # pricing never rendered
 
     def test_where_league_category_chips_default_deliberate_adds(self):

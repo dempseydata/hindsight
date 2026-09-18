@@ -38,7 +38,7 @@ macOS is assumed throughout, and stated rather than worked around — the option
 
 Everything else is optional and on-demand, and its absence degrades to honesty rather than a crash — the coverage window: OTEL-fed panels state when continuous capture began instead of presenting the gap as a zero.
 
-- **Ingest listener.** `python3 build/listener.py install` writes and starts a launchd agent (`com.hindsight.ingest`) receiving OTEL telemetry on `127.0.0.1:4318`. Claude Code emits nothing until told to — the env block for `~/.claude/settings.json`, verified live against a real session during the definition phase:
+- **Ingest listener.** `python3 build/listener.py install` writes and starts a launchd agent (`com.hindsight.ingest`) receiving OTEL telemetry on `127.0.0.1:4318`. It takes `application/json` only and caps a body at 8 MiB — the loopback bind keeps other machines out, and the content-type check keeps out a web page you happen to visit, which could otherwise post a cross-origin form body at it without a preflight (#34). No authentication beyond that: the trust boundary is the machine. Claude Code emits nothing until told to — the env block for `~/.claude/settings.json`, verified live against a real session during the definition phase:
 
   ```json
   "env": {

@@ -168,7 +168,7 @@ Claude Code sessions (transcripts), not login sessions. See [permissions.md](per
 
 | Boundary | Crossing | What is trusted on the far side |
 | --- | --- | --- |
-| Claude Code → listener | OTLP/HTTP JSON POST on loopback | Anything that can reach `127.0.0.1:4318` — every local process. No body-size cap, no content-type check, unknown paths answered `200`. |
+| Claude Code → listener | OTLP/HTTP JSON POST on loopback | Anything that can reach `127.0.0.1:4318` — every local process. Content type must be `application/json` (`415` otherwise, which keeps a visited web page out) and the body is capped at 8 MiB declared, chunked or inflated (#34); no auth; unknown paths answered `200`. |
 | Claude Code → hook | JSON on stdin, one process per event | The hook reads `session_id`, `hook_event_name` and, at SessionStart only, `cwd` — which it `stat`s for the folder inode (`hook.py:69-77`). Everything else on stdin is dropped. Cannot block or alter the action (exit 0, empty stdout, every exception swallowed). |
 | Analysis run → `~/.claude` | Read-only filesystem walk | Transcripts and config are treated as data. Only user/assistant prose reaches the model (`extract.py`). **One kind of transcript content is stored:** the verbatim result text of a *failed* tool call (`tool_events.error_text`, `substrate.py:259-263`); nothing of a successful call, ever (ADR-0027 §2). |
 | Analysis run → `claude -p` | Prompt on stdin, markdown/JSON on stdout | Model output is **untrusted**: gated by `valid_entry` (what-pass, `analyze.py:1105`) and `score.contract` + `BOUNDS` (narrative) before any write. Raw output is cached on disk only. |

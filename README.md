@@ -18,7 +18,11 @@ Local observability over Claude Code history, built for a solo, skill-heavy oper
 
 Three questions about a heavy Claude Code setup that nothing on disk answers directly: where the tokens went, what was actually done, and whether the process ran as declared. Hindsight answers them from the transcripts and telemetry already on the machine — no account, no upload, no daemon beyond an optional listener. The audience is one operator reviewing their own history months later, and the product is built to that bar: acted-upon insights, not dashboards.
 
-Why it exists, who reads this repo, how it was built and what was reversed along the way: [background/why.md](background/why.md). The full working record ships with the code — [88 tickets](background/tickets/), the phase documents under [background/](background/), the seventeen decision records in [docs/adr/](docs/adr/), and the domain vocabulary in [CONTEXT.md](CONTEXT.md).
+Everything runs on the operator's machine and nothing leaves it: Claude Code writes the transcripts, an analysis run reads them and calls the `claude` CLI for the model pass, and the views read the resulting database on localhost.
+
+![The containers on one machine: transcript archive, analysis run, listener, hook, SQLite store and the served views, with the model as a headless subprocess](docs/screenshots/architecture.png)
+
+Why it exists, who reads this repo, how it was built and what was reversed along the way: [background/why.md](background/why.md). The full working record ships with the code — [88 tickets](background/tickets/), the phase documents under [background/](background/), the twenty-seven decision records in [docs/adr/](docs/adr/), the reviewability docs in [docs/](docs/architecture.md), and the domain vocabulary in [CONTEXT.md](CONTEXT.md).
 
 ## Run it
 

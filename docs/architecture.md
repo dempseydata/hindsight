@@ -45,6 +45,10 @@ C4Context
 
 ## L2 — Containers
 
+![Containers on one machine: Claude Code writes transcripts, fires the hook and emits OTEL; the analysis run scans the archive, calls claude -p and writes facts to hindsight.db; the views read it read-only on localhost](diagrams/architecture.svg)
+
+The picture is an [Archify](https://github.com/tt-a1i/archify) export of [diagrams/architecture.archify.json](diagrams/architecture.archify.json), the same containers as the Mermaid below. The Mermaid is the source of truth for this document; the Archify spec is re-derived from it when a container is added or removed, and the SVG is re-exported from the viewer (`archify deliver architecture docs/diagrams/architecture.archify.json <out.html>`, then Export → SVG). The interactive HTML is not committed.
+
 ```mermaid
 C4Container
   title Hindsight — containers
@@ -196,6 +200,7 @@ Each entry is a fact about the code as written, not a checklist item. Ordered by
 - [cron.md](cron.md) — the two launchd agents and what makes a re-run safe.
 - [automation.md](automation.md) — the two model passes: tool surface, gates, and app-owned side effects.
 - [adr/](adr/) — decisions 0001 → 0027; 0021–0025 record a view that was dropped (0026).
+- [diagrams/](diagrams/) — the Archify spec and SVG export of the L2 container view; a presentation object, re-derived from the Mermaid above.
 - [agents/](agents/) — for the next coding agent: [domain.md](agents/domain.md), [issue-tracker.md](agents/issue-tracker.md), [triage-labels.md](agents/triage-labels.md).
 - No transactional email — no `emails.md`. No public or indexable routes (loopback only) — no `seo.md`. `tests.md` is not yet derived (`/derive-tests`).
 - Vocabulary: [CONTEXT.md](../CONTEXT.md).

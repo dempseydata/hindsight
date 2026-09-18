@@ -1,0 +1,322 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Hindsight — containers on one machine",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "analysis-path",
+        "label": "Analysis run",
+        "focus": [
+          "transcripts",
+          "analyze",
+          "cli",
+          "git",
+          "db"
+        ],
+        "note": "Transcripts in, model pass by subprocess, facts about the transcripts out."
+      },
+      {
+        "id": "telemetry-path",
+        "label": "Telemetry in",
+        "focus": [
+          "cc",
+          "hook",
+          "listener",
+          "db"
+        ],
+        "note": "The one daemon: OTEL and hook timings land as rows, nothing else."
+      },
+      {
+        "id": "read-path",
+        "label": "Looking",
+        "focus": [
+          "db",
+          "serve",
+          "op"
+        ],
+        "note": "Read-only over the store, bound to localhost, started to look and closed when done."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "cc",
+      "type": "external",
+      "label": "Claude Code",
+      "sublabel": "transcripts · OTEL · hooks",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "hook",
+      "type": "backend",
+      "label": "Hook",
+      "sublabel": "build/hook.py · per event",
+      "pos": [
+        260,
+        140
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "0.5 s budget"
+    },
+    {
+      "id": "listener",
+      "type": "backend",
+      "label": "Ingest listener",
+      "sublabel": "build/listener.py · :4318",
+      "pos": [
+        700,
+        40
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "the one daemon"
+    },
+    {
+      "id": "transcripts",
+      "type": "database",
+      "label": "Transcript archive",
+      "sublabel": "~/.claude/projects · JSONL",
+      "pos": [
+        260,
+        300
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "read-only"
+    },
+    {
+      "id": "analyze",
+      "type": "backend",
+      "label": "Analysis run",
+      "sublabel": "build/analyze.py · nightly",
+      "pos": [
+        480,
+        300
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "hindsight.db",
+      "sublabel": "SQLite · WAL · schema v9",
+      "pos": [
+        700,
+        300
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "serve",
+      "type": "frontend",
+      "label": "Views",
+      "sublabel": "build/serve.py · :8321",
+      "pos": [
+        920,
+        300
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "mode=ro"
+    },
+    {
+      "id": "op",
+      "type": "external",
+      "label": "Operator",
+      "sublabel": "browser · shell",
+      "pos": [
+        1140,
+        300
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "git",
+      "type": "external",
+      "label": "Project repos",
+      "sublabel": "git log per project",
+      "pos": [
+        260,
+        500
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "external",
+      "label": "claude -p",
+      "sublabel": "headless model call",
+      "pos": [
+        480,
+        500
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "no API key"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "This machine — nothing leaves it",
+      "wraps": [
+        "hook",
+        "listener",
+        "transcripts",
+        "analyze",
+        "db",
+        "serve",
+        "git",
+        "cli"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "local-data/ — gitignored",
+      "wraps": [
+        "db"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "cc-writes-transcripts",
+      "from": "cc",
+      "to": "transcripts",
+      "label": "writes JSONL",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cc-fires-hook",
+      "from": "cc",
+      "to": "hook",
+      "label": "hook events",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "cc-otel",
+      "from": "cc",
+      "to": "listener",
+      "label": "OTLP/HTTP",
+      "fromSide": "left",
+      "toSide": "left",
+      "labelSegment": 2
+    },
+    {
+      "id": "hook-posts",
+      "from": "hook",
+      "to": "listener",
+      "label": "POST /v1/logs"
+    },
+    {
+      "id": "listener-writes",
+      "from": "listener",
+      "to": "db",
+      "label": "otel_* rows",
+      "labelDy": 40
+    },
+    {
+      "id": "scan",
+      "from": "transcripts",
+      "to": "analyze",
+      "label": "scan",
+      "variant": "emphasis"
+    },
+    {
+      "id": "model-call",
+      "from": "analyze",
+      "to": "cli",
+      "label": "prompt → JSON",
+      "variant": "dashed",
+      "labelDy": 40
+    },
+    {
+      "id": "change-events",
+      "from": "analyze",
+      "to": "git",
+      "label": ".claude/ commits",
+      "variant": "dashed"
+    },
+    {
+      "id": "analyze-writes",
+      "from": "analyze",
+      "to": "db",
+      "label": "facts*",
+      "variant": "emphasis"
+    },
+    {
+      "id": "serve-reads",
+      "from": "db",
+      "to": "serve",
+      "label": "read-only",
+      "variant": "emphasis"
+    },
+    {
+      "id": "op-looks",
+      "from": "serve",
+      "to": "op",
+      "label": "localhost",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Boundaries",
+      "items": [
+        "One operator, one machine; the model only as the claude CLI on PATH",
+        "The listener is the one daemon (ADR-0001); the rest runs foreground, started to look",
+        "* facts about transcripts, never their text — except a failed call's result text (ADR-0027)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Writers and readers",
+      "items": [
+        "Two writers, the analysis run and the listener, serialise on WAL; the server reads mode=ro",
+        "Migrations run in the analysis run's init_db; v9 rescans surviving transcripts"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "What is public",
+      "items": [
+        "Born public: local-data/ and real transcripts never enter git",
+        "A pre-commit denylist refuses home paths, key shapes, transcript filenames"
+      ]
+    }
+  ]
+}

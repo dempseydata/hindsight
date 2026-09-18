@@ -98,6 +98,21 @@ components:
     textColor: "{colors.dim}"
     rounded: "{rounded.control}"
     padding: "0.2rem 0.55rem"
+  breakage-banner-problem:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.problem-text}"
+    rounded: "{rounded.panel}"
+    padding: "0.55rem 0.9rem"
+  breakage-banner-informational:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.ok-text}"
+    rounded: "{rounded.panel}"
+    padding: "0.55rem 0.9rem"
+  error-group:
+    backgroundColor: "{colors.bg}"
+    textColor: "{colors.text}"
+    typography: "{typography.data}"
+    padding: "0.1rem 0"
 ---
 
 <!--
@@ -108,7 +123,8 @@ render time. On any conflict between this file and tokens.css, tokens.css wins.
 Re-derive this file (re-run the documenter) whenever tokens.css or the UI's
 visual system changes. Derived 2026-08-31 from the post-light-theme surface
 (ticket #83, ADR-0017); panel sub-headings added 2026-09-10 from the shipped
-reliability panel (issue #14).
+reliability panel (issue #14); breakage banner (#15), off-script run bands (#17),
+nested error groups and chip error counts (#33) re-derived 2026-09-17.
 -->
 
 # Design System: Hindsight
@@ -138,9 +154,9 @@ One set of roles, two value sets: dark is a near-black indigo ground with cool b
 
 ### Semantic
 Text in a semantic role always renders in the `-text` weight (AA on panel); the bright weight is for non-text marks.
-- **Signal Blue** (ok: `--o-ok` #7c9bff · #2f4fc9 / `--o-ok-text` #a3b8ff · #2c49bd): the "fine" pole — shipped usage is inline `code` in ledger entries (`--o-ok-text`). Deliberately blue, not green.
+- **Signal Blue** (ok: `--o-ok` #7c9bff · #2f4fc9 / `--o-ok-text` #a3b8ff · #2c49bd): the "fine" pole — shipped usage is inline `code` in ledger entries (`--o-ok-text`) and the *informational* breakage banner (`--o-ok` border, `--o-ok-text` text). Deliberately blue, not green.
 - **Caution Amber** (`--o-caution` #e3b859 · #a87d08 / `--o-caution-text` #eac878 · #846007): the stale-warning role — the dashed `warn` border (bright weight) with its text and code in the `-text` weight; `stale` markers in the how-view.
-- **Problem Red** (`--o-problem` #f27878 · #c23c3c / `--o-problem-text` #f79b9b · #ac3232): error counts in tables (`.err`, `-text` weight) and the errors-per-day bars beneath call sparks (bright weight, non-text mark).
+- **Problem Red** (`--o-problem` #f27878 · #c23c3c / `--o-problem-text` #f79b9b · #ac3232): error counts in tables and the bold `N ×` count that opens a nested error group (`.err`, `-text` weight); the ` · N err` suffix a category chip carries whether on or off (`.ec`, `-text` weight); the *problem* breakage banner (`--o-problem` border, `--o-problem-text` text); and the errors-per-day bars beneath call sparks (bright weight, non-text mark).
 
 ### Chart Ink
 Data volume never borrows the accent or semantic hues; it has its own desaturated blue ramp. The ramp orders by contrast against the panel, not by lightness: ink-1 is always the most visible step, so it is the lightest in dark and the darkest in light.
@@ -152,7 +168,7 @@ Data volume never borrows the accent or semantic hues; it has its own desaturate
 ### Stage Identity
 A categorical palette for the how-view: which declared stage a stated-process card or phase-run band belongs to. Carried only by the 3px left border of `.stage` and `.run` panels (via an inline `--stage` custom property); labels stay `--o-text`, so no `-text` weight exists.
 - **Stage 1–5** (`--o-stage-1..5`: Teal #2fc4c4 · #096060, Violet #a98cf5 · #6137c5, Magenta #e07ad8 · #922a82, Orange #f0995a · #8a4209, Gold #d4c95a · #61570d): assigned positionally — a declaration's stages take 1..5 in declared order and cycle past five. Identity is per project, not per stage name. Light values deepen each hue to hold ≥6.5:1 on the light panel.
-- **Stage Off** (`--o-stage-off`, #6f7794 · #525a74): the fallback rule for off-script, unbucketed, and undeclared cards.
+- **Stage Off** (`--o-stage-off`, #6f7794 · #525a74): the fallback rule for anything without a declared stage — an off-script phase-run band (the server sets no inline `--stage`, so `var(--stage, var(--o-stage-off))` resolves to it), the unbucketed lane, and undeclared cards. The status line tallies `off-script ×n` beside the declared stages in the same `--o-dim` mono; session boundaries (`/clear`, `/model`, `/compact`, wayfinder) are excluded from runs and stated in a `.mk` note, never drawn.
 The current run is marked with a small accent `now` badge, not an accent rule, so the rule is free to carry the stage.
 
 ### Neutral
@@ -182,19 +198,19 @@ The current run is marked with a small accent `now` badge, not an accent rule, s
 - **Title** (600, 15px): the `h1` wordmark. The measured-median figure in the sunk-cost panel reuses this size in mono (600, 15px).
 - **Panel heading** (bold, 13px): `h2` panel titles, same size as body — hierarchy by weight and position, not size.
 - **Body** (400, 13px, 1.5): default prose and ledger entry text.
-- **Data** (400, 12px, mono): table cells, numeric columns, code, raw-entry `pre` (1.5 line-height on multi-line).
-- **Label** (600, 10–11px, mono, 0.05em, UPPERCASE): section heads inside entries, `h3` sub-headings inside a where-view panel that holds more than one table (the reliability panel), table headers, league grid headers. Non-uppercase 11px mono: day headings, counts, chip buttons, the theme toggle; 10px: project chips; 9px: chart axis text.
+- **Data** (400, 12px, mono): table cells, numeric columns, code, raw-entry `pre` (1.5 line-height on multi-line), the summary line of a nested error group (`--o-text`, count in bold). Verbatim error text steps down to 11px/1.5 mono `--o-dim` in a wrapping `pre`, with its occurrence line (session link · day) at 11px mono `--o-dim`.
+- **Label** (600, 10–11px, mono, 0.05em, UPPERCASE): section heads inside entries, `h3` sub-headings inside a where-view panel that holds more than one table (the reliability panel), table headers, league grid headers, and every how-view `h2` (10px — the how-view's panel headings sit in the Label tier, not the 13px `h2` tier). Non-uppercase 11px mono: day headings, counts, chip buttons, the theme toggle; 10px: project chips; 9px: chart axis text.
 
 ### Named Rules
 **The Mono-Datum Rule.** If it is a number, a label over data, or an identifier, it is monospace; if it is prose, it is the sans. Numerals in columns always carry tabular figures.
 
 ## Layout
 
-Single-column, full-width, dense. Body padding 1.1rem 1.4rem 2rem; `main` sits 1.1rem below the shared header chrome (wordmark + nav inline, theme toggle floated right, coverage line, project-chip row, window controls, scrollable token chart). Panels stack vertically with 1rem top margins; stat tiles flex-wrap with 0.6rem gaps (min-width 7rem per tile); chip rows flex-wrap at 0.35rem gaps. Panel interior padding is 0.9rem 1.1rem. Tables are full-width, collapsed borders, 12px, with row rules in `--o-border` and no rule after the last row. The consumer league uses a six-column grid (`minmax(9rem,1fr) 128px 3.5rem 3rem 4.5rem 4.5rem`). Wide charts scroll horizontally inside their panel (`overflow-x: auto`), newest day at the right. The how-view's two-column grids collapse to one column below 760px; everywhere else one layout serves every width, with flex-wrap and scroll absorbing narrowness.
+Single-column, full-width, dense. Body padding 1.1rem 1.4rem 2rem; `main` sits 1.1rem below the shared header chrome (wordmark + nav inline, theme toggle floated right, coverage line, project-chip row, window controls, scrollable token chart). Panels stack vertically with 1rem top margins; stat tiles flex-wrap with 0.6rem gaps (min-width 7rem per tile); chip rows flex-wrap at 0.35rem gaps. Panel interior padding is 0.9rem 1.1rem. Tables are full-width, collapsed borders, 12px, with row rules in `--o-border` and no rule after the last row. The consumer league uses a six-column grid (`minmax(9rem,1fr) 128px 3.5rem 3rem 4.5rem 4.5rem`); nested error groups inside an open row's detail leave that grid — plain block summaries indented 0.6rem, each occurrence a further 1rem, and verbatim text wraps (`pre-wrap` + `break-word`) so a long error line never scrolls the page. Breakage banners sit between the header chrome and `main`, 1.1rem below the chart, 0.4rem apart when stacked. Wide charts scroll horizontally inside their panel (`overflow-x: auto`), newest day at the right. The how-view's two-column grids collapse to one column below 760px; everywhere else one layout serves every width, with flex-wrap and scroll absorbing narrowness.
 
 ## Elevation & Depth
 
-Per theme. Dark is a hybrid: tonal layering (panel over ground) plus one shared ambient shadow — panels and stat tiles sit on `--o-panel` with a `--o-border` border and the single elevation token `--o-elev` (`0 3px 10px rgba(0, 0, 0, 0.45)`). Light is flat by contract: `--o-elev: none`, borders over elevation, with the indigo panels reading as recessed fields on the white ground. In both themes depth also runs inward: an open detail row's summary and body recess to `--o-bg`, reading as a well cut into the panel. Motion is one token, `--o-motion` (200ms ease): where-view panels lift `translateY(-1px)` on hover (transform + box-shadow transition; in light only the transform is visible); what-view ledger rows brighten their border to `--o-faint` instead — the flat surface's hover.
+Per theme. Dark is a hybrid: tonal layering (panel over ground) plus one shared ambient shadow — panels and stat tiles sit on `--o-panel` with a `--o-border` border and the single elevation token `--o-elev` (`0 3px 10px rgba(0, 0, 0, 0.45)`). Light is flat by contract: `--o-elev: none`, borders over elevation, with the indigo panels reading as recessed fields on the white ground. In both themes depth also runs inward: an open detail row's summary and body recess to `--o-bg`, reading as a well cut into the panel. Motion is one token, `--o-motion` (200ms ease): where-view panels lift `translateY(-1px)` on hover (transform + box-shadow transition; in light only the transform is visible); what-view ledger rows and how-view run bands brighten their border to `--o-faint` instead — the flat surface's hover (a run band keeps its stage-hued left rule through the hover).
 
 ### Shadow Vocabulary
 - **Elevation** (`--o-elev`: `box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45)` dark · `none` light): the only shadow. Panels and stat tiles at rest.
@@ -206,12 +222,17 @@ Per theme. Dark is a hybrid: tonal layering (panel over ground) plus one shared 
 
 Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels, tiles, ledger rows, and the header chart container; 2px for everything chip-sized — chip buttons, project chips, the ADR badge, the theme toggle. Borders are 1px `--o-border` everywhere. Native `<details>/<summary>` provides all expansion, with the marker suppressed; charts are inline SVG rectangles — bars only, no curves, no rounded bar caps.
 
+### Named Rules
+**The Dashed-Absence Rule.** A dashed border means "present but empty, hidden, or invalid" — a declared stage with nothing observed (`.stage.none`, dashed and shadowless), a hidden project chip revealed on demand, the invalid-declaration `warn` card. Solid borders carry everything that has data.
+
 ## Components
 
 ### Chip Buttons (project chips, window presets, league category chips)
 - **Style:** 11px mono `--o-dim` on `--o-panel`, 1px `--o-border` border, 2px radius, padding 0.2rem 0.55rem, cursor pointer.
 - **On state:** text and border switch to `--o-accent`; background unchanged.
+- **Error count:** a league category chip carries ` · N err` in `--o-problem-text` (`.ec`) whether the chip is on or off, so a switched-off category's errors stay visible.
 - **Checkbox:** the hide-cache-reads toggle uses `accent-color: var(--o-accent)`.
+- **Note action:** a button inside a `.note` is a bare underlined `--o-accent` link-button — no fill, border, or padding.
 
 ### Theme Toggle
 - **Style:** the chip-button treatment floated right in the header — 11px mono `--o-dim` on `--o-panel`, 1px `--o-border`, 2px radius, padding 0.2rem 0.55rem. Label reads `theme: system|light|dark`.
@@ -229,12 +250,22 @@ Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels,
 - **Heading:** 13px `h2`, then an 11px `--o-dim` note paragraph explaining the panel's honesty caveats.
 - **Sub-headings:** a panel holding more than one table (reliability: API retries · MCP connection health) separates them with `h3` in the Label tier — 600 11px mono UPPERCASE 0.05em `--o-dim`, margin 0.8rem 0 0.3rem. Hierarchy stays by weight and case, never size; one note paragraph serves the whole panel.
 - **Hover (where-view):** `translateY(-1px)` lift over `--o-motion`.
+- **How-view cards:** `.stage` and `.run` panels add a 3px left rule in the stage hue (inline `--stage`, falling back to `--o-stage-off` for off-script runs); their `h2` headings sit in the Label tier; the current run wears the accent `now` badge.
 
 ### Stat Tiles
 - **Style:** panel treatment at padding 0.55rem 1rem 0.5rem, min-width 7rem; a 28px/1.25 600 mono tabular numeral over an 11px `--o-dim` label.
 
 ### Ledger Rows (what-view)
 - **Style:** native `<details>` styled as a 6px-radius bordered row on `--o-panel`; summary is a flex line of project chip · title · counts. Hover shifts border to `--o-faint` over `--o-motion`. Dim one-liners (`--o-dim` title) mark trivial/pending/defect rows.
+- **Session anchor:** `/what#<sid>` opens and scrolls to the row once; a session outside the current filter is stated in an 11px `--o-dim` `.note` under the ledger, never silently nothing.
+
+### Error Groups (where-view league detail)
+- **Style:** inside an open league row's `--o-bg` detail, one nested `<details class="sub errg">` per exact error line — summary 12px mono `--o-text` with the count `N ×` in bold `--o-problem-text`, a `(no message)` placeholder in `--o-dim`; no grid, no rule, no background change on open.
+- **Occurrences:** each `.occ` is an 11px mono `--o-dim` line — session id as an `--o-accent` link into `/what#<sid>` · day — over a wrapping 11px/1.5 mono `--o-dim` `pre` of the verbatim text.
+- **Uncaptured:** errors whose text was pruned before capture close the list as a `--o-dim` line, "N errors, text not captured" — counted, never dropped.
+
+### Breakage Banner
+- **Style:** one per open breakage row, on every view, between header and `main`: 12px on `--o-panel`, 6px radius, padding 0.55rem 0.9rem, 1px border in the tier's bright weight and text in its `-text` weight — problem (`--o-problem` / `--o-problem-text`) or informational (`--o-ok` / `--o-ok-text`); inline `code` at 11px mono. Red pairs with blue here, never green.
 
 ### Tables
 - **Style:** 12px, full-width, collapsed; headers 10px 600 mono UPPERCASE 0.05em `--o-dim` with a `--o-border` bottom rule; numeric cells right-aligned 12px mono tabular-nums; errors in `--o-problem-text`; unknowns as `--o-dim` em-dashes.
@@ -252,13 +283,13 @@ Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels,
 - **Do** land any new token in all four blocks of tokens.css — dark `:root`, the light media block, and both pin blocks — and keep the two light blocks identical.
 - **Do** use the `-text` weight whenever a semantic colour carries text; the bright weight is for marks (spark bars, rules, the warn border).
 - **Do** route theme-sensitive opacities through the wash tokens (`--o-wash-sel` / `--o-wash-rule` / `--o-wash-precov`); a wash that reads on near-black disappears on white.
-- **Do** draw absence as absence: missing day = gap, unknown value = em-dash in `--o-dim`, unpaired = "+n?", pre-coverage = shaded region. Never render an unknown as zero.
+- **Do** draw absence as absence: missing day = gap, unknown value = em-dash in `--o-dim`, unpaired = "+n?", pre-coverage = shaded region, uncaptured error text = a stated count line. Never render an unknown as zero.
 - **Do** keep sparks on the shared 30-calendar-day axis with their own peak, and put figures in monospace with tabular-nums.
 - **Do** pair each panel with a dim note stating its coverage caveats — the honesty prose is part of the component.
 
 ### Don't:
 - **Don't** branch on theme in view code or assets; views are theme-blind. Theme is decided entirely by tokens.css plus the pre-paint pin in theme.js.
-- **Don't** introduce green; the ok pole is periwinkle blue and red pairs with blue, in both themes.
+- **Don't** introduce green; the ok pole is periwinkle blue and red pairs with blue, in both themes — the breakage banner's problem/informational pair is the shipped instance.
 - **Don't** put the accent on body text or large surfaces — it marks interaction and state only.
 - **Don't** use accent, compare, or semantic hues for chart volume ink; volume is ink/spark only (the error series in `--o-problem` is the sole semantic chart mark).
 - **Don't** set axis or other sub-AA text in `--o-axis`; chart text uses `--o-dim` (ticket #47). `--o-axis` is for non-text chart lines, in both themes.

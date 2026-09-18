@@ -36,14 +36,24 @@ header nav a[aria-current] { color: var(--o-accent); border-bottom: 1px solid va
   border: 1px solid var(--o-border); border-radius: var(--o-radius);
   padding: .5rem .5rem .2rem; }
 #chart svg { display: block; }
-#chart .seg0 { fill: var(--o-ink-1); } #chart .seg1 { fill: var(--o-ink-2); }
-#chart .seg2 { fill: var(--o-ink-3); } #chart .seg3 { fill: var(--o-ink-4); }
+/* the header visual is per view (ADR-0028): a day is a .col in either;
+   the view's css paints it, chrome only handles focus and the pointer */
+#chart .col { cursor: pointer; }
 #chart .axis { fill: var(--o-dim); font: 9px var(--o-mono); } /* #47: --o-axis is 3.99:1 on panel, below AA for text — axis token stays for non-text chart lines */
-#chart .col { cursor: pointer; fill: transparent; }
 #chart .col:focus-visible { outline: none; stroke: var(--o-accent);
   stroke-width: 1.5; }
-#chart .col.sel { fill: var(--o-compare); fill-opacity: var(--o-wash-sel); }
-#chart .selrule { fill: var(--o-compare); fill-opacity: var(--o-wash-rule); }
+/* Stat tiles, both views: a div on where, a radio-group button on what */
+.tiles { display: flex; flex-wrap: wrap; gap: .6rem; }
+.tile { background: var(--o-panel); border: 1px solid var(--o-border);
+  border-radius: var(--o-radius); box-shadow: var(--o-elev);
+  padding: .55rem 1rem .5rem; min-width: 7rem; font: inherit; color: inherit;
+  text-align: left; }
+.tile b { display: block; font: 600 var(--o-stat-size)/1.25 var(--o-mono);
+  font-variant-numeric: tabular-nums; }
+.tile span { font-size: 11px; color: var(--o-dim); }
+button.tile { cursor: pointer; }
+button.tile[aria-pressed="true"] { border-color: var(--o-accent); }
+button.tile[aria-pressed="true"] span { color: var(--o-accent); }
 /* Breakage banner (issue #15): one per open row, every view. Tier reads
    through the semantic roles — problem red, informational blue (Few). */
 .breakage { margin: 1.1rem 0 0; padding: .55rem .9rem; font-size: 12px;

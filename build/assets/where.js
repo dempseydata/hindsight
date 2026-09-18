@@ -57,6 +57,43 @@ const errHtml = (e, nu) => (e ? `<span class="err">${e}</span>` : '<span class="
   + (nu ? `<span class="dim" title="unpaired calls \u2014 unknown, not ok"> +${nu}?</span>` : "");
 const errCell = (e, nu) => ({ n: 1, h: errHtml(e, nu) });
 
+// the header visual on this view (ADR-0028): the stacked per-day token
+// chart, calendar-continuous and scrollable, newest at right; a day's bar
+// is a .col in #chart, and chrome.js owns what a click on it means
+function renderChart() {
+  if (!DATA.range[0]) return hs.mount('<p class="note">no usage yet \u2014 run an analysis first</p>');
+  const byDay = {};
+  for (const r of DATA.days) {
+    if (!hs.inProj(r.p)) continue;
+    const t = byDay[r.d] ??= [0, 0, 0, 0];
+    r.t.forEach((n, k) => t[k] += n);
+  }
+  const rows = [];
+  for (let d = DATA.range[0]; d <= DATA.range[1]; d = hs.addDays(d, 1))
+    rows.push({ d, t: byDay[d] });   // missing day = gap, never zero
+  const bw = 14, gap = 3, h = 96, axis = 16;
+  const val = t => t ? val4(t) : 0;
+  const peak = Math.max(1, ...rows.map(r => val(r.t)));
+  let out = "";
+  rows.forEach((r, i) => {
+    const x = i * (bw + gap);
+    let y = h;
+    if (r.t) r.t.forEach((n, k) => {
+      if (!n || (hs.S.hideCR && k === 3)) return;
+      const bh = n / peak * (h - 12);
+      y -= bh;
+      out += `<rect class="seg${k}" x="${x}" y="${y.toFixed(1)}" width="${bw}" height="${bh.toFixed(1)}"/>`;
+    });
+    if (i % 7 === 0 || i === rows.length - 1)
+      out += `<text class="axis" x="${x + bw / 2}" y="${h + 12}" text-anchor="middle">${r.d.slice(5)}</text>`;
+    const sel = hs.inWin(r.d);   // the window: the set, else the preset range
+    const tip = r.t ? `in ${fmt(r.t[0])} \u00b7 out ${fmt(r.t[1])} \u00b7 cache-create ${fmt(r.t[2])} \u00b7 cache-read ${fmt(r.t[3])}` : "no data";
+    if (sel) out += `<rect class="selrule" x="${x - gap / 2}" y="${h + 1}" width="${bw + gap}" height="2"/>`;
+    out += `<rect class="col${sel ? " sel" : ""}" data-date="${r.d}" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${r.d}, ${tip}" x="${x - gap / 2}" y="0" width="${bw + gap}" height="${h + axis}"><title>${r.d} \u00b7 ${tip}</title></rect>`;
+  });
+  hs.mount(`<svg width="${rows.length * (bw + gap) + 12}" height="${h + axis}">${out}</svg>`);
+}
+
 function tilesHtml() {
   const t = [0, 0, 0, 0];
   for (const r of DATA.days) if (keep(r)) r.t.forEach((n, k) => t[k] += n);
@@ -348,7 +385,7 @@ const sessCell = ids => ({ n: 1, h: `<span class="dim" title="${esc([...ids].joi
 // the coverage-window rule for an empty table: a window before capture is a
 // stated gap, never a zero (a single-day window carries tFrom alone)
 const noRows = what => `<p class="dim">no ${what} in window \u00b7 OTEL capture from ${WHERE.cov.otel || "\u2014"}${
-  WHERE.cov.otel && (hs.S.tTo || hs.S.tFrom) < WHERE.cov.otel ? " \u2014 this window predates it: a gap, not a zero" : ""}</p>`;
+  WHERE.cov.otel && hs.winEnd() < WHERE.cov.otel ? " \u2014 this window predates it: a gap, not a zero" : ""}</p>`;
 function retriesHtml() {
   const g = {};
   for (const r of WHERE.retries) {
@@ -398,6 +435,7 @@ const renderLeague = () =>
 function renderWhere() {
   const mcpOpen = openIn("#mcp"), cliOpen = openIn("#cli"),
         sunkOpen = openIn("#sunk");
+  renderChart();
   document.getElementById("tiles").innerHTML = tilesHtml();
   renderLeague();
   document.getElementById("models").innerHTML = modelsHtml();

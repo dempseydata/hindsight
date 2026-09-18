@@ -1,11 +1,10 @@
 
-#where .tiles { display: flex; flex-wrap: wrap; gap: .6rem; }
-#where .tile { background: var(--o-panel); border: 1px solid var(--o-border);
-  border-radius: var(--o-radius); box-shadow: var(--o-elev);
-  padding: .55rem 1rem .5rem; min-width: 7rem; }
-#where .tile b { display: block; font: 600 var(--o-stat-size)/1.25 var(--o-mono);
-  font-variant-numeric: tabular-nums; }
-#where .tile span { font-size: 11px; color: var(--o-dim); }
+/* the header token chart (ADR-0028: this view's visual, in chrome's mount) */
+#chart .seg0 { fill: var(--o-ink-1); } #chart .seg1 { fill: var(--o-ink-2); }
+#chart .seg2 { fill: var(--o-ink-3); } #chart .seg3 { fill: var(--o-ink-4); }
+#chart .col { fill: transparent; }
+#chart .col.sel { fill: var(--o-compare); fill-opacity: var(--o-wash-sel); }
+#chart .selrule { fill: var(--o-compare); fill-opacity: var(--o-wash-rule); }
 #where .panel { margin-top: 1rem;
   transition: transform var(--o-motion), box-shadow var(--o-motion); }
 #where .panel:hover { transform: translateY(-1px); }

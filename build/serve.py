@@ -13,16 +13,22 @@ the stored UTC timestamp (ADR-0014) — `day_sql()` in SQL, `local_day()` in
 Python, both from analyze.py so the two can never drift.
 
 Shared header chrome (both views): project chips that filter, never
-switch; a stacked per-day token chart, calendar-continuous and scrollable,
-newest at right; click-a-bar time filtering (day -> range -> deselect);
-window presets 7/14/28/90/all, default 14, anchored to the last-synced
-day; a hide-cache-reads toggle. Views mount by registering a re-render
+switch; window presets 7/14/28/90/all, default 14, anchored to the
+last-synced day; a hide-cache-reads toggle; and a `#chart` mount whose
+visual is the view's own (ADR-0028) — a session heatmap on what, the
+stacked per-day token chart on where — both calendar-continuous,
+scrollable, newest at right. A click on a day toggles it in a selection
+set, shift-click adds a range from the last-clicked day; the set, when
+non-empty, is the window. Views mount by registering a re-render
 callback via `hs.onFilter(fn)` in page JS.
 
 What-view (ticket #45): the cross-project session ledger — one collapsed
-row per audit entry (project chip · title · n did / n decided · ADR badge
-when nonzero), day roll-up as render-time grouping only, expanding via
-native <details> to the full Did / Decided / Setup-changes entry. SKIP
+row per audit entry (project chip · title · n actions / n decisions · ADR
+badge when nonzero), day roll-up as render-time grouping only, expanding
+via native <details> to the full Actions / Decisions / Setup-changes entry
+(the stored headers stay Did / Decided; the rename is at render). Four
+tiles above it — sessions, actions, decisions, ADRs over the window — are
+a radio group keying the heatmap's hue. SKIP
 sessions render as dim one-liners; #38's malformed refusal rows are
 tolerated (dim row, raw text in the expansion), never repaired here.
 
@@ -748,8 +754,9 @@ pruned transcripts read unknown, never zero</p>
 {"".join(f'<button data-w="{w}">{w}</button>' for w in ("7", "14", "28", "90", "all"))}
 <button id="tclear">clear</button>
 <label><input type="checkbox" id="hidecr"> hide cache reads</label>
-<span class="hint">click a bar to filter to a day, a second bar for a range,
-the same bar again to deselect — a chart click overrides the preset</span></div>
+<span class="hint">click a day to filter to it, more days to add them,
+shift-click for a range, a selected day again to remove it — a preset or clear
+empties the selection</span></div>
 <div id="chart"></div>
 </header>{breakage_banner(conn)}
 <main>{main}</main>

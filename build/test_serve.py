@@ -666,11 +666,37 @@ class ServerTest(unittest.TestCase):
         self.assertIn('active: [p]', self.get("/how")[1])
 
     def test_chart_columns_keyboard_accessible(self):
-        """Ticket #50 P2: day columns are focusable buttons with an
-        Enter/Space handler — presets are not the only time filter."""
-        _, body = self.get("/what")
-        self.assertIn('tabindex="0" role="button"', body)
-        self.assertIn('addEventListener("keydown"', body)
+        """Ticket #50 P2: day columns and cells are focusable buttons with
+        an Enter/Space handler — presets are not the only time filter."""
+        for view in ("what", "where"):
+            _, body = self.get(f"/{view}")
+            self.assertIn('tabindex="0" role="button"', body)
+            self.assertIn('addEventListener("keydown"', body)
+
+    def test_header_visual_per_view_over_one_day_set(self):
+        """ADR-0028 (#35): the what view mounts a session heatmap keyed by
+        four radio tiles where the where view mounts the token chart; the
+        selection is one set of days on both, saved with the filter, and
+        the rendered vocabulary is actions / decisions, never did / decided
+        (the stored headers and the blob keep Did / Decided)."""
+        _, what = self.get("/what")
+        _, where = self.get("/where")
+        self.assertIn("function renderHeat()", what)
+        self.assertNotIn("function renderChart()", what)
+        self.assertIn("function renderChart()", where)
+        self.assertNotIn("function renderHeat()", where)
+        self.assertIn('id="wtiles"', what)
+        self.assertNotIn('id="wsum"', what)
+        self.assertIn('["adrs", "ADRs"]', what)
+        for body in (what, where):
+            self.assertIn("days: [...S.days]", body)      # the set rides sessionStorage
+            self.assertIn("toggleDay(col.dataset.date, e.shiftKey)", body)
+            self.assertIn("shift-click for a range", body)
+            self.assertNotIn("a second bar", body)
+            self.assertNotIn(" did \\u00b7", body)
+            self.assertNotIn("decided`", body)
+        self.assertIn('SECTION_LABEL = { Did: "Actions", Decided: "Decisions" }', what)
+        self.assertIn('"name": "Did"', what)                # stored header untouched
 
     def test_connection_is_read_only(self):
         conn = serve.open_db(self.db)

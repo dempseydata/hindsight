@@ -33,7 +33,7 @@ Rotation "re-install" means `uninstall` + `install` on the plist that bakes the 
 | Tuning constants | `serve.CHIP_SHARE` `0.01`; `extract.PER_MSG_CAP` `1500`, `CHUNK_CAP` `180000`; eval pools 4 / 6 threads | server | constants | — | Display and extraction only |
 | `?p=` | `serve.py` how-view, `chrome.js` chips | client → server | URL query; an unknown project falls back to the busiest declaring one | — | Project names only |
 | `theme` | `theme.js` | client | `localStorage`; `light` / `dark`, absent = system (ADR-0017) | toggle back to system removes it | None — one word, per browser |
-| `filter` | `chrome.js`, `how.js` | client | `sessionStorage`, per tab: window preset, active chips, hide-cache-reads; dies with the tab | — | Project names only |
+| `filter` | `chrome.js`, `how.js` | client | `sessionStorage`, per tab: window preset, selected days, active chips, hide-cache-reads; dies with the tab | — | Project names only |
 
 ## Outside the repo
 

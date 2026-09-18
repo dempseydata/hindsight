@@ -133,7 +133,7 @@ nested error groups and chip error counts (#33) re-derived 2026-09-17.
 
 **Creative North Star: "The Indigo Deck"**
 
-Hindsight is an observability workhorse in the Grafana/Honeycomb lineage, with one graft from the terminal-instrument family: bar sparklines rather than heat strips (V3 · Indigo deck, ADR-0007). It now ships two themes from one token contract (ADR-0017): the dark deck — near-black indigo ground carrying elevated panels — remains the incumbent `:root` base, and a light derivation ("C · Ledger") keeps the same hues and roles on an inverted value structure: white ground, recessed indigo panels, borders over elevation. System preference decides the theme by default; a three-state header toggle (system → light → dark) pins it per browser, applied before first paint. A single periwinkle-family accent marks the active and the interactive; everything numeric sits in the system monospace with tabular figures. The whole surface is server-rendered HTML with inline SVG charts — zero dependencies, no imagery, no runtime font fetches.
+Hindsight is an observability workhorse in the Grafana/Honeycomb lineage, with one graft from the terminal-instrument family: bar sparklines rather than heat strips for the per-consumer sparks (V3 · Indigo deck, ADR-0007); the what view's header is the one heatmap, a session calendar on the same ink ramp (ADR-0028). It now ships two themes from one token contract (ADR-0017): the dark deck — near-black indigo ground carrying elevated panels — remains the incumbent `:root` base, and a light derivation ("C · Ledger") keeps the same hues and roles on an inverted value structure: white ground, recessed indigo panels, borders over elevation. System preference decides the theme by default; a three-state header toggle (system → light → dark) pins it per browser, applied before first paint. A single periwinkle-family accent marks the active and the interactive; everything numeric sits in the system monospace with tabular figures. The whole surface is server-rendered HTML with inline SVG charts — zero dependencies, no imagery, no runtime font fetches.
 
 The system's second personality trait is honesty grammar: missing data is drawn as absence, never as zero. A day without data is a gap in the chart, an unknown value is an em-dash, unpaired calls read "+n?", and pre-coverage regions of a spark are shaded. The visual language is built to make "unknown" and "zero" impossible to confuse.
 
@@ -150,7 +150,7 @@ One set of roles, two value sets: dark is a near-black indigo ground with cool b
 
 ### Primary
 - **Periwinkle** (`--o-accent`, #7c9bff · #2f4fc9): the single interactive voice — links, the current nav item, chip on-state text and border, the ADR badge, the `now` run badge. Never body text, never a fill on a large surface. `--o-accent-ink` (#0b0d14 · #ffffff) is the reserved on-accent ink; the shipped UI never fills a surface with accent, so it currently has no call site.
-- **Compare Amber** (`--o-compare`, #f0b23f · #956609): the selection/compare hue — the selected chart column wash at `--o-wash-sel` (0.06 · 0.12 fill-opacity) and the selection rule at `--o-wash-rule` (0.7 · 1). Nothing else.
+- **Compare Amber** (`--o-compare`, #f0b23f · #956609): the selection/compare hue — the selected token-chart column wash at `--o-wash-sel` (0.06 · 0.12 fill-opacity) and the selection rule at `--o-wash-rule` (0.7 · 1); and the in-window heatmap cells, which flip from the ink ramp to compare at four opacities (0.3 · 0.55 · 0.8 · 1), an empty in-window day at `--o-wash-sel`. Nothing else.
 
 ### Semantic
 Text in a semantic role always renders in the `-text` weight (AA on panel); the bright weight is for non-text marks.
@@ -160,7 +160,7 @@ Text in a semantic role always renders in the `-text` weight (AA on panel); the 
 
 ### Chart Ink
 Data volume never borrows the accent or semantic hues; it has its own desaturated blue ramp. The ramp orders by contrast against the panel, not by lightness: ink-1 is always the most visible step, so it is the lightest in dark and the darkest in light.
-- **Ink 1–4** (#82a9e8 → #2b4468 dark · #24406e → #b9c4dd light): the stacked token-chart segments (input / output / cache-create / cache-read), highest-contrast first.
+- **Ink 1–4** (#82a9e8 → #2b4468 dark · #24406e → #b9c4dd light): the stacked token-chart segments (input / output / cache-create / cache-read), highest-contrast first. The same four steps are the heatmap's sequential ramp — ink-4 for the lowest quartile of the in-view peak up to ink-1 for the top — with an empty day on `--o-border`; no separate heat tokens exist.
 - **Spark Blue** (`--o-spark`, #82a9e8 · #24406e): all sparkline call bars.
 - **Gapline** (`--o-gapline`, #4c5470 · #ccd2e2): non-text chart furniture — shipped as the pre-coverage shading on OTEL-fed sparks at `--o-wash-precov` (0.22 · 0.35 opacity).
 - **Axis** (`--o-axis`, #6f7794 · #a0a8be): reserved for non-text chart lines only, in both themes. Axis *text* renders in `--o-dim` — the dark value is 3.99:1 on panel, below AA for text (floor audit, ticket #47).
@@ -206,7 +206,7 @@ The current run is marked with a small accent `now` badge, not an accent rule, s
 
 ## Layout
 
-Single-column, full-width, dense. Body padding 1.1rem 1.4rem 2rem; `main` sits 1.1rem below the shared header chrome (wordmark + nav inline, theme toggle floated right, coverage line, project-chip row, window controls, scrollable token chart). Panels stack vertically with 1rem top margins; stat tiles flex-wrap with 0.6rem gaps (min-width 7rem per tile); chip rows flex-wrap at 0.35rem gaps. Panel interior padding is 0.9rem 1.1rem. Tables are full-width, collapsed borders, 12px, with row rules in `--o-border` and no rule after the last row. The consumer league uses a six-column grid (`minmax(9rem,1fr) 128px 3.5rem 3rem 4.5rem 4.5rem`); nested error groups inside an open row's detail leave that grid — plain block summaries indented 0.6rem, each occurrence a further 1rem, and verbatim text wraps (`pre-wrap` + `break-word`) so a long error line never scrolls the page. Breakage banners sit between the header chrome and `main`, 1.1rem below the chart, 0.4rem apart when stacked. Wide charts scroll horizontally inside their panel (`overflow-x: auto`), newest day at the right. The how-view's two-column grids collapse to one column below 760px; everywhere else one layout serves every width, with flex-wrap and scroll absorbing narrowness.
+Single-column, full-width, dense. Body padding 1.1rem 1.4rem 2rem; `main` sits 1.1rem below the shared header chrome (wordmark + nav inline, theme toggle floated right, coverage line, project-chip row, window controls, and the view's own header visual in one scrollable mount — a session heatmap on what, the token chart on where). On the what view a four-tile radio row sits 0.6rem above the ledger. Panels stack vertically with 1rem top margins; stat tiles flex-wrap with 0.6rem gaps (min-width 7rem per tile); chip rows flex-wrap at 0.35rem gaps. Panel interior padding is 0.9rem 1.1rem. Tables are full-width, collapsed borders, 12px, with row rules in `--o-border` and no rule after the last row. The consumer league uses a six-column grid (`minmax(9rem,1fr) 128px 3.5rem 3rem 4.5rem 4.5rem`); nested error groups inside an open row's detail leave that grid — plain block summaries indented 0.6rem, each occurrence a further 1rem, and verbatim text wraps (`pre-wrap` + `break-word`) so a long error line never scrolls the page. Breakage banners sit between the header chrome and `main`, 1.1rem below the chart, 0.4rem apart when stacked. Wide charts scroll horizontally inside their panel (`overflow-x: auto`), newest day at the right. The how-view's two-column grids collapse to one column below 760px; everywhere else one layout serves every width, with flex-wrap and scroll absorbing narrowness.
 
 ## Elevation & Depth
 
@@ -220,7 +220,7 @@ Per theme. Dark is a hybrid: tonal layering (panel over ground) plus one shared 
 
 ## Shapes
 
-Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels, tiles, ledger rows, and the header chart container; 2px for everything chip-sized — chip buttons, project chips, the ADR badge, the theme toggle. Borders are 1px `--o-border` everywhere. Native `<details>/<summary>` provides all expansion, with the marker suppressed; charts are inline SVG rectangles — bars only, no curves, no rounded bar caps.
+Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels, tiles, ledger rows, and the header chart container; 2px for everything chip-sized — chip buttons, project chips, the ADR badge, the theme toggle. Borders are 1px `--o-border` everywhere. Native `<details>/<summary>` provides all expansion, with the marker suppressed; charts are inline SVG rectangles — bars and 12px heat cells only, no curves, no rounded corners.
 
 ### Named Rules
 **The Dashed-Absence Rule.** A dashed border means "present but empty, hidden, or invalid" — a declared stage with nothing observed (`.stage.none`, dashed and shadowless), a hidden project chip revealed on demand, the invalid-declaration `warn` card. Solid borders carry everything that has data.
@@ -253,10 +253,11 @@ Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels,
 - **How-view cards:** `.stage` and `.run` panels add a 3px left rule in the stage hue (inline `--stage`, falling back to `--o-stage-off` for off-script runs); their `h2` headings sit in the Label tier; the current run wears the accent `now` badge.
 
 ### Stat Tiles
-- **Style:** panel treatment at padding 0.55rem 1rem 0.5rem, min-width 7rem; a 28px/1.25 600 mono tabular numeral over an 11px `--o-dim` label.
+- **Style:** panel treatment at padding 0.55rem 1rem 0.5rem, min-width 7rem; a 28px/1.25 600 mono tabular numeral over an 11px `--o-dim` label. Where-view tiles are static (input · output · cache create · cache read · sessions · tool calls · subagents).
+- **Radio tiles (what-view):** the four tiles — sessions (sub-label carries the trivial · awaiting analysis · unrecoverable qualifiers) · actions · decisions · ADRs — are `<button aria-pressed>`; the pressed one keys the heatmap and takes an `--o-accent` border and label, nothing else changes.
 
 ### Ledger Rows (what-view)
-- **Style:** native `<details>` styled as a 6px-radius bordered row on `--o-panel`; summary is a flex line of project chip · title · counts. Hover shifts border to `--o-faint` over `--o-motion`. Dim one-liners (`--o-dim` title) mark trivial/pending/defect rows.
+- **Style:** native `<details>` styled as a 6px-radius bordered row on `--o-panel`; summary is a flex line of project chip · title · `n actions · n decisions` counts (the stored Did / Decided headers render as Actions / Decisions, ADR-0028). Hover shifts border to `--o-faint` over `--o-motion`. Dim one-liners (`--o-dim` title) mark trivial/pending/defect rows.
 - **Session anchor:** `/what#<sid>` opens and scrolls to the row once; a session outside the current filter is stated in an 11px `--o-dim` `.note` under the ledger, never silently nothing.
 
 ### Error Groups (where-view league detail)
@@ -274,7 +275,11 @@ Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels,
 - **Grammar:** per-day bars on the shared 30-calendar-day axis ending at the last synced day; 3px bars, 1px gaps, 14px tall (own peak per spark; minimum bar height 1px). A missing day is a gap, never a zero-height bar.
 - **Error series:** when errors exist, a second 6px-tall red (`--o-problem`) band renders 2px beneath the calls band, on its own peak.
 - **Coverage shading:** OTEL-fed sparks shade the pre-coverage region with `--o-gapline` at `--o-wash-precov` opacity — capture didn't exist yet, not zero activity.
-- **Header chart:** the same grammar scaled up — 14px bars, 3px gaps, 96px tall, stacked in ink-1…ink-4; axis labels 9px mono in `--o-dim` every 7th day; selection washes the column in `--o-compare` at `--o-wash-sel` with a 2px compare rule beneath at `--o-wash-rule`.
+- **Header chart (where-view):** the same grammar scaled up — 14px bars, 3px gaps, 96px tall, stacked in ink-1…ink-4; axis labels 9px mono in `--o-dim` every 7th day; selection washes the column in `--o-compare` at `--o-wash-sel` with a 2px compare rule beneath at `--o-wash-rule`.
+
+### Session Heatmap (what-view header)
+- **Grammar:** one 12px cell per local day, 2px gaps, seven rows Monday-first with Mon and Fri labelled down the left, one column per calendar week from the ledger's first day to the last synced day, newest at right; month labels along the top at each month's first column, 9px mono `--o-dim`. Hue is `ceil(value / peak × 4)` over the in-view peak, keyed by the pressed tile: an empty day on `--o-border`, then ink-4 → ink-1. The tooltip and `aria-label` carry all four counts whichever keys the heat.
+- **Selection:** a day is a `.col` button in either header visual; a cell in the window — the selected set, else the preset range — leaves the ink ramp for `--o-compare` at an opacity per level (0.3 · 0.55 · 0.8 · 1); an empty in-window day is the column wash, `--o-wash-sel`. No outline: red is the problem hue here, so the window's hue is compare amber, never a red scale. The focus ring is an `--o-accent` stroke. The selection is a set of days shared with the where view — click toggles, shift-click ranges from the last-clicked day, a preset or clear empties it.
 
 ## Do's and Don'ts
 

@@ -67,7 +67,7 @@ C4Container
     Container(evalgate, "Eval floors", "Python · eval/score.py", "contract, parse, BOUNDS — the eval's floors are the write-time gate; the analysis run and the server both import them.")
     ContainerDb(db, "Store", "SQLite · local-data/hindsight.db · user_version 9", "sessions, audit, tool_events, usage, command_grains, subagent_transcripts, field_histogram, scan_runs, breakage, sunk_cost, change_events, status_narrative, blobs, project_presence, excluded_sessions, backstop_state (analyze.py) + otel_events, otel_metrics (listener.py)")
     Container(serve, "Serve", "Python stdlib http.server · :8321", "Read-only (mode=ro URI). GET /what /where /how; every request re-queries the DB and inlines tokens.css + assets. Derives each error's error line server-side. Never invokes the model.")
-    Container(views, "Views", "HTML · CSS · JS, no framework", "what (ledger, /what#<sid> session anchor) · where (league with errors behind each count) · how (phase runs incl. off-script). Shared chrome: project chips, per-day token chart, click-a-bar filtering. Two token sets, dark and light (ADR-0017).")
+    Container(views, "Views", "HTML · CSS · JS, no framework", "what (ledger, /what#<sid> session anchor) · where (league with errors behind each count) · how (phase runs incl. off-script). Shared chrome: project chips, window presets, a day-set selection; the header visual is per view — session heatmap on what, per-day token chart on where (ADR-0028). Two token sets, dark and light (ADR-0017).")
   }
 
   Rel(cc, listener, "OTLP/HTTP JSON", ":4318")
@@ -109,7 +109,7 @@ C4Component
   }
 
   Container_Boundary(srv, "Serve") {
-    Component(serve, "serve.py", "http.server · read-only", "Routes / → what, /what /where /how. Header chrome, day buckets, token chart, tokens.css inlining, breakage banner, error_line() (ADR-0027 §3).")
+    Component(serve, "serve.py", "http.server · read-only", "Routes / → what, /what /where /how. Header chrome, day buckets, the header-visual mount, tokens.css inlining, breakage banner, error_line() (ADR-0027 §3).")
     Component(how, "how.py", "how-view data pipeline", "Declaration parser (strict YAML subset, three states — ADR-0011), mechanical trail merge (ADR-0010), run ledger with off-script runs and session boundaries incl. /compact (#17), status narrative lookup (ADR-0012).")
   }
 

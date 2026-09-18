@@ -6,9 +6,13 @@ Local observability over Claude Code history, built for a solo, skill-heavy oper
 
 ![The what view: per-day session ledger across projects](docs/screenshots/what.png)
 
-**Where — the token dashboard.** Cache economics, consumer league (skills / MCP / CLI), models and latency, and the sunk cost every session pays at start.
+**Where — the token dashboard.** Cache economics, consumer league (skills / MCP / CLI), models and latency, reliability, and the sunk cost every session pays at start.
 
 ![The where view: token dashboard with consumer league and sunk-cost ledger](docs/screenshots/where.png)
+
+Every error count in the league has the errors behind it. Opening a consumer's row lists them grouped by their error line, count-first, with the verbatim text and the session behind each occurrence one click away; a category chip carries its in-window error count whether it is on or off, so a switched-off category's errors are stated, never silent. An error whose transcript was pruned before capture is counted and read as *text not captured* — unknown is never zero.
+
+![A consumer row opened in the league, one project in view: three errors grouped by error line, the category chips carrying their error counts](docs/screenshots/errors.png)
 
 **How — the process trail.** One project's declared process beside what actually happened: phase runs, a model-written status narrative, and the mechanical trail behind it.
 
@@ -62,7 +66,7 @@ Everything else is optional and on-demand, and its absence degrades to honesty r
 - Day buckets follow the Mac's clock zone. `HINDSIGHT_TZ=America/New_York` (any IANA name) pins them to a zone instead — for a travelling laptop, or a "my day" that is not the machine's; export it in the shell that runs `serve.py`, and before `analyze.py install` so the nightly carries it. An unknown name warns once and uses the host zone. Charts and the ledger re-bucket on the next reload — the ledger files each session under the days its usage fell on, so it never sits a day off its bars; only a continuation note's *started* day waits for the next analysis run to catch up.
 - Both launchd plists bake install-time absolutes: the installing Python's path in both, and the installing shell's PATH (and `HINDSIGHT_TZ`, if set) in the nightly one — launchd's default PATH lacks `claude`, which is exactly the failure mode the step-2 pause exists for. Re-run the install after moving the clone or changing Python.
 
-**Privacy.** The database is transcript-derived text: conversational extracts, model-written audit entries, and content-addressed snapshots of your `~/.claude` config surface. All of it lives in `local-data/`, which is gitignored and never leaves the machine; the server is read-only and binds `127.0.0.1`. The one outbound path is the analysis itself: session extracts go to the model through your own `claude` CLI — the same account and the same trust boundary as the sessions that produced them.
+**Privacy.** The database is transcript-derived text: conversational extracts, model-written audit entries, content-addressed snapshots of your `~/.claude` config surface, and one kind of transcript content — the result text of a failed tool call, kept verbatim so the error behind a count can be read (ADR-0027; nothing of a successful call is ever stored). All of it lives in `local-data/`, which is gitignored and never leaves the machine; the server is read-only and binds `127.0.0.1`. The one outbound path is the analysis itself: session extracts go to the model through your own `claude` CLI — the same account and the same trust boundary as the sessions that produced them.
 
 **Deferred, deliberately.** No installer, no `uvx`, no Linux/systemd port. The stated demand is one user, so the manual path is documented instead of automated: documentation costs a reader minutes, an installer costs standing maintenance against a moving Claude Code. Both are cheap to reverse the day a real second user appears.
 

@@ -11,12 +11,15 @@ import menubar
 
 class RenderTest(unittest.TestCase):
     def test_icon_states(self):
-        self.assertTrue(menubar.render(False, []).startswith("⚪\n"))
-        self.assertTrue(menubar.render(True, []).startswith("🔵\n"))
+        both = dict(serve_up=True)
+        self.assertTrue(menubar.render(False, [], **both).startswith("⚪\n"))
+        self.assertTrue(menubar.render(True, [], serve_up=False).startswith("⚪\n"))
+        self.assertTrue(menubar.render(True, [], **both).startswith("🔵\n"))
         info = [(1, "informational", 2, "assistant.slug", "2.1.274")]
-        self.assertTrue(menubar.render(True, info).startswith("🔵 1\n"))
+        self.assertTrue(menubar.render(True, info, **both).startswith("🔵 1\n"))
+        self.assertTrue(menubar.render(True, info, serve_up=False).startswith("⚪\n"))
         prob = info + [(2, "problem", 1, "message.usage", "2.1.275")]
-        self.assertTrue(menubar.render(True, prob).startswith("🔴 2\n"))
+        self.assertTrue(menubar.render(True, prob, serve_up=False).startswith("🔴 2\n"))
 
     def test_menu_lines(self):
         rows = [(7, "problem", 3, None, None)]
@@ -28,6 +31,12 @@ class RenderTest(unittest.TestCase):
         self.assertIn("Start listener", menubar.render(False, []))
         self.assertIn("Listener not installed", menubar.render(False, [], plist_installed=False))
         self.assertIn("No open breakages", menubar.render(True, []))
+        up = menubar.render(True, [], serve_up=True)
+        self.assertIn("Stop views server | bash=", up)
+        self.assertIn("Open what view | href=http://127.0.0.1:8321/what", up)
+        down = menubar.render(True, [], serve_up=False)
+        self.assertIn("Start views server | bash=", down)
+        self.assertNotIn("Open what view", down)
 
     def test_unreadable_table_is_shown_not_clean(self):
         with tempfile.TemporaryDirectory() as d:

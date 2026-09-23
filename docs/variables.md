@@ -45,6 +45,7 @@ Rotation "re-install" means `uninstall` + `install` on the plist that bakes the 
 | `~/Library/LaunchAgents/com.hindsight.nightly.plist` | Absolute `sys.executable` + `analyze.py`; 03:00; `PATH` and, if set, `HINDSIGHT_TZ` | `analyze.py install` |
 | `<SwiftBar PluginDirectory>/hindsight.30s.sh` | Two-line wrapper: absolute `sys.executable` + `build/menubar.py`; the directory comes from `defaults read com.ameba.SwiftBar PluginDirectory`, set by `menubar.py install` if SwiftBar has never chosen one | `menubar.py install` |
 | `~/Library/Logs/hindsight/{listener,analyze}.log` | Process logs; `analyze.log` carries the first 80 chars of any rejected model output | launchd |
+| `~/Library/Logs/hindsight/serve.log` | Request log of a views server started from the menu bar (`menubar.py serve`); a terminal-started one logs to its terminal | `menubar.py` |
 
 Both plists pin the Python binary and repo path at install time; moving the repo or upgrading Python
 means re-install. The hook sends the workspace folder's **inode**, never its path (ADR-0018).

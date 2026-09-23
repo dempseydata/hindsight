@@ -10,6 +10,7 @@ There are no roles, claims, tokens, cookies or logins. One macOS user owns the r
 | Backfill importer | `import_backfill.py` | Writes `sessions`, `audit` only; never touches an existing id | Reads `local-data/backfill/` |
 | Server | `serve.py` on `127.0.0.1:8321` | Read-only (`mode=ro`) | Reads `.claude/my-process.md` of the `?p=` project, `design/tokens.css`, `build/assets/*` |
 | Listener | `listener.py` on `127.0.0.1:4318`, the one background process | Writes `otel_events`, `otel_metrics` only | — |
+| Menu bar plugin | `menubar.py`, run by SwiftBar every 30 s | Nothing in the DB — `launchctl` on the ingest plist and `analyze.py acknowledge-breakage` on click, the operator's own commands; `install` writes the wrapper and, once, SwiftBar's `PluginDirectory` preference | `GET /health` on the listener; `breakage` read-only via `sqlite3` |
 | Hook | `hook.py`, spawned by Claude Code per hook event | None — POSTs one OTLP record to the listener | `stat` of the session's `cwd` at SessionStart (ADR-0018) |
 | Model | `claude -p` subprocess of the analysis run | None — its stdout is data, gated before write | Receives the extract (tool results excluded, ADR-0002) and the run ledger |
 | Git pre-commit hook | `.githooks/pre-commit`, opt-in per clone via `git config core.hooksPath .githooks` | — | Refuses staged additions matching `.githooks/denylist.txt` |
@@ -26,7 +27,7 @@ There are no roles, claims, tokens, cookies or logins. One macOS user owns the r
 | `sessions`, `audit`, `excluded_sessions`, `project_presence`, `status_narrative`, `sunk_cost` | Server | Analysis run; importer for `sessions`/`audit` |
 | `tool_events` (incl. `error_text`), `usage`, `command_grains`, `subagent_transcripts` | Server | Analysis run's substrate scan, per session wipe-and-refill (ADR-0019) |
 | `field_histogram`, `scan_runs` | Analysis run (drift guard, ADR-0020) | Analysis run |
-| `breakage` | Server (open rows → banner on every view) | Analysis run opens; `acknowledge-breakage <id>` closes, never rescans |
+| `breakage` | Server (open rows → banner on every view); menu bar plugin (open rows → icon count and Acknowledge items) | Analysis run opens; `acknowledge-breakage <id>` closes, never rescans |
 | `blobs`, `change_events`, `backstop_state` | Nothing serves them | Analysis run's backstop |
 | `~/.claude/projects/**/*.jsonl`, `…/subagents/agent-*.jsonl` | Analysis run | Never — no delete path exists |
 | `~/.claude/{CLAUDE.md, settings.json, settings.local.json, keybindings.json, mcp.json}`, `plugins/installed_plugins.json` | Analysis run, copied verbatim into `blobs` | Never |
@@ -34,6 +35,7 @@ There are no roles, claims, tokens, cookies or logins. One macOS user owns the r
 | Workspace repos `~/Documents/Claude/*` | Analysis run: `git log`/`git show` of `.claude/` commits into `blobs`; server: `.claude/my-process.md` only | Never |
 | `local-data/` (DB, extracts, model cache, backfill) | Analysis run, server, importer | Analysis run, listener; gitignored |
 | `~/Library/LaunchAgents/com.hindsight.*.plist`, `~/Library/Logs/hindsight/` | launchd | `install` / `uninstall` of listener and analysis run |
+| `<SwiftBar PluginDirectory>/hindsight.30s.sh` | SwiftBar | `menubar.py install` / `uninstall` (a wrapper that execs the repo file) |
 
 No row-level security: SQLite has none and there is one owner.
 

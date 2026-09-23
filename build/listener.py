@@ -8,6 +8,7 @@ handled explicitly, every attribute optional-by-default kept as JSON, per-row
 count-and-skip, always return 200 once a body is accepted. Two guards run
 before the body is read (#34): Content-Type must be application/json (415)
 and the declared, chunked or inflated body must fit MAX_BODY (413 / dropped).
+The one GET, /health, answers the menu bar plugin (#37) and touches nothing.
 Stdlib only.
 
 Usage:
@@ -199,6 +200,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(resp)))
         self.end_headers()
         self.wfile.write(resp)
+
+    def do_GET(self):
+        # #37: the menu bar plugin's liveness probe. The one GET, no DB touch.
+        ok = self.path == "/health"
+        body = b'{"ok": true}' if ok else b""
+        self.send_response(200 if ok else 404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, *args):
         pass

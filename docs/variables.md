@@ -14,7 +14,7 @@ Rotation "re-install" means `uninstall` + `install` on the plist that bakes the 
 | --- | --- | --- | --- | --- | --- |
 | `HINDSIGHT_TZ` | `analyze.apply_tz` at import — so serve, how, import_backfill too | server | env, IANA name; unset = host zone; baked into the nightly plist at install | re-install | Low — moves every day bucket; a bad name is one stderr line and the host zone |
 | `PATH` | `analyze.nightly_plist` | server | installing shell's `PATH`, baked into the nightly plist | re-install | `claude` must resolve on it or the nightly run is silent |
-| Listener port | `listener.py` `DEFAULT_PORT`, `hook.py --port` | server | constant `4318`; `--port` on both (the plist passes none) | — | Low — mismatch is silent hook loss |
+| Listener port | `listener.py` `DEFAULT_PORT`, `hook.py --port`, `menubar.py PORT` | server | constant `4318`; `--port` on the first two (the plist passes none); the plugin's is a constant | — | Low — mismatch is silent hook loss |
 | Body cap | `listener.py` `MAX_BODY` | server | constant `8 MiB`, applied to the declared `Content-Length` (`413`), the chunked reader and the inflated gzip size (#34) | — | Low — a real batch is far smaller; an over-cap body is one stderr line and nothing stored |
 | Serve port | `serve.py` `DEFAULT_PORT`, `--port` | server | constant `8321`; binds `127.0.0.1` only | — | Low |
 | DB path | listener, analyze, serve, how, import_backfill — `--db` | server | `REPO/local-data/hindsight.db` | — | **Holds copied-in secrets** (below) |
@@ -43,6 +43,7 @@ Rotation "re-install" means `uninstall` + `install` on the plist that bakes the 
 | `~/.claude/settings.json` | Claude Code's OTEL exporter env pointing at `:4318`; hook entries (`SessionStart`, `UserPromptSubmit`, `Stop`) invoking `build/hook.py` by absolute path | Operator, by hand |
 | `~/Library/LaunchAgents/com.hindsight.ingest.plist` | Absolute `sys.executable` + `listener.py`; `KeepAlive`; no env | `listener.py install` |
 | `~/Library/LaunchAgents/com.hindsight.nightly.plist` | Absolute `sys.executable` + `analyze.py`; 03:00; `PATH` and, if set, `HINDSIGHT_TZ` | `analyze.py install` |
+| `<SwiftBar PluginDirectory>/hindsight.30s.sh` | Two-line wrapper: absolute `sys.executable` + `build/menubar.py`; the directory comes from `defaults read com.ameba.SwiftBar PluginDirectory`, set by `menubar.py install` if SwiftBar has never chosen one | `menubar.py install` |
 | `~/Library/Logs/hindsight/{listener,analyze}.log` | Process logs; `analyze.log` carries the first 80 chars of any rejected model output | launchd |
 
 Both plists pin the Python binary and repo path at install time; moving the repo or upgrading Python

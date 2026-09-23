@@ -259,6 +259,23 @@ class ListenerTest(unittest.TestCase):
         self.assertEqual(self.count("otel_events"), before)
         self.assertIn("chunked body over", err.getvalue())
 
+    def test_health_get_200_other_gets_404(self):
+        # #37: the menu bar plugin's probe; the only GET the listener answers.
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request("GET", "/health")
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(json.loads(resp.read()), {"ok": True})
+        finally:
+            conn.close()
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request("GET", "/v1/logs")
+            self.assertEqual(conn.getresponse().status, 404)
+        finally:
+            conn.close()
+
     def test_store_init_idempotent(self):
         listener.init_db(self.db)
         listener.init_db(self.db)

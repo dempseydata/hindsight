@@ -19,6 +19,8 @@ Usage:
                         ~/Library/Logs/hindsight/serve.log — still on-demand
                         (ADR-0001): no plist, no KeepAlive, gone at logout
   menubar.py unserve    stop whatever listens on the serve port
+  menubar.py open       the what view in the browser, starting serve.py first
+                        if nothing answers
 
 Reads GET /health on the listener, GET / on the views server and the breakage
 table read-only. Writes nothing but the wrapper at install and SwiftBar's
@@ -28,6 +30,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -85,7 +88,7 @@ def render(up, rows, plist_installed=True, serve_up=False):
     else:
         icon = f"🔵 {n}" if n else "🔵"
     me = f'bash="{sys.executable}" param1="{Path(__file__).resolve()}"'
-    out = [icon, "---"]
+    out = [icon, "---", f"Open dashboard | {me} param2=open terminal=false refresh=true", "---"]
     if up:
         out += [f"Listener running on :{PORT}",
                 f"Stop listener | {me} param2=stop terminal=false refresh=true"]
@@ -98,7 +101,6 @@ def render(up, rows, plist_installed=True, serve_up=False):
     out.append("---")
     if serve_up:
         out += [f"Views server running on :{SERVE_PORT}",
-                f"Open what view | href=http://127.0.0.1:{SERVE_PORT}/what",
                 f"Stop views server | {me} param2=unserve terminal=false refresh=true"]
     else:
         out += ["Views server stopped",
@@ -173,8 +175,20 @@ def unserve():
         os.kill(int(pid), 15)
 
 
+def open_dashboard():
+    if not http_up(SERVE_PORT, "/"):
+        serve()
+        for _ in range(20):
+            time.sleep(0.25)
+            if http_up(SERVE_PORT, "/"):
+                break
+    subprocess.run(["open", f"http://127.0.0.1:{SERVE_PORT}/what"])
+
+
 def main(argv):
     cmd = argv[0] if argv else None
+    if cmd == "open":
+        return open_dashboard()
     if cmd in ("install", "uninstall", "start", "stop", "serve", "unserve"):
         return globals()[cmd]()
     if cmd:

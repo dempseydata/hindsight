@@ -33,10 +33,11 @@ class RenderTest(unittest.TestCase):
         self.assertIn("No open breakages", menubar.render(True, []))
         up = menubar.render(True, [], serve_up=True)
         self.assertIn("Stop views server | bash=", up)
-        self.assertIn("Open what view | href=http://127.0.0.1:8321/what", up)
         down = menubar.render(True, [], serve_up=False)
         self.assertIn("Start views server | bash=", down)
-        self.assertNotIn("Open what view", down)
+        for out in (up, down):   # always there; starts the server itself if needed
+            self.assertEqual(out.splitlines()[2].split(" | ")[0], "Open dashboard")
+            self.assertIn("param2=open", out)
 
     def test_unreadable_table_is_shown_not_clean(self):
         with tempfile.TemporaryDirectory() as d:

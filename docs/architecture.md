@@ -47,7 +47,7 @@ C4Context
 
 ![Containers on one machine: Claude Code writes transcripts, fires the hook and emits OTEL; the analysis run scans the archive, calls claude -p and writes facts to hindsight.db; the views read it read-only on localhost](diagrams/architecture.svg)
 
-The picture is an [Archify](https://github.com/tt-a1i/archify) export of [diagrams/architecture.archify.json](diagrams/architecture.archify.json), the same containers as the Mermaid below. The Mermaid is the source of truth for this document; the Archify spec is re-derived from it when a container is added or removed, and the SVG is re-exported from the viewer (`archify deliver architecture docs/diagrams/architecture.archify.json <out.html>`, then Export → SVG). The interactive HTML is not committed.
+The picture is an [Archify](https://github.com/tt-a1i/archify) export of [diagrams/architecture.archify.json](diagrams/architecture.archify.json), the same containers as the Mermaid below (the export predates the menu bar plugin, #37). The Mermaid is the source of truth for this document; the Archify spec is re-derived from it when a container is added or removed, and the SVG is re-exported from the viewer (`archify deliver architecture docs/diagrams/architecture.archify.json <out.html>`, then Export → SVG). The interactive HTML is not committed.
 
 ```mermaid
 C4Container
@@ -57,6 +57,7 @@ C4Container
   Person(op, "Operator", "")
   System_Ext(cc, "Claude Code", "transcripts · OTEL · hooks")
   System_Ext(cli, "claude -p", "model")
+  System_Ext(sb, "SwiftBar", "menu bar host, every 30 s")
 
   Container_Boundary(hs, "Hindsight (this machine)") {
     Container(listener, "Ingest listener", "Python stdlib http.server · launchd · :4318", "POST /v1/logs and /v1/metrics → otel_events, otel_metrics. Chunked and gzip bodies handled, per-row count-and-skip, always 200. Does nothing else.")
@@ -67,6 +68,7 @@ C4Container
     Container(evalgate, "Eval floors", "Python · eval/score.py", "contract, parse, BOUNDS — the eval's floors are the write-time gate; the analysis run and the server both import them.")
     ContainerDb(db, "Store", "SQLite · local-data/hindsight.db · user_version 9", "sessions, audit, tool_events, usage, command_grains, subagent_transcripts, field_histogram, scan_runs, breakage, sunk_cost, change_events, status_narrative, blobs, project_presence, excluded_sessions, backstop_state (analyze.py) + otel_events, otel_metrics (listener.py)")
     Container(serve, "Serve", "Python stdlib http.server · :8321", "Read-only (mode=ro URI). GET /what /where /how; every request re-queries the DB and inlines tokens.css + assets. Derives each error's error line server-side. Never invokes the model.")
+    Container(menubar, "Menu bar plugin", "Python stdlib · run by SwiftBar", "Prints the icon and menu: listener and serve liveness, open breakage rows. Items run launchctl, serve.py detached, acknowledge-breakage (#37).")
     Container(views, "Views", "HTML · CSS · JS, no framework", "what (ledger, /what#<sid> session anchor) · where (league with errors behind each count) · how (phase runs incl. off-script). Shared chrome: project chips, window presets, a day-set selection; the header visual is per view — session heatmap on what, per-day token chart on where (ADR-0028). Two token sets, dark and light (ADR-0017).")
   }
 
@@ -84,6 +86,10 @@ C4Container
   Rel(serve, evalgate, "BOUNDS — narrative group names", "import")
   Rel(serve, views, "renders per request", "")
   Rel(op, views, "browser", "HTTP :8321")
+  Rel(sb, menubar, "runs, reads stdout", "wrapper")
+  Rel(menubar, listener, "GET /health", "HTTP")
+  Rel(menubar, serve, "GET /, start/stop", "HTTP · Popen · SIGTERM")
+  Rel(menubar, db, "SELECT breakage", "sqlite3 mode=ro")
   Rel(op, analyze, "runs", "CLI")
 ```
 
@@ -115,6 +121,7 @@ C4Component
 
   Container_Boundary(ing, "Ingest") {
     Component(listener, "listener.py", "http.server · launchd", "OTLP JSON in, rows out. No imports from the rest of build/.")
+    Component(menubar, "menubar.py", "SwiftBar plugin", "render() is a pure function of two liveness probes and the open breakage rows; install/uninstall/start/stop/serve/unserve/open are the click targets. No imports from the rest of build.")
     Component(hook, "hook.py", "per-event process", "Reads the hook event from stdin, POSTs a timed record to the listener. No imports from the rest of build/.")
   }
 
@@ -174,6 +181,7 @@ Claude Code sessions (transcripts), not login sessions. See [permissions.md](per
 | Analysis run → `claude -p` | Prompt on stdin, markdown/JSON on stdout | Model output is **untrusted**: gated by `valid_entry` (what-pass, `analyze.py:1105`) and `score.contract` + `BOUNDS` (narrative) before any write. Raw output is cached on disk only. |
 | Analysis run → project git repos | `git -C <repo> log/diff-tree/show -- .claude` | Full historical contents of every `.claude/*` file are copied verbatim into `blobs` (`analyze.py:1303-1329`). |
 | Serve → browser | GET on loopback, read-only DB (`mode=ro`) | Page content comes from the DB, which now contains model prose *and* raw error text. Both are HTML-escaped: `what.js` re-injects `**b**`/`` `code` `` from escaped text; error text goes into `<pre>` through `esc()` (`where.js:119`). |
+| SwiftBar → menu bar plugin | Executes the wrapper every 30 s, reads stdout | SwiftBar is a third-party host the operator installs (ADR-0001, 2026-09-23 amendment); the plugin reads the DB `mode=ro` and its click targets are the operator's own commands (`launchctl`, `serve.py`, `acknowledge-breakage`). |
 | Browser → anywhere | — | Nothing. No fetch, no external assets, one `localStorage` key (`theme`) and one per-tab `sessionStorage` key (`filter`). |
 
 ## Known risks and assumptions

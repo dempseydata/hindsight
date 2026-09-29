@@ -39,3 +39,7 @@ The current run's accent rule is replaced by a small `now` badge so the rule can
 ## Amendment (2026-08-30, ticket #83): second theme
 
 A **light theme** now extends this direction as a constrained derivation — same hues and roles, inverted value structure — decided in **ADR-0017** (design pass, toggle mechanics, contract shape, per-theme floor). Direction facts stay here; theme facts live there. `tokens.css` remains the sole contract, holding both themes' values.
+
+## Amendment (2026-09-29, map #39): Tabler layout and card grammar
+
+The layout and component grammar are replaced by Tabler's, ported by hand onto this direction's palette — decided in **ADR-0029**. No longer true above: *titled panels* and *elevated 6px-radius panels* (data now sits in 8px cards; the 6px panel survives only as How's stage panel), *28px stat numerals* (stat cards, 24px), and the spark grammar as the only spark (it is now the **bar spark**, on table rows; stat cards carry a **trend spark**). Still true: the family, the palette and hues, system-ui + ui-monospace, `tokens.css` as the sole contract, and the floor. Direction facts stay here; shell and grammar facts live there.

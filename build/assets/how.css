@@ -12,7 +12,7 @@
 #how .mk { margin: .2rem 0 0; word-break: break-word; }
 #how details summary { cursor: pointer; color: var(--o-dim); font-size: 11px; }
 #how .off { margin: .3rem 0 0; padding-left: 1rem; color: var(--o-dim);
-  font: 11px/1.6 var(--o-mono); }
+  font: 11px/1.6 var(--o-mono); word-break: break-word; }
 #how .warn { border: 1px dashed var(--o-caution); border-radius: var(--o-radius);
   padding: .6rem .8rem; margin-bottom: .8rem; }
 #how .warn b { color: var(--o-caution-text); }

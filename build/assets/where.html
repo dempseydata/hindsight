@@ -1,48 +1,62 @@
 <section id="where">
 <div class="o-stat-grid" id="tiles"></div>
-<div class="panel lg"><h2>Consumer league</h2>
-<p class="note">who tool calls are charged to — session lens hands a consumer
-every session it appeared in, message lens only the API responses that invoked
-it; agreement across lenses is the signal. Session lens covers sessions with
-known usage only, and sessions attribute to their first day — a short window
-can zero session-lens counts for consumers used late in a session. Token
-columns honour the hide-cache-reads toggle. Rows need 5 all-time calls; the
-tail of the visible categories rides collapsed below. Category chips scope
-this league only — shell and builtin (ubiquitous, unprunable) start off so
-the deliberate adds read first; switched-off calls stay counted in the stat cards
-and are tallied beneath the league, never lost. The 5-call floor stays
-all-time.</p>
-<div id="cats">
+<div class="o-card o-card-table lg"><div class="o-card-head"><div>
+<h2 class="o-card-title"><span data-icon="trophy" aria-hidden="true"></span>Consumer league</h2>
+<p class="o-card-sub">Session lens covers sessions with known usage only, and sessions
+attribute to their first day — a short window can zero session-lens counts for
+consumers used late in a session.</p></div>
+<div class="o-card-actions"><div id="cats">
 <button class="on" aria-pressed="true" data-t="mcp">mcp<span class="ec"></span></button>
 <button class="on" aria-pressed="true" data-t="cli">cli<span class="ec"></span></button>
 <button class="on" aria-pressed="true" data-t="skill">skill<span class="ec"></span></button>
 <button aria-pressed="false" data-t="shell">shell<span class="ec"></span></button>
 <button aria-pressed="false" data-t="builtin">builtin<span class="ec"></span></button>
-</div>
+</div><button class="o-help" popovertarget="lhelp" aria-label="help"><span data-icon="help-circle" aria-hidden="true">?</span></button><div class="o-pop" id="lhelp" popover>who
+tool calls are charged to — session lens hands a consumer every session it
+appeared in, message lens only the API responses that invoked it; agreement
+across lenses is the signal. Token columns honour the hide-cache-reads toggle.
+Rows need 5 all-time calls; the tail of the visible categories rides collapsed
+below. Category chips scope this league only — shell and builtin (ubiquitous,
+unprunable) start off so the deliberate adds read first; switched-off calls stay
+counted in the stat cards and are tallied beneath the league, never lost. The
+5-call floor stays all-time.</div></div></div>
 <div id="league"></div></div>
-<div class="panel"><h2>Models</h2>
-<p class="note" id="mnote"></p>
+<div class="o-card o-card-table"><div class="o-card-head"><div>
+<h2 class="o-card-title"><span data-icon="cpu" aria-hidden="true"></span>Models</h2>
+<p class="o-card-sub" id="mcov"></p></div>
+<div class="o-card-actions"><button class="o-help" popovertarget="mhelp" aria-label="help"><span data-icon="help-circle" aria-hidden="true">?</span></button><div class="o-pop" id="mhelp" popover><span id="mnote"></span></div></div></div>
 <div id="models"></div></div>
-<div class="panel"><h2>MCP servers</h2>
-<p class="note">server → tool split; errors/day in red beneath the calls
-spark; latency from tool_use→tool_result pairing — unpaired calls
-count but carry no duration and read unknown (+n?), not ok.</p>
+<div class="o-card o-card-table"><div class="o-card-head"><div>
+<h2 class="o-card-title"><span data-icon="plug" aria-hidden="true"></span>MCP servers</h2>
+<p class="o-card-sub">unpaired calls count but carry no duration and read unknown
+(+n?), not ok.</p></div>
+<div class="o-card-actions"><button class="o-help" popovertarget="mcphelp" aria-label="help"><span data-icon="help-circle" aria-hidden="true">?</span></button><div class="o-pop" id="mcphelp" popover>server
+→ tool split; errors/day in red beneath the calls spark; latency from
+tool_use→tool_result pairing.</div></div></div>
 <div id="mcp"></div></div>
-<div class="panel"><h2>CLI tools</h2>
-<p class="note">programs parsed from Bash commands and found outside OS-shipped
-paths (OS-shipped binaries and shell builtins are classed shell — league rows
-behind its shell chip); no subcommand grain exists in the parse.</p>
+<div class="o-card o-card-table"><div class="o-card-head"><div>
+<h2 class="o-card-title"><span data-icon="terminal" aria-hidden="true"></span>CLI tools</h2></div>
+<div class="o-card-actions"><button class="o-help" popovertarget="clihelp" aria-label="help"><span data-icon="help-circle" aria-hidden="true">?</span></button><div class="o-pop" id="clihelp" popover>programs
+parsed from Bash commands and found outside OS-shipped paths (OS-shipped
+binaries and shell builtins are classed shell — league rows behind its shell
+chip); no subcommand grain exists in the parse.</div></div></div>
 <div id="cli"></div></div>
-<div class="panel sunk"><h2>Session-start sunk cost</h2>
-<p class="note" id="snote"></p>
-<div id="sunk"></div></div>
-<div class="panel"><h2>Reliability</h2>
-<p class="note" id="rnote"></p>
-<h3>API retries</h3>
+<div class="o-card sunk"><div class="o-card-head"><div>
+<h2 class="o-card-title"><span data-icon="hourglass" aria-hidden="true"></span>Session-start sunk cost</h2>
+<p class="o-card-sub">Reads today's filesystem, all-time — the window doesn't apply, project chips do.</p></div>
+<div class="o-card-actions"><button class="o-help" popovertarget="shelp" aria-label="help"><span data-icon="help-circle" aria-hidden="true">?</span></button><div class="o-pop" id="shelp" popover><span id="snote"></span></div></div></div>
+<div class="o-card-body" id="sunk"></div></div>
+<div class="o-card o-card-table"><div class="o-card-head"><div>
+<h2 class="o-card-title"><span data-icon="activity" aria-hidden="true"></span>Reliability</h2>
+<p class="o-card-sub" id="rcov"></p></div>
+<div class="o-card-actions"><button class="o-help" popovertarget="rhelp" aria-label="help"><span data-icon="help-circle" aria-hidden="true">?</span></button><div class="o-pop" id="rhelp" popover><span id="rnote"></span></div></div></div>
+<h3 class="o-card-table-group">API retries</h3>
 <div id="retries"></div>
-<h3>MCP connection health</h3>
+<h3 class="o-card-table-group">MCP connection health</h3>
 <div id="conn"></div></div>
-<div class="panel"><h2>Hook activity</h2>
-<p class="note" id="hnote"></p>
+<div class="o-card o-card-table"><div class="o-card-head"><div>
+<h2 class="o-card-title"><span data-icon="bolt" aria-hidden="true"></span>Hook activity</h2>
+<p class="o-card-sub" id="hcov"></p></div>
+<div class="o-card-actions"><button class="o-help" popovertarget="hhelp" aria-label="help"><span data-icon="help-circle" aria-hidden="true">?</span></button><div class="o-pop" id="hhelp" popover><span id="hnote"></span></div></div></div>
 <div id="hooks"></div></div>
 </section>

@@ -663,12 +663,95 @@ class ServerTest(unittest.TestCase):
             {"d": "2026-08-03", "p": None, "sid": "u1", "srv": "plugin:gh",
              "st": "failed", "ms": None}])
 
-    def test_where_view_has_reliability_panel(self):
+    def test_where_view_has_reliability_card(self):
         _, body = self.get("/where")
-        self.assertIn('id="retries"', body)
-        self.assertIn('id="conn"', body)
+        card = body[body.index("Reliability</h2>"):body.index("Hook activity</h2>")]
+        self.assertIn('id="retries"', card)
+        self.assertIn('id="conn"', card)
         self.assertIn('"retries"', body)
         self.assertIn('"conn"', body)
+
+    def test_where_sections_are_cards(self):
+        """#56 (ADR-0029 §2, ADR-0030 §3, §4, §10): every where section is a
+        titled card with #47's glyph; the tabular ones are card-tables (a
+        tinted uppercase header row, .75rem cells, the outer ones at the
+        card's 20px); the league's category chips sit in its card header's
+        actions, right of the title; the incumbent panel is gone."""
+        _, where = self.get("/where")
+        sections = (("trophy", "Consumer league"), ("cpu", "Models"),
+                    ("plug", "MCP servers"), ("terminal", "CLI tools"),
+                    ("hourglass", "Session-start sunk cost"),
+                    ("activity", "Reliability"), ("bolt", "Hook activity"))
+        for glyph, title in sections:
+            self.assertIn(f'<h2 class="o-card-title"><span data-icon="{glyph}"'
+                          f' aria-hidden="true"></span>{title}</h2>', where)
+        self.assertEqual(where.count('<div class="o-card o-card-table'), 6)   # sunk is a list
+        self.assertNotIn('class="panel', where)
+        head = where[where.index("Consumer league</h2>"):where.index('id="league"')]
+        self.assertIn('<div class="o-card-actions"><div id="cats">', head)
+        self.assertIn('<div class="o-card-table-head">', where)          # league rows
+        self.assertIn('<summary class="o-card-table-row">', where)
+        css = where[where.index("<style>"):where.index("</style>")]
+        self.assertRegex(css, r"#where th \{[^}]*background: var\(--o-bg\);[^}]*"
+                              r"text-transform: uppercase;")
+        self.assertRegex(css, r"#where td \{[^}]*padding: \.75rem;")
+        self.assertRegex(css, r"#where :is\(th, td\):first-child \{ padding-left: 20px; \}")
+        self.assertNotRegex(css, r"(^|\})\s*\.panel[ ,{]")
+        self.assertIn('<span class="o-badge o-neutral">${o.ty}</span>', where)
+        self.assertNotIn('class="pchip"', where)
+
+    def test_where_help_popovers_keep_coverage_gaps_visible(self):
+        """#56 (ADR-0030 §4): long notes sit behind each card's help `?` —
+        the shared popover markup — and the notes the view fills by id keep
+        their ids inside it. Sentences stating a capture start, the shaded
+        pre-coverage region or an unknown stay visible under the card title."""
+        _, where = self.get("/where")
+        for pid in ("lhelp", "mhelp", "mcphelp", "clihelp", "shelp", "rhelp", "hhelp"):
+            self.assertIn(serve._help(pid, "")[:-len("</div>")], where)
+        for pid, nid in (("mhelp", "mnote"), ("shelp", "snote"),
+                         ("rhelp", "rnote"), ("hhelp", "hnote")):
+            self.assertIn(f'<div class="o-pop" id="{pid}" popover><span id="{nid}">'
+                          "</span></div>", where)
+        for cid in ("mcov", "rcov", "hcov"):
+            self.assertIn(f'<p class="o-card-sub" id="{cid}"></p>', where)
+        fills = {ln.split('"')[1]: ln for ln in where.splitlines()
+                 if ln.startswith('document.getElementById("')}
+        self.assertIn("capture began ${WHERE.cov.otel", fills["mcov"])
+        self.assertIn("capture began ${WHERE.cov.otel", fills["rcov"])
+        self.assertIn("the shaded spark region predates it", fills["rcov"])
+        self.assertIn("counts with its project unknown", fills["rcov"])
+        self.assertIn("Capture began ${WHERE.cov.hook", fills["hcov"])
+        self.assertIn("the shaded spark region predates it", fills["hcov"])
+        for nid in ("mnote", "rnote", "hnote", "snote"):
+            for gap in ("apture began", "predates it", "unknown"):
+                self.assertNotIn(gap, fills[nid], nid)
+        for sub in ('<p class="o-card-sub">Session lens covers sessions with known usage only',
+                    '<p class="o-card-sub">unpaired calls count but carry no duration'):
+            self.assertIn(sub, where)
+        self.assertIn('<p class="note" id="wcov"></p>', where)
+
+    def test_where_scope_statements_stay_visible(self):
+        """#56 review: a card whose scope differs from the filters' — hooks
+        (user-scope), sunk cost (all-time) — states it outside the `?`, so a
+        project chip never reads as having filtered it."""
+        _, where = self.get("/where")
+        fills = {ln.split('"')[1]: ln for ln in where.splitlines()
+                 if ln.startswith('document.getElementById("')}
+        self.assertIn("Hooks are user-scope: project chips don't apply", fills["hcov"])
+        self.assertNotIn("user-scope", fills["hnote"])
+        sunk = where[where.index("Session-start sunk cost</h2>"):where.index('class="o-card-actions"',
+                     where.index("Session-start sunk cost</h2>"))]
+        self.assertIn('<p class="o-card-sub">Reads today\'s filesystem, all-time — the window'
+                      " doesn't apply, project chips do.</p>", sunk)
+        self.assertNotIn("all-time", fills["snote"])
+
+    def test_where_group_rule_only_between_reliability_groups(self):
+        """#56 review: the rule above a card-table group row is drawn only where
+        a group follows a table — never under the card head's own border."""
+        _, where = self.get("/where")
+        css = where[where.index("<style>"):where.index("</style>")]
+        self.assertIn("#where #retries + .o-card-table-group { border-top:", css)
+        self.assertNotIn("div + .o-card-table-group", css)
 
     def test_unknown_path_404s(self):
         r, _ = self.get("/nope")

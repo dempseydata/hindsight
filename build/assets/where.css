@@ -5,37 +5,42 @@
 #chart .col { fill: transparent; }
 #chart .col.sel { fill: var(--o-compare); fill-opacity: var(--o-wash-sel); }
 #chart .selrule { fill: var(--o-compare); fill-opacity: var(--o-wash-rule); }
-#where .panel { margin-top: 1rem;
-  transition: transform var(--o-motion), box-shadow var(--o-motion); }
-#where .panel:hover { transform: translateY(-1px); }
-#where .panel .note { font-size: 11px; margin: 0 0 .5rem; }
-#where .panel h3 { margin: .8rem 0 .3rem; font: 600 11px var(--o-mono);
-  color: var(--o-dim); text-transform: uppercase; letter-spacing: .05em; }
+/* sections as cards (#56); the tabular ones are card-tables (ADR-0030 §10)
+   — full-bleed, a tinted uppercase header row, .75rem cells, the outer
+   ones at the card's 20px */
+#where .o-card-head > div:first-child { min-width: 0; }
+#where .o-card-table > div > p, #where .o-card-table > div > details.sub > summary,
+#where .o-card-table > div > details.sub > .detail { margin: 0; padding: .75rem 20px; }
+#where .o-card-table-head .num { font: inherit; }
 #where table { border-collapse: collapse; width: 100%; font-size: 12px; }
-#where th { text-align: left; color: var(--o-dim);
+#where th { text-align: left; color: var(--o-dim); background: var(--o-bg);
   font: 600 10px var(--o-mono); text-transform: uppercase;
-  letter-spacing: .05em; padding: .25rem .5rem;
+  letter-spacing: .05em; padding: .5rem .75rem;
   border-bottom: 1px solid var(--o-border); }
-#where td { padding: .3rem .5rem; border-bottom: 1px solid var(--o-border);
+#where td { padding: .75rem; border-bottom: 1px solid var(--o-border);
   vertical-align: middle; }
+#where :is(th, td):first-child { padding-left: 20px; }
+#where :is(th, td):last-child { padding-right: 20px; }
 #where tr:last-child td { border-bottom: none; }
+#where .o-card-table > div > details.sub { border-bottom: 1px solid var(--o-border); }
+#where .o-card-table > div > :last-child { border-bottom: none; }
+#where #retries + .o-card-table-group { border-top: 1px solid var(--o-border); }
 #where .num { text-align: right; font: 12px var(--o-mono);
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 #where th.num { font-size: 10px; }
 #where .dim { color: var(--o-dim); }
 #where .err { color: var(--o-problem-text); }
 #where svg.spark { display: block; }
-#where #cats { margin: 0 0 .6rem; }
-#where .lg .lghead, #where .lg summary { display: grid;
+#where #cats { margin: 0; }
+#where .lg .o-card-table-head, #where .lg .o-card-table-row {
   grid-template-columns: minmax(9rem, 1fr) 128px 3.5rem 3rem 4.5rem 4.5rem;
-  gap: .6rem; align-items: center; padding: .25rem .6rem; }
-#where .lg summary { cursor: pointer; list-style: none;
-  border-top: 1px solid var(--o-border); }
+  align-items: center; }
+#where .lg .o-card-table-row { cursor: pointer; list-style: none; }
 #where .lg summary::-webkit-details-marker { display: none; }
-#where .lg .lghead { color: var(--o-dim); font: 600 10px var(--o-mono);
-  text-transform: uppercase; letter-spacing: .05em; }
-#where .lg details[open] summary { background: var(--o-bg); }
-#where .lg .detail { padding: .4rem .6rem .6rem 1.2rem; background: var(--o-bg);
+#where #league > details { border-bottom: 1px solid var(--o-border); }
+#where #league > :last-child { border-bottom: none; }
+#where .lg details[open] > .o-card-table-row { background: var(--o-bg); }
+#where .lg .detail { padding: 0 20px .75rem 40px; background: var(--o-bg);
   font-size: 12px; }
 #where .lg .detail p { margin: .15rem 0; color: var(--o-dim); }
 #where .lg .detail b { color: var(--o-text); font-weight: 600; }
@@ -43,8 +48,8 @@
 /* #33: error groups nest inside a league row's detail — plain summaries,
    not the league grid; verbatim text wraps, never scrolls the page */
 #where .lg .detail .errg { margin: .15rem 0 .15rem .6rem; }
-#where .lg .detail .errg summary { display: block; border-top: none;
-  background: none; padding: .1rem 0; color: var(--o-text); font: 12px var(--o-mono); }
+#where .lg .detail .errg summary {
+  padding: .1rem 0; color: var(--o-text); font: 12px var(--o-mono); }
 #where .lg .detail .errg summary .err { font-weight: 600; }
 #where .lg .detail .occ { margin: .2rem 0 .3rem 1rem; color: var(--o-dim);
   font: 11px var(--o-mono); }

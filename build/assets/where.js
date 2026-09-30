@@ -202,7 +202,7 @@ function leagueHtml(open) {
     .sort((a, b) => (b[1].msg || 0) - (a[1].msg || 0) || b[1].n - a[1].n);
   const tail = Object.entries(g).filter(([k]) => allCalls[k] < 5);
   const tailCalls = tail.reduce((a, [, o]) => a + o.n, 0);
-  const head = `<div class="lghead"><span>consumer</span><span>calls/day \u00b7 errors below</span>
+  const head = `<div class="o-card-table-head"><span>consumer</span><span>calls/day \u00b7 errors below</span>
     <span class="num">calls</span><span class="num">err</span>
     <span class="num" title="every session the consumer appeared in">sess-lens</span>
     <span class="num" title="only the API responses that invoked it">msg-lens</span></div>`;
@@ -212,8 +212,8 @@ function leagueHtml(open) {
     const span = allSpan[k] || ["\u2014", "\u2014"];
     const projs = Object.entries(o.proj).sort((a, b) => b[1] - a[1]);
     const mcp = Object.entries(o.mcp).sort((a, b) => b[1] - a[1]);
-    out += `<details data-k="${esc(k)}"${open.has(k) ? " open" : ""}><summary>
-      <span><span class="pchip">${o.ty}</span> ${esc(o.c)}</span>
+    out += `<details data-k="${esc(k)}"${open.has(k) ? " open" : ""}><summary class="o-card-table-row">
+      <span><span class="o-badge o-neutral">${o.ty}</span> ${esc(o.c)}</span>
       ${sparkSvg(o.perDay, { err: o.e ? o.errDay : null })}
       <span class="num">${fmt(o.n)}</span><span class="num">${errHtml(o.e, o.nu)}</span>
       <span class="num">${o.sess ? fmt(o.sess) : '<span class="dim">\u2014</span>'}</span>
@@ -228,10 +228,10 @@ function leagueHtml(open) {
       </div></details>`;
   }
   if (tail.length)
-    out += `<details class="sub" data-k="_tail"${open.has("_tail") ? " open" : ""}><summary style="padding:.3rem .6rem">
+    out += `<details class="sub" data-k="_tail"${open.has("_tail") ? " open" : ""}><summary>
       ${tail.length} visible-category consumers under 5 all-time calls \u00b7 ${tailCalls} calls in window</summary>
       <p class="detail dim">${tail.sort((a, b) => b[1].n - a[1].n).map(([, o]) =>
-        `${esc(o.c)} <span class="pchip">${o.ty}</span> \u00d7${o.n}`).join(" \u00b7 ")}</p></details>`;
+        `${esc(o.c)} <span class="o-badge o-neutral">${o.ty}</span> \u00d7${o.n}`).join(" \u00b7 ")}</p></details>`;
   out = out ? head + out : '<p class="dim">none in filter</p>';
   // chip labels carry the in-window error count whether on or off, so a
   // switched-off category's errors are visible without clicking it
@@ -347,7 +347,7 @@ function sunkHtml(open) {
       .map(([pl, list]) => {
         const cat = list.reduce((a, r) => a + r.tok, 0);
         const items = list.sort((a, b) => b.tok - a.tok).slice(0, 15).map(r =>
-          `<div>${esc(r.name)} <span class="pchip">${r.cat}</span> ${fmt(r.tok)} tok</div>`).join("")
+          `<div>${esc(r.name)} <span class="o-badge o-neutral">${r.cat}</span> ${fmt(r.tok)} tok</div>`).join("")
           + (list.length > 15 ? `<div>\u2026 ${list.length - 15} more</div>` : "");
         return `<details class="grp"><summary><b>${esc(pl)}</b> \u00b7 ${list.length} entries
           \u00b7 eager stub ~${fmt(25 * list.length)} tok \u00b7 catalog ${fmt(cat)} tok</summary>
@@ -457,14 +457,18 @@ function renderWhere() {
   document.getElementById("retries").innerHTML = retriesHtml();
   document.getElementById("conn").innerHTML = connHtml();
 }
-// coverage honesty: one global line + per-panel notes; OTEL-fed sparks
+// coverage honesty: one global line + per-card gap lines, visible under
+// the title (ADR-0030 §4) while the explanation sits behind the `?`; OTEL-fed sparks
 // additionally shade their pre-coverage region (judged: in-chart beats
 // banner walls — see ticket #48's resolution)
 document.getElementById("wcov").textContent = `usage for ${WHERE.cov.usage_sessions} of ${WHERE.cov.sessions} synced sessions (${WHERE.cov.span[0]} \u2192 ${WHERE.cov.span[1]}; pruned transcripts read unknown, never zero) \u00b7 OTEL capture from ${WHERE.cov.otel || "\u2014"} \u00b7 hooks from ${WHERE.cov.hook || "\u2014"} \u00b7 ${WHERE.cov.excluded} of hindsight's own analysis sessions excluded from everything here`;
-document.getElementById("mnote").textContent = `token counts come from the transcript scan (full span); api latency from OTEL api_request \u2014 capture began ${WHERE.cov.otel || "\u2014"}, so models unused since then read \u2014. No pricing columns, ever (ADR-0003).`;
-document.getElementById("snote").textContent = `what a session pays before the first prompt \u2014 ${WHERE.cov.excluded} of hindsight's own analysis sessions self-excluded. Reads today's filesystem, all-time \u2014 the window doesn't apply, project chips do. size/4 estimates; the measured median (first usage row per session) carries authority \u2014 the gap between itemized eager cost and the median is system-prompt/built-in overhead, invisible to the file scan.`;
-document.getElementById("rnote").textContent = `retries and wall time lost, never spend \u2014 api_error carries no token counts. Retries are api_error events; exhausted is api_retries_exhausted, whose total_retry_duration_ms is the wall lost. MCP attempts are connected + failed per server (disconnected is a clean close, not an attempt); connect p50 over successful connections carrying a duration. OTEL-fed \u2014 capture began ${WHERE.cov.otel || "\u2014"}, the shaded spark region predates it. Hover a sessions count for the ids. Hindsight's own analysis sessions are excluded; a session OTEL saw but sync never did counts with its project unknown, so a project chip hides it.`;
-document.getElementById("hnote").textContent = `cpu_ms carries the table: per-firing process CPU including interpreter startup (ADR-0005). duration_ms (dim) times the script body only \u2014 clock starts after spawn, stops before the POST. True wall cost, spawn\u2192exit including timeout waits, is not captured. Capture began ${WHERE.cov.hook || "\u2014"} \u2014 the shaded spark region predates it. Hooks are user-scope: project chips don't apply.`;
+document.getElementById("mcov").textContent = `api latency from OTEL api_request \u2014 capture began ${WHERE.cov.otel || "\u2014"}, so models unused since then read \u2014.`;
+document.getElementById("mnote").textContent = `token counts come from the transcript scan (full span). No pricing columns, ever (ADR-0003).`;
+document.getElementById("snote").textContent = `what a session pays before the first prompt \u2014 ${WHERE.cov.excluded} of hindsight's own analysis sessions self-excluded. size/4 estimates; the measured median (first usage row per session) carries authority \u2014 the gap between itemized eager cost and the median is system-prompt/built-in overhead, invisible to the file scan.`;
+document.getElementById("rnote").textContent = `retries and wall time lost, never spend \u2014 api_error carries no token counts. Retries are api_error events; exhausted is api_retries_exhausted, whose total_retry_duration_ms is the wall lost. MCP attempts are connected + failed per server (disconnected is a clean close, not an attempt); connect p50 over successful connections carrying a duration. Hover a sessions count for the ids. Hindsight's own analysis sessions are excluded.`;
+document.getElementById("rcov").textContent = `OTEL-fed \u2014 capture began ${WHERE.cov.otel || "\u2014"}, the shaded spark region predates it. A session OTEL saw but sync never did counts with its project unknown, so a project chip hides it.`;
+document.getElementById("hnote").textContent = `cpu_ms carries the table: per-firing process CPU including interpreter startup (ADR-0005). duration_ms (dim) times the script body only \u2014 clock starts after spawn, stops before the POST. True wall cost, spawn\u2192exit including timeout waits, is not captured.`;
+document.getElementById("hcov").textContent = `Capture began ${WHERE.cov.hook || "\u2014"} \u2014 the shaded spark region predates it. Hooks are user-scope: project chips don't apply.`;
 document.getElementById("cats").addEventListener("click", e => {
   const b = e.target.closest("button");
   if (!b) return;

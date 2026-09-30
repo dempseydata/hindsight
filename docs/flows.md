@@ -60,16 +60,16 @@ denylist (`.githooks/pre-commit`, home paths / key shapes / transcript filenames
 
 ## F4 — Serve (`python3 build/serve.py` → browser)
 
-**Actor:** operator's browser on `http://127.0.0.1:8321`. **Precondition:** DB exists with a `sessions` table (else exit 1, `serve.py:787-814`). **Outcome:** one HTML page per request.
+**Actor:** operator's browser on `http://127.0.0.1:8321`. **Precondition:** DB exists with a `sessions` table (else exit 1, `serve.py:840-867`). **Outcome:** one HTML page per request.
 
 | Step | Where | Check | Side effect |
 | --- | --- | --- | --- |
-| 1. GET `/` (302 → `/what`), `/what`, `/where`, `/how` | `serve.py:760-784` | Loopback bind; no auth; other paths → 404; other methods → 501 | — |
-| 2. Open DB `mode=ro` | `serve.py:86-90` | SQLite enforces read-only; WAL + 30 s timeout, so a writer's checkpoint waits rather than 500s | — |
-| 3. Query | `serve.py:145-476`, `how.py:207-242, 355-392` | All values bound with `?`. The one request parameter, `?p=` on `/how`, is membership-checked against declaring projects before use; an unknown value falls back to the busiest and says so (`serve.py:659-663`) | — |
+| 1. GET `/` (302 → `/what`), `/what`, `/where`, `/how` | `serve.py:813-837` | Loopback bind; no auth; other paths → 404; other methods → 501 | — |
+| 2. Open DB `mode=ro` | `serve.py:94-98` | SQLite enforces read-only; WAL + 30 s timeout, so a writer's checkpoint waits rather than 500s | — |
+| 3. Query | `serve.py:157-491`, `how.py:207-242, 355-392` | All values bound with `?`. The one request parameter, `?p=` on `/how`, is membership-checked against declaring projects before use; an unknown value falls back to the busiest and says so (`serve.py:676-681`) | — |
 | 4. Read `.claude/my-process.md` of the chosen project | `how.py:179-189` | Strict YAML subset; any fault → whole declaration invalid, error text rendered escaped | Filesystem read outside the repo (workspace project dir) |
-| 5. Render | `serve.py:696-757`, `what.js`, `where.js` | `html.escape` on every model- or DB-derived string server-side; `_blob()` guards `</script>`; JS `esc()` on every string, `inline()` re-adds `<b>`/`<code>` only | Reads `design/tokens.css` + `build/assets/*` per request (literal names only) |
-| 5a. **Error text to the page** (ADR-0027, #33) | `serve.py:455-476, 482-496`, `where.js:106-123` | `where_data` ships **every** failed call's `error_text` verbatim in the where blob, whatever the filter — the first transcript content served. The error line is derived server-side (`error_line`: last non-empty line under a traceback, else first line after the fixed headers); the client only groups and escapes into `<pre>`. NULL text ships neither line nor text: counted, "not captured" | — |
+| 5. Render | `serve.py:698-811`, `what.js`, `where.js` | `html.escape` on every model- or DB-derived string server-side; `_blob()` writes every `<` in the inline JSON as its escape, so neither `</script>` nor `<!--` can reach the script's raw text (#58); JS `esc()` on every string, `inline()` re-adds `<b>`/`<code>` only | Reads `design/tokens.css` + `build/assets/*` per request (literal names only) |
+| 5a. **Error text to the page** (ADR-0027, #33) | `serve.py:470-483, 494-508`, `where.js:150-170` | `where_data` ships **every** failed call's `error_text` verbatim in the where blob, whatever the filter — the first transcript content served. The error line is derived server-side (`error_line`: last non-empty line under a traceback, else first line after the fixed headers); the client only groups and escapes into `<pre>`. NULL text ships neither line nor text: counted, "not captured" | — |
 | 5b. Session anchor `/what#<sid>` (ADR-0023) | `what.js:60-68` | Fragment never reaches the server. `CSS.escape` in the selector, `esc` in the miss note; never writes filter state — a row outside the filter is stated under the ledger | — |
 | 6. Browser | `theme.js`, `chrome.js`, `how.js` | No fetch, no external URL; `localStorage.theme`, the per-tab `sessionStorage.filter` (issue #10), and `how.js` writing `?p=` back into that filter — the one link that writes state | — |
 

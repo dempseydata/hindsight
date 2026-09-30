@@ -69,7 +69,7 @@ C4Container
     ContainerDb(db, "Store", "SQLite · local-data/hindsight.db · user_version 9", "sessions, audit, tool_events, usage, command_grains, subagent_transcripts, field_histogram, scan_runs, breakage, sunk_cost, change_events, status_narrative, blobs, project_presence, excluded_sessions, backstop_state (analyze.py) + otel_events, otel_metrics (listener.py)")
     Container(serve, "Serve", "Python stdlib http.server · :8321", "Read-only (mode=ro URI). GET /what /where /how; every request re-queries the DB and inlines tokens.css + assets. Derives each error's error line server-side. Never invokes the model.")
     Container(menubar, "Menu bar plugin", "Python stdlib · run by SwiftBar", "Prints the icon and menu: listener and serve liveness, open breakage rows. Items run launchctl, serve.py detached, acknowledge-breakage (#37).")
-    Container(views, "Views", "HTML · CSS · JS, no framework", "what (ledger, /what#<sid> session anchor) · where (league with errors behind each count) · how (phase runs incl. off-script). Shared chrome: project chips, window presets, a day-set selection; the header visual is per view — session heatmap on what, per-day token chart on where (ADR-0028). Two token sets, dark and light (ADR-0017).")
+    Container(views, "Views", "HTML · CSS · JS, no framework", "Tabler's layout and card grammar ported by hand, glyphs derived from Tabler Icons (ADR-0029). what (ledger, /what#<sid> session anchor) · where (league with errors behind each count) · how (phase runs incl. off-script). Shared chrome: project chips, window presets, a day-set selection; the header visual is per view — session heatmap on what, per-day token chart on where (ADR-0028). Two token sets, dark and light (ADR-0017).")
   }
 
   Rel(cc, listener, "OTLP/HTTP JSON", ":4318")
@@ -96,7 +96,7 @@ C4Container
 - **Write and read never share a process.** Ingest and analysis write; serve opens the DB read-only and has no run button (ADR-0008). Refresh is a browser reload.
 - **Two ingest paths, one store.** OTEL arrives live through the listener; transcripts are parsed after the fact by the analysis run. Both land in SQLite and the where-view joins them.
 - **`eval/` is a runtime dependency, not just a test suite.** `analyze.py` puts `eval/` on `sys.path` and imports `score` (`analyze.py:205`); the eval floors gate what gets written. This is the one cross-directory import in the system.
-- **The design contract is inlined, not linked.** `design/tokens.css` is read by serve at render time (`serve.py:697`), so a token edit shows on next reload with no build step.
+- **The design contract is inlined, not linked.** `design/tokens.css` is read by serve at render time (`serve.py:800`), so a token edit shows on next reload with no build step.
 - **Schema and migrations live in one place.** `SCHEMA` plus the `user_version`-gated sniffs in `analyze.init_db` (`analyze.py:214-543`). v8 (drift-guard baseline) and v9 (error text) each reset the scanned marker and refill the substrate from surviving transcripts; a vanished transcript keeps its old rows.
 
 ## L3 — Components: the `build/` Python modules
@@ -150,7 +150,7 @@ C4Component
 - **Ingest is fully decoupled.** `listener.py` and `hook.py` share no code with the analysis or serve side; their only coupling is the `otel_events` table shape.
 - **`analyze.py` is the god module.** 57 functions, 1,700 lines: the sync loop, the model call, the schema and every migration, the drift guard, the backstop, the launchd install and three subcommands. Serve and how both reach into it for day bucketing and paths. The day helpers and the schema remain the two obvious seams if a split is ever wanted.
 - **Prompts and assets are data.** `build/prompts/*.txt` and `build/assets/*` are read at run time; no module owns them beyond the path constant.
-- **The error line is a view concern.** `serve.error_line` (`serve.py:482-503`) derives the grouping key from stored `error_text` at render; the browser (`where.js:106-122`) only groups and renders. Tuning the rules never costs a rescan (ADR-0027 §3).
+- **The error line is a view concern.** `serve.error_line` (`serve.py:494-508`) derives the grouping key from stored `error_text` at render; the browser (`where.js:150-170`) only groups and renders. Tuning the rules never costs a rescan (ADR-0027 §3).
 
 ## Stack
 
@@ -158,7 +158,7 @@ C4Component
 | --- | --- | --- |
 | Language | Python 3 stdlib only — no pip dependencies (ADR-0003) | `build/*.py`, `eval/score.py` |
 | Store | SQLite, one file `local-data/hindsight.db`, WAL; schema and migrations owned by `analyze.py`, gated by `PRAGMA user_version` (currently 9) | `build/analyze.py:214-543` |
-| HTTP | `http.server.ThreadingHTTPServer`, twice: ingest `:4318` and serve `:8321`, both bound to `127.0.0.1` | `build/listener.py:209`, `build/serve.py:784` |
+| HTTP | `http.server.ThreadingHTTPServer`, twice: ingest `:4318` and serve `:8321`, both bound to `127.0.0.1` | `build/listener.py:209`, `build/serve.py:837` |
 | Model | `claude -p --model claude-haiku-4-5-20251001` as a subprocess, prompt on stdin, 300 s timeout | `build/analyze.py:186,206,1252` |
 | Scheduling | launchd user agents `com.hindsight.ingest` (KeepAlive) and `com.hindsight.nightly` (03:00, PATH and `HINDSIGHT_TZ` baked in at install) | `build/listener.py:189-223`, `build/analyze.py:1584-1617` |
 | UI | Server-rendered HTML with inlined CSS/JS, no framework, no fetches, no external URLs | `build/assets/`, `design/tokens.css` |
@@ -168,7 +168,7 @@ C4Component
 There are none, by design. Hindsight is a single-operator tool that runs as the operator's own
 macOS user: the only principal is the Unix user, the only credential is filesystem ownership of
 `local-data/`, and the only network exposure is loopback. Neither server checks a token, cookie,
-origin or header (`listener.py:130-176`, `serve.py:761-784`). "Sessions" in this codebase mean
+origin or header (`listener.py:130-176`, `serve.py:814-837`). "Sessions" in this codebase mean
 Claude Code sessions (transcripts), not login sessions. See [permissions.md](permissions.md).
 
 ## Trust boundaries
@@ -194,7 +194,7 @@ Each entry is a fact about the code as written, not a checklist item. Ordered by
 4. **Hook events are fire-and-forget.** Listener down → event lost; no spool, no retry (`hook.py:116-123`). Coverage gaps are drawn as gaps by the views (ADR-0001 honesty rule), but the data is gone.
 5. **Reader and writers share one DB file — WAL since issue #12, 30 s reader timeout.** A nightly write no longer 500s a page. Writers still serialise: a single `analyze.py` write transaction longer than the listener's 5 s `busy_timeout` — `capture_backstop`, which runs every repo's git subprocesses inside one transaction (`analyze.py:1368-1394`) — can still drop an ingest batch. See [cron.md](cron.md).
 6. **Model prose is rendered as restricted markdown.** `what.js:5-6` HTML-escapes then converts `**x**` and `` `x` `` back into `<b>`/`<code>`. The escape happens first, so no tag survives; the surface is the regex, not the data. Session UUIDs go into `data-id` attributes unescaped (`what.js:25`) and are read back from `location.hash` through `CSS.escape` (`what.js:63-65`).
-7. **Project names from the DB build filesystem paths.** `how.py:360-363` and `serve.py:516` join `sessions.project` (and every former name) onto the workspace dir without sanitising; the read is confined to a fixed `.claude/my-process.md` suffix (`how.py:182`). Names come from transcript directory names (`sync_sessions`, `analyze.py:688`); a traversal would need a directory named with `../`, which Claude Code does not produce.
+7. **Project names from the DB build filesystem paths.** `how.py:360-363` and `serve.py:528` join `sessions.project` (and every former name) onto the workspace dir without sanitising; the read is confined to a fixed `.claude/my-process.md` suffix (`how.py:182`). Names come from transcript directory names (`sync_sessions`, `analyze.py:688`); a traversal would need a directory named with `../`, which Claude Code does not produce.
 8. **Extracts and raw model output live on disk in plain text** under `local-data/analysis/` — user and assistant message text at 1,500 chars per piece — plus `~/Library/Logs/hindsight/analyze.log` echoing the first 80 chars of any rejected model output (`analyze.py:1128`). Gitignored; not encrypted.
 9. **The launchd jobs pin an absolute Python path, repo path and the installing shell's `PATH`** (`analyze.py:1596-1602`, `listener.py:216-218`). Move the repo, upgrade Homebrew Python, or install from a shell whose `PATH` lacks `claude`, and the agents fail into their log files.
 10. **No rate or cost ceiling on the model loop beyond serial execution.** A run processes every selectable session one call at a time until `LimitExhausted` (`analyze.py:1552-1560`); the only cap is the CLI's own limit, detected by a bare `"limit"` substring on stderr (`analyze.py:1268`).

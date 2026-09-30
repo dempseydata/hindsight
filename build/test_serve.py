@@ -330,6 +330,33 @@ class ServerTest(unittest.TestCase):
             self.assertIn(':root[data-theme="light"]', body)
             self.assertIn(':root[data-theme="dark"]', body)
 
+    def test_contract_carries_grammar_tokens_and_amber_rule(self):
+        """#51 (ADR-0029 §5, §8; ADR-0030 §6): the inlined contract carries
+        the card grammar's tokens in all four theme blocks at #45's values,
+        the stat-card and card shape tokens, and the amber/caution rule."""
+        for view in ("what", "where", "how"):
+            _, body = self.get(f"/{view}")
+            css = body[body.index("<style>"):]
+            blocks = contract_blocks(css)
+            for sel, theme in CONTRACT_BLOCKS.items():
+                with self.subTest(view=view, block=sel):
+                    self.assertEqual({k: blocks[sel].get(k) for k in GRAMMAR[theme]},
+                                     GRAMMAR[theme])
+            root = blocks[":root {"]
+            self.assertEqual(root["--o-stat-size"], "24px")
+            self.assertEqual(root["--o-radius-card"], "8px")
+            self.assertEqual(root["--o-radius"], "6px")
+            header = one_line(css[:css.index("*/")])
+            self.assertIn(
+                "Selection amber never carries text and appears only as a"
+                " grid-cell or column fill, or the selection rule, in a header"
+                " visual. Caution appears only as text in its -text weight, a"
+                " dashed border, or a filled badge carrying its word, never as"
+                " an unlabelled swatch. If either side breaks this, the"
+                " question reopens.", header)
+            self.assertIn("--o-stage-5", header)
+            self.assertIn("-on weight", header)
+
     def test_how_view_valid_stale_narrative(self):
         r, body = self.get("/how")                 # default: busiest declaring
         self.assertEqual(r.status, 200)
@@ -735,6 +762,116 @@ class ServerTest(unittest.TestCase):
                           body, view)
             self.assertIn("acknowledge-breakage 1", body, view)
             self.assertNotIn("user.effort", body, view)
+
+
+CONTRACT_BLOCKS = {                      # selector → theme (tokens.css)
+    ":root {": "dark",
+    ':root:not([data-theme="dark"]) {': "light",
+    ':root[data-theme="light"] {': "light",
+    ':root[data-theme="dark"] {': "dark",
+}
+# The card grammar's tokens, as judged in #45 (spec #50, ADR-0029 §5).
+GRAMMAR = {
+    "dark": {"--o-ok-fill": "#7c9bff", "--o-ok-on": "#0b0d14",
+             "--o-caution-fill": "#e3b859", "--o-caution-on": "#0b0d14",
+             "--o-problem-fill": "#f27878", "--o-problem-on": "#0b0d14",
+             "--o-neutral-fill": "#6c7491", "--o-neutral-on": "#ffffff",
+             "--o-elev-float": "0 8px 24px rgba(0, 0, 0, 0.45)",
+             "--o-wash-spark": "0.16"},
+    "light": {"--o-ok-fill": "#2f4fc9", "--o-ok-on": "#ffffff",
+              "--o-caution-fill": "#a87d08", "--o-caution-on": "#14182a",
+              "--o-problem-fill": "#c23c3c", "--o-problem-on": "#ffffff",
+              "--o-neutral-fill": "#7a829c", "--o-neutral-on": "#14182a",
+              "--o-elev-float": "0 8px 24px rgba(18, 18, 23, 0.12)",
+              "--o-wash-spark": "0.2"},
+}
+
+
+def contract_blocks(css):
+    """The contract's four theme blocks as {selector: {token: value}}."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    out = {}
+    for sel in CONTRACT_BLOCKS:
+        start = css.index(sel) + len(sel)
+        body = css[start:css.index("}", start)]
+        out[sel] = dict(re.findall(r"(--o-[\w-]+):\s*([^;]+);", body))
+    return out
+
+
+def one_line(text):
+    """Contract comment text with the ` * ` gutters and wrapping removed."""
+    return " ".join(re.sub(r"\n\s*\*(?!/)", " ", text).split())
+
+
+def contrast(tokens, a, b):
+    """WCAG 2.x contrast ratio of two #rrggbb colour tokens, by name."""
+    def lum(name):
+        v = tokens[name]
+        assert re.fullmatch(r"#[0-9a-fA-F]{6}", v), \
+            f"{name}: {v} is not #rrggbb; the floor check reads nothing else"
+        c = [int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        r, g, b = (x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4
+                   for x in c)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def floor_ratios(css):
+    """{(selector, role): contrast} for every -fill role in the contract,
+    each of which must have its -on partner."""
+    out = {}
+    for sel, t in contract_blocks(css).items():
+        for role in re.findall(r"--o-(\w+)-fill", " ".join(t)):
+            fill, on = f"--o-{role}-fill", f"--o-{role}-on"
+            assert on in t, f"{sel} {fill} has no {on} partner"
+            out[sel, role] = contrast(t, fill, on)
+    return out
+
+
+class ContractTest(unittest.TestCase):
+    """#51 (spec #50, ADR-0029 §5, ADR-0030 §6): the direction contract as
+    a floor check — every badge's fill/on pair is AA in both themes, and
+    each theme's two blocks agree."""
+
+    def setUp(self):
+        self.css = serve.TOKENS_CSS.read_text()
+        self.blocks = contract_blocks(self.css)
+
+    def test_fill_on_pairs_meet_aa_in_both_themes(self):
+        for key, ratio in floor_ratios(self.css).items():
+            with self.subTest(pair=key):
+                self.assertGreaterEqual(ratio, 4.5)
+
+    def test_floor_refuses_a_colour_it_cannot_read(self):
+        """Only #rrggbb is read; alpha, shorthand, functions and names fail
+        naming the token, never pass on a partial read."""
+        for bad in ("#ffffff20", "#fff", "rgba(255, 255, 255, 1)", "white",
+                    "var(--o-ink)"):
+            with self.subTest(value=bad):
+                css = self.css.replace("--o-neutral-on: #ffffff;",
+                                       f"--o-neutral-on: {bad};", 1)
+                with self.assertRaisesRegex(
+                        AssertionError, re.escape(f"--o-neutral-on: {bad}")):
+                    floor_ratios(css)
+
+    def test_floor_roles_come_from_the_contract(self):
+        """A fifth -fill role is checked, and a -fill without its -on fails."""
+        css = self.css.replace(
+            "--o-ok-fill: #7c9bff;",
+            "--o-info-fill: #000000;\n  --o-info-on: #111111;\n"
+            "  --o-ok-fill: #7c9bff;", 1)
+        self.assertLess(floor_ratios(css)[":root {", "info"], 4.5)
+        css = self.css.replace("--o-ok-on: #0b0d14;", "", 1)
+        with self.assertRaisesRegex(AssertionError,
+                                    "--o-ok-fill has no --o-ok-on"):
+            floor_ratios(css)
+
+    def test_each_themes_blocks_agree(self):
+        root, media, light, dark = self.blocks.values()
+        self.assertEqual(media, light)       # the light set, twice (ADR-0017)
+        self.assertEqual(set(dark), set(light))   # the pin restates them all
+        self.assertEqual(dark, {k: root[k] for k in dark})   # with root's values
 
 
 class DriftTest(unittest.TestCase):

@@ -5,10 +5,17 @@
  * Chosen in Narrow (issue #35) from the "Hindsight Narrow" canvas
  * (VariantIndigo.dc.html); values verified against that artboard verbatim.
  * Floor rules: every colour renders via these tokens; ok/caution/problem
- * text always uses the -text weight; red pairs with blue, never green;
- * accent never carries body text or large surfaces; chart data ink only
- * ever uses the ink/spark tokens; stage hues carry identity only, as
- * non-text marks.
+ * text always uses the -text weight, except badge text on a filled badge,
+ * which uses its role's -on weight on the -fill (ADR-0030 §6); red pairs
+ * with blue, never green; accent never carries body text or large
+ * surfaces; chart data ink only ever uses the ink/spark tokens; stage hues
+ * carry identity only, as non-text marks.
+ * Amber and caution (ADR-0029 §8, #48): Selection amber never carries text
+ * and appears only as a grid-cell or column fill, or the selection rule, in
+ * a header visual. Caution appears only as text in its -text weight, a
+ * dashed border, or a filled badge carrying its word, never as an
+ * unlabelled swatch. If either side breaks this, the question reopens. The
+ * same rule covers --o-stage-5 against caution on How.
  */
 :root {
   color-scheme: dark;
@@ -36,6 +43,16 @@
   --o-problem: #f27878;
   --o-problem-text: #f79b9b;
 
+  /* badges — a fill + on-fill pair per role, each AA (ADR-0029 §5, #45) */
+  --o-ok-fill: #7c9bff;
+  --o-ok-on: #0b0d14;
+  --o-caution-fill: #e3b859;
+  --o-caution-on: #0b0d14;
+  --o-problem-fill: #f27878;
+  --o-problem-on: #0b0d14;
+  --o-neutral-fill: #6c7491;
+  --o-neutral-on: #ffffff;
+
   /* chart data ink — own palette, never accent or semantic */
   --o-ink-1: #82a9e8;
   --o-ink-2: #5c83c4;
@@ -60,15 +77,18 @@
   --o-wash-sel: 0.06;
   --o-wash-rule: 0.7;
   --o-wash-precov: 0.22;
+  --o-wash-spark: 0.16; /* trend-spark area under its line */
 
   /* faces — no runtime font fetches */
   --o-font: system-ui, 'Helvetica Neue', sans-serif;
   --o-mono: ui-monospace, 'SF Mono', Menlo, monospace;
-  --o-stat-size: 28px; /* stat-tile numerals */
+  --o-stat-size: 24px; /* stat-card value (ADR-0030 §6) */
 
   /* shape, elevation, motion */
-  --o-radius: 6px; /* panels; 2px for chips/small controls */
+  --o-radius: 6px; /* stage panels; 2px for chips/small controls */
+  --o-radius-card: 8px; /* cards (ADR-0029 §4) */
   --o-elev: 0 3px 10px rgba(0, 0, 0, 0.45);
+  --o-elev-float: 0 8px 24px rgba(0, 0, 0, 0.45); /* help popover */
   --o-motion: 200ms ease; /* hover lift on panels */
 }
 
@@ -100,6 +120,14 @@
     --o-caution-text: #846007;
     --o-problem: #c23c3c;
     --o-problem-text: #ac3232;
+    --o-ok-fill: #2f4fc9;
+    --o-ok-on: #ffffff;
+    --o-caution-fill: #a87d08;
+    --o-caution-on: #14182a;
+    --o-problem-fill: #c23c3c;
+    --o-problem-on: #ffffff;
+    --o-neutral-fill: #7a829c;
+    --o-neutral-on: #14182a;
     --o-ink-1: #24406e;
     --o-ink-2: #4a659c;
     --o-ink-3: #7e93c0;
@@ -116,7 +144,9 @@
     --o-wash-sel: 0.12;
     --o-wash-rule: 1;
     --o-wash-precov: 0.35;
+    --o-wash-spark: 0.2;
     --o-elev: none;
+    --o-elev-float: 0 8px 24px rgba(18, 18, 23, 0.12);
   }
 }
 :root[data-theme="light"] {
@@ -136,6 +166,14 @@
   --o-caution-text: #846007;
   --o-problem: #c23c3c;
   --o-problem-text: #ac3232;
+  --o-ok-fill: #2f4fc9;
+  --o-ok-on: #ffffff;
+  --o-caution-fill: #a87d08;
+  --o-caution-on: #14182a;
+  --o-problem-fill: #c23c3c;
+  --o-problem-on: #ffffff;
+  --o-neutral-fill: #7a829c;
+  --o-neutral-on: #14182a;
   --o-ink-1: #24406e;
   --o-ink-2: #4a659c;
   --o-ink-3: #7e93c0;
@@ -152,7 +190,9 @@
   --o-wash-sel: 0.12;
   --o-wash-rule: 1;
   --o-wash-precov: 0.35;
+  --o-wash-spark: 0.2;
   --o-elev: none;
+  --o-elev-float: 0 8px 24px rgba(18, 18, 23, 0.12);
 }
 /* the pin back to dark must beat the light media block (same specificity,
    later wins) — restates every token the light blocks set */
@@ -173,6 +213,14 @@
   --o-caution-text: #eac878;
   --o-problem: #f27878;
   --o-problem-text: #f79b9b;
+  --o-ok-fill: #7c9bff;
+  --o-ok-on: #0b0d14;
+  --o-caution-fill: #e3b859;
+  --o-caution-on: #0b0d14;
+  --o-problem-fill: #f27878;
+  --o-problem-on: #0b0d14;
+  --o-neutral-fill: #6c7491;
+  --o-neutral-on: #ffffff;
   --o-ink-1: #82a9e8;
   --o-ink-2: #5c83c4;
   --o-ink-3: #41639b;
@@ -189,5 +237,7 @@
   --o-wash-sel: 0.06;
   --o-wash-rule: 0.7;
   --o-wash-precov: 0.22;
+  --o-wash-spark: 0.16;
   --o-elev: 0 3px 10px rgba(0, 0, 0, 0.45);
+  --o-elev-float: 0 8px 24px rgba(0, 0, 0, 0.45);
 }

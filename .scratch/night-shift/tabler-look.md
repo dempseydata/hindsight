@@ -4,7 +4,7 @@ Authority: push + tracker yes · End state: branch only · Baseline: 221 tests, 
 
 | Ticket | Status | Commit | Rounds | Suite | Notes |
 | --- | --- | --- | --- | --- | --- |
-| #51 Contract: grammar tokens, amber/caution rule, floor check | todo | | | | |
+| #51 Contract: grammar tokens, amber/caution rule, floor check | done | 6ba8682 | 1 | 226 / 31.0 s | --o-stat-size 24px already live on today's tiles |
 | #52 One shell for all three views | todo | | | | |
 | #53 Stat cards with delta and trend spark | todo | | | | |
 | #54 What: ledger card-table, badges, help popover | todo | | | | |
@@ -16,7 +16,12 @@ Authority: push + tracker yes · End state: branch only · Baseline: 221 tests, 
 
 ## Decisions
 - sitting: ten build contracts — ADR-0030 (done)
+- #51: --o-radius-card in :root only (shape is theme-invariant, ADR-0017 §3) — ADR? no
+- #51: block-agreement test checks every token, not only the new ones — ADR? no
 
 ## Blocked
 
 ## Nits
+- #51: floor-check role regex `(\w+)` skips a hyphenated role (`--o-info-x-fill`); use `(\w[\w-]*)`
+- #51: floor-check asserts are bare `assert`, stripped under `python -O`; self.fail/ValueError sturdier
+- #51: DESIGN.md still says 28px stat numerals — re-derived in #57

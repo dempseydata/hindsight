@@ -9,7 +9,7 @@ Authority: push + tracker yes · End state: branch only · Baseline: 221 tests, 
 | #53 Stat cards with delta and trend spark | done | 01b9f6a | 1 | 233 / 30.7 s | browser check: day-set 09-23,24,26 → one segment + dot, delta —; preset 14 hues per card |
 | #54 What: ledger card-table, badges, help popover | done | 3316edc | 0 | 236 / 33.6 s | browser check: card-table + group rows, anchors, popover by mouse/keyboard both themes |
 | #55 How: runs as cards, stage panels, off-script card | done | 038925f | 1 | 238 / 36.4 s | browser: runs 8px cards + stage rule, stage panels 6px, now badge on ok pair, no hue on text |
-| #56 Where: sections as cards | done | (see git log) | 1 | 242 / 35.7 s | browser: 7 titled cards + glyphs, league chips in header, cache toggle, error grouping, 7 popovers, gap lines visible |
+| #56 Where: sections as cards | done | c32f556 | 1 | 242 / 35.7 s | browser: 7 titled cards + glyphs, league chips in header, cache toggle, error grouping, 7 popovers, gap lines visible |
 | #57 Re-derive DESIGN.md, retake screenshots | human | | | | excluded: public screenshots, documenter, public push |
 
 ## Owed
@@ -60,3 +60,8 @@ Authority: push + tracker yes · End state: branch only · Baseline: 221 tests, 
 - #52: icons test asserts the Object.hasOwn source text, not behaviour (no JS runtime)
 - #52: card header with subtitle renders 68px (#42 says >=65px)
 - #51: DESIGN.md still says 28px stat numerals — re-derived in #57
+
+## Security (handover preflight, master...branch)
+- should fix, pre-existing: serve.py _blob escapes only `</`; a title containing `<!--<script>` kills the page's inline script (DoS, no execution). Change to json.dumps(obj).replace("<", "\\u003c")
+- nice to have, pre-existing: where.js league summary, tail list, sunkHtml interpolate o.ty / r.cat without esc() (classifier values, not free text)
+- clean: no secrets, paths or denylist hits; XSS payloads in every data field escaped (reproduced); bind 127.0.0.1; read-only DB; no new dependency or remote fetch

@@ -694,6 +694,11 @@ class ServerTest(unittest.TestCase):
         css = where[where.index("<style>"):where.index("</style>")]
         self.assertRegex(css, r"#where th \{[^}]*background: var\(--o-bg\);[^}]*"
                               r"text-transform: uppercase;")
+        # one header type across the card-table grammar: <th> matches the
+        # chrome's .o-card-table-head, numeric columns included (#57)
+        self.assertRegex(css, r"#where th \{[^}]*font: 500 11px var\(--o-font\);"
+                              r"[^}]*letter-spacing: \.04em;")
+        self.assertRegex(css, r"#where th\.num \{ font: 500 11px var\(--o-font\); \}")
         self.assertRegex(css, r"#where td \{[^}]*padding: \.75rem;")
         self.assertRegex(css, r"#where :is\(th, td\):first-child \{ padding-left: 20px; \}")
         self.assertNotRegex(css, r"(^|\})\s*\.panel[ ,{]")

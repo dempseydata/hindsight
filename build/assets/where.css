@@ -14,8 +14,8 @@
 #where .o-card-table-head .num { font: inherit; }
 #where table { border-collapse: collapse; width: 100%; font-size: 12px; }
 #where th { text-align: left; color: var(--o-dim); background: var(--o-bg);
-  font: 600 10px var(--o-mono); text-transform: uppercase;
-  letter-spacing: .05em; padding: .5rem .75rem;
+  font: 500 11px var(--o-font); text-transform: uppercase;
+  letter-spacing: .04em; padding: .5rem .75rem;
   border-bottom: 1px solid var(--o-border); }
 #where td { padding: .75rem; border-bottom: 1px solid var(--o-border);
   vertical-align: middle; }
@@ -27,7 +27,7 @@
 #where #retries + .o-card-table-group { border-top: 1px solid var(--o-border); }
 #where .num { text-align: right; font: 12px var(--o-mono);
   font-variant-numeric: tabular-nums; white-space: nowrap; }
-#where th.num { font-size: 10px; }
+#where th.num { font: 500 11px var(--o-font); }
 #where .dim { color: var(--o-dim); }
 #where .err { color: var(--o-problem-text); }
 #where svg.spark { display: block; }

@@ -278,8 +278,8 @@ A categorical palette for How: which declared stage a stage panel or run card be
 - **Brand** (600, 15px): the top bar's wordmark. The sunk-cost panel's measured median reuses 15px in mono.
 - **Body** (400, 13px, 1.5): default prose, ledger entry text, stage and run names.
 - **Data** (400, 12px, mono): numeric cells, code, raw-entry `pre` (1.5 when multi-line), the page description (12px sans) and popover text (12px/1.5 sans) share the size. Verbatim error text steps to 11px/1.5 mono `--o-dim`.
-- **Caps** (500, 11px, 0.04em, UPPERCASE, sans, `--o-dim`): stat-card labels, card-table header and group rows. The pretitle is its 10px/600 sibling.
-- **Label** (600, 10–11px, mono, 0.05em, UPPERCASE, `--o-dim`): `<th>` heads in where's tables, How's section headings and fact heads (10px), ledger entry section heads (11px).
+- **Caps** (500, 11px, 0.04em, UPPERCASE, sans, `--o-dim`): stat-card labels, card-table header and group rows, and where's `<th>` heads, numeric ones included — one header type across every card-table (ADR-0029 amendment). The pretitle is its 10px/600 sibling.
+- **Label** (600, 10–11px, mono, 0.05em, UPPERCASE, `--o-dim`): How's section headings and fact heads (10px), ledger entry section heads (11px).
 - **Small mono** (400, 11px): card subtitles and notes are 11px sans `--o-dim`; deltas, counts, chip buttons, the theme toggle, run metadata and error occurrences are 11px mono. Badges are 500 11px/1.6 sans. Chart axis text is 9px mono `--o-dim`.
 
 ### Named Rules
@@ -325,7 +325,7 @@ Three radii, strictly assigned and theme-invariant: 8px (`--o-radius-card`) for 
 - **Body:** 20px padding. A **headerless card** (How's runs) is body only.
 
 ### Card-Tables
-- **Grammar:** a visual grammar over the view's own rows, not an element — What's ledger and Where's league keep their `<details>` rows. Full-bleed to the card edge; a header row and group rows in 11px/500 uppercase 0.04em `--o-dim` on `--o-bg`; rows padded 0.75rem 20px, ruled in `--o-border`, the last row unruled. Where's `<table>`s follow the same geometry with 10px/600 mono `<th>` heads and right-aligned 12px mono tabular numerals; errors `--o-problem-text`, unknowns `--o-dim` em-dashes. An open league row recesses to `--o-bg`.
+- **Grammar:** a visual grammar over the view's own rows, not an element — What's ledger and Where's league keep their `<details>` rows. Full-bleed to the card edge; a header row and group rows in 11px/500 uppercase 0.04em `--o-dim` on `--o-bg`; rows padded 0.75rem 20px, ruled in `--o-border`, the last row unruled. Where's `<table>`s follow the same geometry, their `<th>` heads in the same 11px/500 caps type — one header type across card-tables (ADR-0029 amendment) — and right-aligned 12px mono tabular numerals; errors `--o-problem-text`, unknowns `--o-dim` em-dashes. An open league row recesses to `--o-bg`.
 
 ### Stat Cards
 - **Style:** the card chassis at 20px padding, in a four-up grid. Top line: the 11px/500 uppercase label left, the delta right (11px mono). Then the 24px/600 mono value, an 11px `--o-dim` line (awaiting analysis · unrecoverable, `+n unknown`, share of tokens — or a blank), and a 32px trend spark 12px below.
@@ -336,7 +336,7 @@ Three radii, strictly assigned and theme-invariant: 8px (`--o-radius-card`) for 
 - **Grammar:** a 2px `--o-spark` line over a `--o-spark` area at `--o-wash-spark`, over the selected days in date order, own peak. One segment per contiguous run of days; a lone day is a 4px dot. Days before the first synced day are gaps on every card, and on the three analysis cards so is a day whose sessions are all pending (ADR-0030 §7); elsewhere zero is zero.
 
 ### Badges
-- **Style:** filled, 6px radius, padding 0 0.4rem, 500 11px/1.6 sans, no wrap; `-on` text on the role's `-fill`. Status badges carry their word before the row text: `pending` caution, `lost` and `refused` problem, `empty` and `trivial` ok. Record badges — project, continuation, subagents, `N ADR`, types and categories on Where — and How's `now` take the ok fill. Breakage tiers: `problem` on the problem fill, `informational` on the ok fill. A project badge ellipsises inside its 12rem column.
+- **Style:** filled, 6px radius, padding 0 0.4rem, 500 11px/1.6 sans, no wrap; `-on` text on the role's `-fill`. Status badges carry their word before the row text: `pending` caution, `lost` and `refused` problem, `empty` and `trivial` ok. Record badges — project, continuation, subagents, `N ADR`, types and categories on Where — and How's `now` take the ok fill (ADR-0029 amendment: moved off neutral, whose fill read too dark behind its text). Breakage tiers: `problem` on the problem fill, `informational` on the ok fill. A project badge ellipsises inside its 12rem column.
 
 ### Chip Buttons (project chips, window presets, clear, category chips)
 - **Style:** 11px mono `--o-dim` on `--o-panel`, 1px `--o-border`, 2px radius, padding 0.2rem 0.55rem.

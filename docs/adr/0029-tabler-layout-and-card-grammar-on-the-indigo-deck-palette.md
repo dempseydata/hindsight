@@ -47,3 +47,11 @@ No density trim was taken ([#46](https://github.com/dempseydata/hindsight/issues
 ## Amendment (2026-09-30): trend-spark zeros
 
 §6's reason for "zero is drawn as zero" was wrong: What's Actions, Decisions and ADRs cards count analysis output, and a window can reach back before the first synced day. **ADR-0030 §7** replaces it — a gap before the first synced day on every stat card, and on the three analysis cards for a day whose sessions are all pending. ADR-0030 also fixes the build's markup contracts.
+
+## Amendment (2026-09-30): record badges on ok, no hover lift, one header type
+
+Three changes the build made after the spec, recorded here so the record matches what shipped.
+
+- **Record badges take the ok role, not neutral.** §5's role list (from #45) put `empty`, `trivial` and the ADR, continuation, subagent and project badges on neutral. On the built rows, the neutral grey fill read too dark behind its text, and the operator moved every record badge on What and Where to the ok pair. That covers What's project, continuation, subagents, ADR count, `empty` and `trivial`, and Where's consumer type and sunk-cost category (84d2dfc). The role map is now: **ok** for `now` and every record badge; **caution** for `pending`; **problem** for `lost`, `refused` and the breakage tier. The neutral fill/on pair stays in the contract and its `.o-badge.o-neutral` rule stays styled and floor-checked, but no badge uses it. The cost is taken knowingly: `--o-ok-fill` has the same value as `--o-accent` in both themes, so record badges are filled accent surfaces carrying text. The contrast is AA (7.38 dark, 6.81 light), but the accent is no longer reserved for interaction and current state alone.
+- **No hover lift.** The where panels' hover lift went with `.panel` (#56); cards and stage panels do not lift. `--o-motion` now drives only How's run-card border colour on hover. The token's comment in `tokens.css` says so.
+- **One header type across card-tables.** Where's `<th>` headers, numeric ones included, take the chrome card-table header's type (11px/500 sans, uppercase, .04em), replacing a mono 10px/600 variant. Every card-table and group row now reads the same (#57).

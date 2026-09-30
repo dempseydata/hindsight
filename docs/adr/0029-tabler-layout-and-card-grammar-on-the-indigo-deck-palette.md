@@ -43,3 +43,7 @@ No density trim was taken ([#46](https://github.com/dempseydata/hindsight/issues
 - `DESIGN.md` and its sidecar are re-derived and screenshots retaken after the build (ADR-0007 addendum).
 - Fold measurements must open each view in a fresh browser context: the filter state carries across views (issue #10) and skews the next view.
 - Vocabulary — card, stage panel, header visual, stat card, bar spark, trend spark — recorded in `CONTEXT.md` under "Served UI"; Tabler's own component names (page header, card-table, badge …) stay in the spec.
+
+## Amendment (2026-09-30): trend-spark zeros
+
+§6's reason for "zero is drawn as zero" was wrong: What's Actions, Decisions and ADRs cards count analysis output, and a window can reach back before the first synced day. **ADR-0030 §7** replaces it — a gap before the first synced day on every stat card, and on the three analysis cards for a day whose sessions are all pending. ADR-0030 also fixes the build's markup contracts.

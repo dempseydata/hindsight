@@ -40,19 +40,24 @@ function rowHtml(r, open) {
 
 // The header visual on this view (ADR-0028): a session heatmap, one cell
 // per local day of DATA.range, Monday at top, a column per calendar week,
-// newest at right. Heat keys to the pressed tile; counts are client-side
+// newest at right. Heat keys to the pressed stat card; counts are client-side
 // under the project filter and follow the ledger rule: a session on every
 // day it has a row, actions / decisions / ADRs on the first row alone —
 // where the entry lives. A cell is a .col in #chart; chrome.js owns the click.
 const KEYS = [["sessions", "sessions"], ["actions", "actions"],
               ["decisions", "decisions"], ["adrs", "ADRs"]];
 let heatKey = "sessions";
+// the first synced day: the grid spans the ledger too — a pruned session
+// keeps its start day with no usage row, so the ledger can begin before the
+// usage range does
+const FIRST = WHAT.reduce((m, r) => r.d && r.d < m ? r.d : m, DATA.range[0]);
 function dayCounts() {
   const by = {};
   for (const r of WHAT) {
     if (!r.d || !hs.inProj(r.p)) continue;
-    const c = by[r.d] ??= { ids: new Set(), actions: 0, decisions: 0, adrs: 0 };
+    const c = by[r.d] ??= { ids: new Set(), live: new Set(), actions: 0, decisions: 0, adrs: 0 };
     c.ids.add(r.id);
+    if (!r.pend) c.live.add(r.id);   // analysed, or never will be: not awaiting analysis
     if (!r.cont) for (const [k, v] of Object.entries(counts(r))) c[k] += v;
   }
   return by;
@@ -64,9 +69,7 @@ function renderHeat() {
   const by = dayCounts();
   const val = c => !c ? 0 : heatKey === "sessions" ? c.ids.size : c[heatKey];
   const cs = 12, gap = 2, pitch = cs + gap, top = 12, left = 24;   // left: the day labels
-  // the grid spans the ledger too: a pruned session keeps its start day with
-  // no usage row, so the ledger can begin before the usage range does
-  const from = WHAT.reduce((m, r) => r.d && r.d < m ? r.d : m, DATA.range[0]), to = DATA.range[1];
+  const from = FIRST, to = DATA.range[1];
   let peak = 1;
   for (let d = from; d <= to; d = hs.addDays(d, 1)) peak = Math.max(peak, val(by[d]));
   let out = "", cols = 0;
@@ -83,15 +86,31 @@ function renderHeat() {
   }
   hs.mount(`<svg width="${left + cols * pitch + 12}" height="${top + 7 * pitch}">${out}</svg>`);
 }
-// four tiles over the visible window; a radio group whose pressed one keys the heat
-function tilesHtml(sess) {
-  const n = f => sess.filter(f).length;
+// the rows in view under a window test; undated rows can't be windowed —
+// always shown, never silently dropped
+const inView = win => WHAT.filter(r => hs.inProj(r.p) && (!r.d || win(r.d)));
+// a session in view on several days counts once, with its whole entry
+function totals(rows) {
+  const sess = [...new Map(rows.map(r => [r.id, r])).values()];
   const tot = { sessions: sess.length, actions: 0, decisions: 0, adrs: 0 };
   for (const r of sess) for (const [k, v] of Object.entries(counts(full[r.id]))) tot[k] += v;
+  return [tot, sess];
+}
+// four stat cards over the visible window; a radio group whose pressed one
+// keys the heat. The spark follows the heat's day rule; on the three analysis
+// cards a day whose sessions all await analysis is a gap, not a zero (ADR-0030 §7)
+function cardsHtml(vis) {
+  const [tot, sess] = totals(vis), pw = hs.priorWin(FIRST);
+  // undated rows can't be windowed: in view always, in the prior window never (ADR-0030 §8)
+  const prev = pw && totals(WHAT.filter(r => r.d && hs.inProj(r.p) && pw(r.d)))[0];
+  const n = f => sess.filter(f).length;
   const q = [["trivial", n(r => r.skip)], ["awaiting analysis", n(r => r.pend)],
              ["unrecoverable", n(r => r.lost)]].filter(([l, v]) => v || l === "trivial");
-  const sub = { sessions: ["in view", ...q.map(([l, v]) => `${v} ${l}`)].join(" \u00b7 ") };
-  return KEYS.map(([k, l]) => `<button class="tile" data-k="${k}" aria-pressed="${k === heatKey}"><b>${hs.fmt(tot[k])}</b><span>${l}${sub[k] ? " \u00b7 " + sub[k] : ""}</span></button>`).join("");
+  const by = dayCounts(), days = hs.selDays(FIRST);
+  return KEYS.map(([k, l]) => hs.statCard({ k, label: l, pressed: k === heatKey,
+    value: tot[k], prev: prev?.[k], dim: k === "sessions" && q.map(([w, v]) => `${v} ${w}`).join(" \u00b7 "),
+    days, vals: days.map(d => d < FIRST ? null : k === "sessions" ? by[d]?.ids.size ?? 0
+      : by[d] && !by[d].live.size ? null : by[d]?.[k] ?? 0) })).join("");
 }
 document.getElementById("wtiles").addEventListener("click", e => {
   const b = e.target.closest("button[data-k]");
@@ -106,9 +125,7 @@ function renderWhat() {
   renderHeat();
   const open = new Set([...document.querySelectorAll("#ledger details[open]")]
     .map(d => d.dataset.id + "@" + d.dataset.day));
-  // undated sessions can't be windowed — always shown, never silently dropped
-  const vis = WHAT.filter(r => r.d ? (hs.inWin(r.d) && hs.inProj(r.p))
-                                   : hs.inProj(r.p));
+  const vis = inView(hs.inWin);
   let out = "", day = null;
   for (const r of vis) {
     if (r.d !== day) { day = r.d; out += `<h2 class="day">${day ?? "undated"}</h2>`; }
@@ -116,9 +133,8 @@ function renderWhat() {
   }
   document.getElementById("ledger").innerHTML =
     out || '<p class="note">no sessions in this window</p>';
-  // a session in view on several days counts once
-  const sess = [...new Map(vis.map(r => [r.id, r])).values()];
-  document.getElementById("wtiles").innerHTML = tilesHtml(sess);
+  document.getElementById("wtiles").innerHTML = cardsHtml(vis);
+  fillIcons(document.getElementById("wtiles"));
   // session anchor (ADR-0023): /what#<sid> opens and scrolls to the first
   // row carrying the id, never touches filter state; a row outside the
   // filter is stated under the ledger, not silently nothing

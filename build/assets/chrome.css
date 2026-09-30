@@ -29,7 +29,7 @@ a { color: var(--o-accent); text-decoration: none; }
 .o-page-body { margin-top: 24px; padding-bottom: 2rem; }
 /* The card chassis (ADR-0029 §2, §4): holds data; the stage panel below
    (.panel, --o-radius) marks stage identity */
-.o-card { background: var(--o-panel); border: 1px solid var(--o-border);
+.o-card, .o-stat-card { background: var(--o-panel); border: 1px solid var(--o-border);
   border-radius: var(--o-radius-card); box-shadow: var(--o-elev); margin: 16px 0; }
 .o-card-head { display: flex; align-items: center; gap: .75rem; min-height: 65px;
   padding: .75rem 20px; border-bottom: 1px solid var(--o-border); }
@@ -69,18 +69,34 @@ a { color: var(--o-accent); text-decoration: none; }
 #chart .axis { fill: var(--o-dim); font: 9px var(--o-mono); } /* #47: --o-axis is 3.99:1 on panel, below AA for text — axis token stays for non-text chart lines */
 #chart .col:focus-visible { outline: none; stroke: var(--o-accent);
   stroke-width: 1.5; }
-/* Stat tiles, both views: a div on where, a radio-group button on what */
-.tiles { display: flex; flex-wrap: wrap; gap: .6rem; }
-.tile { background: var(--o-panel); border: 1px solid var(--o-border);
-  border-radius: var(--o-radius); box-shadow: var(--o-elev);
-  padding: .55rem 1rem .5rem; min-width: 7rem; font: inherit; color: inherit;
-  text-align: left; }
-.tile b { display: block; font: 600 var(--o-stat-size)/1.25 var(--o-mono);
-  font-variant-numeric: tabular-nums; }
-.tile span { font-size: 11px; color: var(--o-dim); }
-button.tile { cursor: pointer; }
-button.tile[aria-pressed="true"] { border-color: var(--o-accent); }
-button.tile[aria-pressed="true"] span { color: var(--o-accent); }
+/* Stat cards (ADR-0029 §2, §5, §6; #46: 20px, a spark on every card): a div
+   on where, a radio-group button on what whose pressed one wears a 2px top
+   status bar. Delta dim, arrow alone; only a cost card hues it. */
+.o-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px; margin: 16px 0; }
+@media (max-width: 720px) { .o-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.o-stat-card { margin: 0; padding: 20px; display: block; position: relative;
+  overflow: hidden; font: inherit; color: inherit; text-align: left; }
+.o-stat-head { display: flex; justify-content: space-between; align-items: center;
+  gap: .5rem; color: var(--o-dim); font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: .04em; }
+.o-stat-card b { display: block; margin-top: .25rem;
+  font: 600 var(--o-stat-size)/1.25 var(--o-mono); font-variant-numeric: tabular-nums; }
+.o-stat-card small { display: block; color: var(--o-dim); font-size: 11px; }
+.o-delta { display: inline-flex; align-items: center; gap: .15rem;
+  font: 11px var(--o-mono); text-transform: none; color: var(--o-dim); }
+.o-delta.o-up { color: var(--o-problem-text); }
+.o-delta.o-down { color: var(--o-ok-text); }
+.o-trend-spark { display: block; width: 100%; height: 32px; margin-top: 12px;
+  overflow: visible; }
+.o-trend-spark .line, .o-trend-spark .dot { fill: none; stroke: var(--o-spark);
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  vector-effect: non-scaling-stroke; }
+.o-trend-spark .dot { stroke-width: 4; }
+.o-trend-spark .area { fill: var(--o-spark); fill-opacity: var(--o-wash-spark); }
+button.o-stat-card { cursor: pointer; }
+button.o-stat-card[aria-pressed="true"]::before { content: ""; position: absolute;
+  inset: 0 0 auto; height: 2px; background: var(--o-accent); }
 /* Breakage banner (issue #15): one per open row, every view. Tier reads
    through the semantic roles — problem red, informational blue (Few). */
 .breakage { margin: 0 0 1rem; padding: .55rem .9rem; font-size: 12px;

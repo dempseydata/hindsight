@@ -472,9 +472,9 @@ class ServerTest(unittest.TestCase):
         _, body = self.get("/where")
         self.assertIn('id="league"', body)
         self.assertIn('"tools"', body)
-        self.assertIn('"subd"', body)                 # #13 tile data
-        self.assertIn("% of tokens", body)            # where.js renders the tile
-        self.assertIn("[`errors${nu", body)           # #36 errors tile beside tool calls
+        self.assertIn('"subd"', body)                 # #13 stat-card data
+        self.assertIn("% of tokens", body)            # where.js renders the card's dim line
+        self.assertIn("unknown`", body)               # #36 errors card: +n unknown on its dim line
         self.assertNotIn('"cost', body)          # pricing never rendered
 
     def test_where_league_category_chips_default_deliberate_adds(self):
@@ -702,7 +702,7 @@ class ServerTest(unittest.TestCase):
 
     def test_header_visual_per_view_over_one_day_set(self):
         """ADR-0028 (#35): the what view mounts a session heatmap keyed by
-        four radio tiles where the where view mounts the token chart; the
+        four radio stat cards where the where view mounts the token chart; the
         selection is one set of days on both, saved with the filter, and
         the rendered vocabulary is actions / decisions, never did / decided
         (the stored headers and the blob keep Did / Decided)."""
@@ -840,6 +840,57 @@ class ServerTest(unittest.TestCase):
             for rule in ("border-radius: var(--o-radius-card)", "box-shadow: var(--o-elev)",
                          "min-height: 65px", "max-width: 1320px"):
                 self.assertIn(rule, css, view)
+
+    def test_stat_cards_on_what_and_where(self):
+        """#53 (ADR-0029 §2, §5, §6; ADR-0030 §3, §7, §8): stat cards replace
+        the tiles on both views — label, value, a delta against the prior
+        window, a dim line for the extras, a trend spark split into runs.
+        Cost cards (where's four token cards and errors) hue their delta,
+        up problem and down ok; every other delta is dim; caution never."""
+        for view, grid in (("what", "wtiles"), ("where", "tiles")):
+            with self.subTest(view=view):
+                _, body = self.get(f"/{view}")
+                css = body[body.index("<style>"):body.index("</style>")]
+                self.assertIn(f'<div class="o-stat-grid" id="{grid}"></div>', body)
+                self.assertNotIn('class="tile', body)
+                self.assertNotIn(".tile", css)
+                for mark in ('class="o-stat-card"', 'class="o-delta', 'class="o-trend-spark"',
+                             "<small>", 'data-icon="arrow-', "\\u2014"):
+                    self.assertIn(mark, body)
+                # the spark breaks between non-adjacent days and at gaps; a lone day is a dot
+                self.assertIn("addDays(days[i - 1], 1) !== d", body)
+                self.assertIn('class="dot"', body)
+                # no prior window under a day set or all, or reaching before the first synced day
+                self.assertIn("if (S.days.size || !S.tFrom || !first) return null;", body)
+                self.assertIn("if (from < first) return null;", body)
+                # the arrow glyphs replace their fallback once the cards render
+                self.assertIn(f'fillIcons(document.getElementById("{grid}"))', body)
+                self.assertIn("font: 600 var(--o-stat-size)", css)
+                self.assertIn(".o-stat-card { margin: 0; padding: 20px;", css)
+                self.assertRegex(css, r"\.o-delta \{[^}]*color: var\(--o-dim\)")
+                self.assertIn(".o-delta.o-up { color: var(--o-problem-text); }", css)
+                self.assertIn(".o-delta.o-down { color: var(--o-ok-text); }", css)
+                self.assertNotRegex(css, r"\.o-delta[^{]*\{[^}]*caution")
+                self.assertRegex(css, r"\.o-trend-spark \.area \{[^}]*fill-opacity: var\(--o-wash-spark\)")
+        _, what = self.get("/what")
+        css = what[what.index("<style>"):what.index("</style>")]
+        # what's four cards stay the radio group keying the heat; the pressed one wears a 2px top bar
+        self.assertIn('data-k="${c.k}" aria-pressed="${c.pressed}"', what)
+        self.assertIn("hs.statCard({ k, label: l, pressed: k === heatKey,", what)
+        self.assertRegex(css, r'button\.o-stat-card\[aria-pressed="true"\]::before \{[^}]*height: 2px;')
+        self.assertIn("unrecoverable", what)
+        # the analysis cards gap a day whose sessions are all pending
+        self.assertIn("if (!r.pend) c.live.add(r.id);", what)
+        # §8: undated rows can't be windowed — never counted in the prior window
+        self.assertIn("totals(WHAT.filter(r => r.d && hs.inProj(r.p) && pw(r.d)))[0]", what)
+        _, where = self.get("/where")
+        self.assertIn("(d ? win(d) : undated)", where)
+        self.assertIn("t = sum(hs.inWin, true), prev = pw && sum(pw)", where)
+        self.assertIn("const all = val4(t);", where)
+        # the delta hue rides the four token cards and errors only
+        self.assertIn('["input", 0, 1], ["output", 1, 1], ["cache create", 2, 1],'
+                      ' ["cache read", 3, 1], ["sessions", 4], ["tool calls", 5],'
+                      ' ["errors", 6, 1], ["subagents", 7]', where)
 
     def test_breakage_tier_is_a_filled_badge(self):
         """#52 (ADR-0030 §9): the tier is a filled badge on its banner —

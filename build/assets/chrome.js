@@ -12,12 +12,68 @@ const inWin = d => S.days.size ? S.days.has(d)
 const inProj = p => S.active.size === 0 || S.active.has(p);
 // the last day of the window, for coverage notes; null when it is "all"
 const winEnd = () => S.days.size ? [...S.days].sort().at(-1) : S.tTo || S.tFrom;
-window.hs = { S, DATA, fmt, inWin, inProj, winEnd, addDays, mount, onFilter: f => subs.push(f) };
+window.hs = { S, DATA, fmt, inWin, inProj, winEnd, addDays, mount, selDays, priorWin, statCard,
+  onFilter: f => subs.push(f) };
 
 function addDays(d, n) {
   const t = new Date(d + "T00:00:00Z");
   t.setUTCDate(t.getUTCDate() + n);
   return t.toISOString().slice(0, 10);
+}
+// Stat cards (ADR-0029 §2, §5, §6; ADR-0030 §7, §8), one grammar on both
+// views; `first` is the view's first synced day. The selected days, in date
+// order: the set, else the preset range, else every synced day.
+function selDays(first) {
+  if (S.days.size) return [...S.days].sort();
+  const out = [];
+  for (let d = S.tFrom || first; d && d <= (S.tTo || DATA.range[1]); d = addDays(d, 1)) out.push(d);
+  return out;
+}
+// the equal-length prior window as a day test, or null: none under a day set
+// or all, and none unless it lies wholly inside the synced range
+function priorWin(first) {
+  if (S.days.size || !S.tFrom || !first) return null;
+  const n = (Date.parse(S.tTo) - Date.parse(S.tFrom)) / 864e5 + 1;
+  const from = addDays(S.tFrom, -n), to = addDays(S.tFrom, -1);
+  if (from < first) return null;
+  return d => d >= from && d <= to;
+}
+// a rounded percent against the prior window; `—` with none or nothing in it,
+// no arrow at 0%. Only a cost card hues it (up problem, down ok), never caution
+function delta(cur, prev, cost) {
+  if (!prev) return '<span class="o-delta">\u2014</span>';
+  const p = Math.round((cur - prev) / prev * 100), up = p > 0;
+  if (!p) return '<span class="o-delta">0%</span>';
+  return `<span class="o-delta${cost ? (up ? " o-up" : " o-down") : ""}">${up ? "+" : ""}${p}%`
+    + `<span data-icon="arrow-${up ? "up" : "down"}" aria-hidden="true">${up ? "\u25b2" : "\u25bc"}</span></span>`;
+}
+// the trend spark: vals is one number per selected day, null for a gap
+// (ADR-0030 §7). Own peak; a line over a washed area per contiguous run of
+// days, a lone day a dot, so no trend is drawn across an unselected day or a gap
+function trendSpark(days, vals) {
+  const W = 100, H = 24, peak = Math.max(1, ...vals.filter(v => v != null));
+  const x = i => (days.length > 1 ? i / (days.length - 1) * W : W / 2).toFixed(1);
+  const y = i => (H - 1 - vals[i] / peak * (H - 2)).toFixed(1);
+  const runs = [];
+  let run = null;
+  days.forEach((d, i) => {
+    if (vals[i] == null) { run = null; return; }
+    if (!run || addDays(days[i - 1], 1) !== d) runs.push(run = []);
+    run.push(i);
+  });
+  const out = runs.map(r => {
+    const pts = r.map(i => `${x(i)} ${y(i)}`).join("L");
+    return r.length === 1 ? `<path class="dot" d="M${pts}h0"/>`
+      : `<path class="area" d="M${x(r[0])} ${H}L${pts}L${x(r.at(-1))} ${H}Z"/><path class="line" d="M${pts}"/>`;
+  }).join("");
+  return `<svg class="o-trend-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${out}</svg>`;
+}
+// c: {label, value, prev, cost, dim, days, vals}; what's radio cards add k and pressed
+function statCard(c) {
+  const tag = c.k ? "button" : "div";
+  return `<${tag} class="o-stat-card"${c.k ? ` data-k="${c.k}" aria-pressed="${c.pressed}"` : ""}>`
+    + `<span class="o-stat-head"><span>${c.label}</span>${delta(c.value, c.prev, c.cost)}</span>`
+    + `<b>${fmt(c.value)}</b><small>${c.dim || "\u00a0"}</small>${trendSpark(c.days, c.vals)}</${tag}>`;
 }
 function applyPreset(w) {
   S.preset = w;

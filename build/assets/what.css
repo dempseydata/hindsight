@@ -9,7 +9,6 @@
 #chart .col.sel { fill: var(--o-compare); fill-opacity: var(--o-wash-sel); }
 #chart .sel.l1 { fill-opacity: .3; } #chart .sel.l2 { fill-opacity: .55; }
 #chart .sel.l3 { fill-opacity: .8; } #chart .sel.l4 { fill-opacity: 1; }
-#what .tiles { margin-bottom: .6rem; }
 #what .day { margin: 1rem 0 0; color: var(--o-dim); font: 11px var(--o-mono); }
 #what .row { background: var(--o-panel); border: 1px solid var(--o-border);
   border-radius: var(--o-radius); margin-top: .35rem;

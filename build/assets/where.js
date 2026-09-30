@@ -94,27 +94,34 @@ function renderChart() {
   hs.mount(`<svg width="${rows.length * (bw + gap) + 12}" height="${h + axis}">${out}</svg>`);
 }
 
-function tilesHtml() {
-  const t = [0, 0, 0, 0];
-  for (const r of DATA.days) if (keep(r)) r.t.forEach((n, k) => t[k] += n);
-  const sessions = WHERE.sess.filter(keep).length;
-  // #36: errors beside tool calls — paired failures counted, unpaired
-  // (unknown, not ok) named in the sub-label and never added to the number
-  let calls = 0, errs = 0, nu = 0;
-  for (const r of WHERE.tools) if (keep(r)) { calls += r.n; errs += r.e; nu += r.nu; }
-  // #13: two numbers, no list — subagents spawned by sessions in view
-  // (first-day attributed, like the sessions tile) and the share of the
-  // view's tokens they spent (day grain, the same base as the token tiles)
-  let agents = 0, subTok = 0;
-  for (const s of WHERE.sess) if (s.na && keep(s)) agents += s.na;
-  for (const r of WHERE.subd) if (keep(r)) subTok += val4(r.t);
-  const all = val4(t);  // same toggle as the numerator
-  const share = all ? Math.round(subTok / all * 100) : 0;
-  return [["input", t[0]], ["output", t[1]], ["cache create", t[2]],
-          ["cache read", t[3]], ["sessions", sessions], ["tool calls", calls],
-          [`errors${nu ? ` \u00b7 +${nu} unknown` : ""}`, errs],
-          [`subagents · ${share}% of tokens`, agents]]
-    .map(([l, v]) => `<div class="tile"><b>${fmt(v)}</b><span>${l}</span></div>`).join("");
+// the stat cards' per-day sums under the project filter, undated under "":
+// input, output, cache create, cache read, sessions, tool calls, errors,
+// subagents — then unpaired calls (#36) and subagent tokens (#13)
+function cardDays() {
+  const by = {}, at = d => by[d || ""] ??= [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (const r of DATA.days) if (hs.inProj(r.p)) r.t.forEach((n, k) => at(r.d)[k] += n);
+  // #13: subagents spawned by sessions, first-day attributed like the sessions card
+  for (const s of WHERE.sess) if (hs.inProj(s.p)) { const o = at(s.d); o[4]++; o[7] += s.na || 0; }
+  for (const r of WHERE.tools) if (hs.inProj(r.p)) { const o = at(r.d); o[5] += r.n; o[6] += r.e; o[8] += r.nu; }
+  for (const r of WHERE.subd) if (hs.inProj(r.p)) at(r.d)[9] += val4(r.t);
+  return by;
+}
+// [label, index, cost]: a cost card hues its delta (ADR-0029 §5)
+const CARDS = [["input", 0, 1], ["output", 1, 1], ["cache create", 2, 1], ["cache read", 3, 1], ["sessions", 4], ["tool calls", 5], ["errors", 6, 1], ["subagents", 7]];
+function cardsHtml() {
+  const by = cardDays(), first = DATA.range[0], pw = hs.priorWin(first), days = hs.selDays(first);
+  // a window's sums; undated rows can't be windowed — always in view,
+  // never in the prior window (ADR-0030 §8)
+  const sum = (win, undated) => Object.entries(by).reduce((a, [d, v]) =>
+    (d ? win(d) : undated) ? a.map((x, k) => x + v[k]) : a, Array(10).fill(0));
+  const t = sum(hs.inWin, true), prev = pw && sum(pw);
+  // #36: unpaired calls are unknown, not ok — named, never added to errors;
+  // #13: the share of the view's tokens subagents spent (day grain, the
+  // same base as the token cards, under the same cache-read toggle)
+  const all = val4(t);
+  const dim = { 6: t[8] ? `+${t[8]} unknown` : "", 7: `${all ? Math.round(t[9] / all * 100) : 0}% of tokens` };
+  return CARDS.map(([label, k, cost]) => hs.statCard({ label, value: t[k], prev: prev?.[k], cost, dim: dim[k],
+    days, vals: days.map(d => d < first ? null : by[d]?.[k] ?? 0) })).join("");
 }
 
 // consumer league — membership is all-time >=5 calls (stable across window
@@ -232,11 +239,11 @@ function leagueHtml(open) {
     b.querySelector(".ec").textContent = catErr[b.dataset.t] ? ` \u00b7 ${catErr[b.dataset.t]} err` : "";
   if (hidden)
     out += `<p class="note">${fmt(hidden)} calls \u00b7 ${fmt(hiddenErr)} errors in window sit in switched-off
-      categories \u2014 the chips above re-add them; always counted in the tiles.</p>`;
+      categories \u2014 the chips above re-add them; always counted in the stat cards.</p>`;
   if (unclassified)
     out += `<p class="note">${fmt(unclassified)} calls in window carry no consumer grain
       (transcripts pruned before the substrate scan) \u2014 unknown, not zero; counted
-      in the tiles, absent from this league and its chips.</p>`;
+      in the stat cards, absent from this league and its chips.</p>`;
   return out;
 }
 
@@ -439,7 +446,8 @@ function renderWhere() {
   const mcpOpen = openIn("#mcp"), cliOpen = openIn("#cli"),
         sunkOpen = openIn("#sunk");
   renderChart();
-  document.getElementById("tiles").innerHTML = tilesHtml();
+  document.getElementById("tiles").innerHTML = cardsHtml();
+  fillIcons(document.getElementById("tiles"));
   renderLeague();
   document.getElementById("models").innerHTML = modelsHtml();
   document.getElementById("mcp").innerHTML = mcpHtml(mcpOpen);

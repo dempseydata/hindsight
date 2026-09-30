@@ -14,27 +14,27 @@ const counts = r => ({ actions: secN(r, "Did"), decisions: secN(r, "Decided"), a
 // a row is a card-table row (ADR-0030 §10): project · session · entry; a
 // status is a filled badge carrying its word before the row text (#48)
 function rowHtml(r, open) {
-  const cont = r.cont ? `<span class="o-badge o-neutral">${r.cont}</span>` : "";
+  const cont = r.cont ? `<span class="o-badge o-ok">${r.cont}</span>` : "";
   // #13: mechanical note — the session spawned subagents, whose tokens and
   // tool calls are counted in it (their work is the session's work)
-  const sub = r.sub ? `<span class="o-badge o-neutral" title="subagent transcripts filed under this session — their tokens count here">${r.sub} subagent${r.sub > 1 ? "s" : ""}</span>` : "";
-  const proj = `<span class="p"><span class="o-badge o-neutral" title="${esc(r.p)}">${esc(r.p)}</span></span>`;
+  const sub = r.sub ? `<span class="o-badge o-ok" title="subagent transcripts filed under this session — their tokens count here">${r.sub} subagent${r.sub > 1 ? "s" : ""}</span>` : "";
+  const proj = `<span class="p"><span class="o-badge o-ok" title="${esc(r.p)}">${esc(r.p)}</span></span>`;
   const sess = (mark, ttl) => `<span class="s">${mark}${cont}${sub}${ttl}</span>`;
   const srow = (mark, text) =>
     `<div class="row srow o-card-table-row">${proj}${sess(mark, `<span class="ttl dim">${text}</span>`)}<span></span></div>`;
   if (r.lost)
     return srow('<span class="o-badge o-problem">lost</span>', "transcript pruned before analysis \u2014 unrecoverable");
   if (r.empty)
-    return srow('<span class="o-badge o-neutral">empty</span>', "empty session \u2014 nothing to analyze");
+    return srow('<span class="o-badge o-ok">empty</span>', "empty session \u2014 nothing to analyze");
   if (r.pend)
     return srow('<span class="o-badge o-caution">pending</span>', "synced, not yet analyzed \u2014 run an analysis");
   if (r.skip)
-    return srow('<span class="o-badge o-neutral">trivial</span>', "trivial session \u2014 skipped");
+    return srow('<span class="o-badge o-ok">trivial</span>', "trivial session \u2014 skipped");
   const attrs = `data-id="${r.id}" data-day="${r.d}"`;
   const op = open.has(r.id + "@" + r.d) ? " open" : "";
   if (r.title == null)
     return `<details class="row" ${attrs}${op}><summary class="o-card-table-row">${proj}${sess('<span class="o-badge o-problem">refused</span>', '<span class="ttl dim">no entry \u2014 the model refused this session (defect #38)</span>')}<span></span></summary><div class="entry"><pre>${esc(r.raw)}</pre></div></details>`;
-  const adr = r.adr >= 1 ? `<span class="o-badge o-neutral">${r.adr} ADR</span>` : "";
+  const adr = r.adr >= 1 ? `<span class="o-badge o-ok">${r.adr} ADR</span>` : "";
   const pl = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
   const cnt = `${pl(secN(r, "Did"), "action")} \u00b7 ${pl(secN(r, "Decided"), "decision")}`;
   const secs = (r.sections || []).map(s => `<h3>${esc(SECTION_LABEL[s.name] ?? s.name)}</h3>`

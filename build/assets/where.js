@@ -213,7 +213,7 @@ function leagueHtml(open) {
     const projs = Object.entries(o.proj).sort((a, b) => b[1] - a[1]);
     const mcp = Object.entries(o.mcp).sort((a, b) => b[1] - a[1]);
     out += `<details data-k="${esc(k)}"${open.has(k) ? " open" : ""}><summary class="o-card-table-row">
-      <span><span class="o-badge o-neutral">${o.ty}</span> ${esc(o.c)}</span>
+      <span><span class="o-badge o-ok">${o.ty}</span> ${esc(o.c)}</span>
       ${sparkSvg(o.perDay, { err: o.e ? o.errDay : null })}
       <span class="num">${fmt(o.n)}</span><span class="num">${errHtml(o.e, o.nu)}</span>
       <span class="num">${o.sess ? fmt(o.sess) : '<span class="dim">\u2014</span>'}</span>
@@ -231,7 +231,7 @@ function leagueHtml(open) {
     out += `<details class="sub" data-k="_tail"${open.has("_tail") ? " open" : ""}><summary>
       ${tail.length} visible-category consumers under 5 all-time calls \u00b7 ${tailCalls} calls in window</summary>
       <p class="detail dim">${tail.sort((a, b) => b[1].n - a[1].n).map(([, o]) =>
-        `${esc(o.c)} <span class="o-badge o-neutral">${o.ty}</span> \u00d7${o.n}`).join(" \u00b7 ")}</p></details>`;
+        `${esc(o.c)} <span class="o-badge o-ok">${o.ty}</span> \u00d7${o.n}`).join(" \u00b7 ")}</p></details>`;
   out = out ? head + out : '<p class="dim">none in filter</p>';
   // chip labels carry the in-window error count whether on or off, so a
   // switched-off category's errors are visible without clicking it
@@ -347,7 +347,7 @@ function sunkHtml(open) {
       .map(([pl, list]) => {
         const cat = list.reduce((a, r) => a + r.tok, 0);
         const items = list.sort((a, b) => b.tok - a.tok).slice(0, 15).map(r =>
-          `<div>${esc(r.name)} <span class="o-badge o-neutral">${r.cat}</span> ${fmt(r.tok)} tok</div>`).join("")
+          `<div>${esc(r.name)} <span class="o-badge o-ok">${r.cat}</span> ${fmt(r.tok)} tok</div>`).join("")
           + (list.length > 15 ? `<div>\u2026 ${list.length - 15} more</div>` : "");
         return `<details class="grp"><summary><b>${esc(pl)}</b> \u00b7 ${list.length} entries
           \u00b7 eager stub ~${fmt(25 * list.length)} tok \u00b7 catalog ${fmt(cat)} tok</summary>

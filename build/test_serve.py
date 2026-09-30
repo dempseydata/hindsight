@@ -697,7 +697,8 @@ class ServerTest(unittest.TestCase):
         self.assertRegex(css, r"#where td \{[^}]*padding: \.75rem;")
         self.assertRegex(css, r"#where :is\(th, td\):first-child \{ padding-left: 20px; \}")
         self.assertNotRegex(css, r"(^|\})\s*\.panel[ ,{]")
-        self.assertIn('<span class="o-badge o-neutral">${o.ty}</span>', where)
+        self.assertIn('<span class="o-badge o-ok">${o.ty}</span>', where)
+        self.assertNotIn('o-badge o-neutral', where)
         self.assertNotIn('class="pchip"', where)
 
     def test_where_help_popovers_keep_coverage_gaps_visible(self):
@@ -1094,19 +1095,21 @@ class ServerTest(unittest.TestCase):
     def test_what_status_marks_are_filled_badges(self):
         """#54 (ADR-0029 §2, §8; #48): each session status is a filled badge
         carrying its word before the row text — pending on caution, lost and
-        refused on problem, empty and trivial on neutral; the project, the
-        continuation and subagent notes and the ADR count are neutral badges."""
+        refused on problem; empty, trivial, the project, the continuation and
+        subagent notes and the ADR count on ok — the neutral grey read too
+        dark behind its text, so no record chip carries it."""
         _, what = self.get("/what")
         for role, word in (("caution", "pending"), ("problem", "lost"), ("problem", "refused"),
-                           ("neutral", "empty"), ("neutral", "trivial")):
+                           ("ok", "empty"), ("ok", "trivial")):
             self.assertIn(f'<span class="o-badge o-{role}">{word}</span>', what)
-        for mark in ('<span class="o-badge o-neutral" title="${esc(r.p)}">${esc(r.p)}</span>',
-                     '<span class="o-badge o-neutral">${r.cont}</span>',
-                     '<span class="o-badge o-neutral" title="subagent transcripts',
-                     '<span class="o-badge o-neutral">${r.adr} ADR</span>'):
+        for mark in ('<span class="o-badge o-ok" title="${esc(r.p)}">${esc(r.p)}</span>',
+                     '<span class="o-badge o-ok">${r.cont}</span>',
+                     '<span class="o-badge o-ok" title="subagent transcripts',
+                     '<span class="o-badge o-ok">${r.adr} ADR</span>'):
             self.assertIn(mark, what)
         for old in ('class="pchip"', 'class="cont"', 'class="adr"'):
             self.assertNotIn(old, what)
+        self.assertNotIn('o-badge o-neutral', what)
 
     def test_help_popover_on_what_not_on_how(self):
         """#54 (ADR-0029 §2, ADR-0030 §4, §5): what's `?` sits in the

@@ -39,6 +39,7 @@ Authority: push + tracker yes · End state: branch only · Baseline: 221 tests, 
 - #56: new ids mcov / rcov / hcov for visible gap lines; where's help markup hand-written, tested against _help() — ADR? no
 - #56: where's pchip markers become neutral badges; Reliability subheads as card-table group rows; sunk cost a plain card — ADR? no
 - #56: panel hover lift dropped with .panel (ADR-0007 amendment's still-true list omits it) — ADR? yes: record it in ADR-0029, and correct --o-motion's comment
+- post-shift (operator): every record chip on what and where moves from the neutral to the ok role — the neutral grey read too dark behind its text; the neutral fill/on tokens stay in the contract, unused by badges — ADR? yes: amend ADR-0029 §5 / #45's role list
 - #52: .playwright-cli/ added to .gitignore (browser-check snapshots) — ADR? no
 
 ## Blocked

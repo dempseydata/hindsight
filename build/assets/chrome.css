@@ -37,11 +37,40 @@ a { color: var(--o-accent); text-decoration: none; }
   font-size: 16px; font-weight: 500; }
 .o-card-sub { margin: .15rem 0 0; color: var(--o-dim); font-size: 11px; }
 .o-card-body { padding: 20px; }
+.o-card-actions { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+/* Card-tables (ADR-0029 §2, ADR-0030 §10): a visual grammar over the view's
+   own rows — full-bleed to the card edge, a tinted uppercase header row and
+   group rows, .75rem cells with the outer ones at the card's 20px. The view
+   sets the columns on its head and rows */
+.o-card-table { overflow: hidden; }
+.o-card-table-head, .o-card-table-row { display: grid; align-items: baseline;
+  padding: .75rem 20px; column-gap: 1.5rem; }
+.o-card-table-head, .o-card-table-group { margin: 0; padding: .5rem 20px;
+  background: var(--o-bg); color: var(--o-dim); font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: .04em;
+  border-bottom: 1px solid var(--o-border); }
+/* Help popover (ADR-0029 §2, ADR-0030 §4): the platform popover — open, Esc
+   and click-outside are native. It floats under its `?` where the browser
+   anchors a popover to its invoker, centred in the viewport where not */
+.o-help { display: inline-flex; padding: 2px; color: var(--o-dim); font: inherit;
+  background: none; border: 0; border-radius: var(--o-radius); cursor: pointer; }
+.o-help:hover, .o-help:focus-visible { color: var(--o-text); }
+.o-help:focus-visible { outline: 2px solid var(--o-accent); outline-offset: 1px; }
+.o-pop { max-width: min(26rem, calc(100vw - 32px)); padding: 12px 16px;
+  color: var(--o-text); background: var(--o-panel); border: 1px solid var(--o-border);
+  border-radius: var(--o-radius-card); box-shadow: var(--o-elev-float);
+  font-size: 12px; line-height: 1.5; }
+@supports (position-area: bottom) {
+  .o-pop { margin: 6px 0 0; position-area: bottom span-left;
+    position-try-fallbacks: flip-block; }
+}
 /* Filled badges (ADR-0029 §2): text in the role's -on weight on its -fill */
 .o-badge { display: inline-block; border-radius: var(--o-radius); padding: 0 .4rem;
-  font: 500 11px/1.6 var(--o-font); }
+  font: 500 11px/1.6 var(--o-font); white-space: nowrap; }
 .o-badge.o-ok { background: var(--o-ok-fill); color: var(--o-ok-on); }
+.o-badge.o-caution { background: var(--o-caution-fill); color: var(--o-caution-on); }
 .o-badge.o-problem { background: var(--o-problem-fill); color: var(--o-problem-on); }
+.o-badge.o-neutral { background: var(--o-neutral-fill); color: var(--o-neutral-on); }
 #chips, #hsel { display: flex; flex-wrap: wrap; gap: .35rem; }
 #cats { margin: .8rem 0 0; display: flex; flex-wrap: wrap; gap: .35rem; }
 #chips button, #ctl button, #cats button, #hsel a { font: 11px var(--o-mono);

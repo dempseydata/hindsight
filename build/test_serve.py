@@ -901,13 +901,81 @@ class ServerTest(unittest.TestCase):
                           "problem</span>", body)
             css = body[body.index("<style>"):body.index("</style>")]
             self.assertRegex(css, r"\.o-badge \{[^}]*border-radius: var\(--o-radius\);")
-            for role in ("ok", "problem"):
+            # every role styled on its fill/on pair (#54 owed caution and neutral)
+            for role in ("ok", "caution", "problem", "neutral"):
                 self.assertRegex(css, rf"\.o-badge\.o-{role} \{{ background: var\(--o-{role}-fill\);"
                                       rf" color: var\(--o-{role}-on\); \}}")
         body = self.serve_once("UPDATE breakage SET acknowledged_at = NULL;"
                                " DELETE FROM project_presence")
         self.assertIn('<div class="breakage informational"><span class="o-badge o-ok">'
                       "informational</span>", body)
+
+    def test_what_ledger_is_one_card_table(self):
+        """#54 (ADR-0029 §2, ADR-0030 §10): the ledger is one card-table —
+        a tinted uppercase header row, day headings as tinted group rows,
+        .75rem cells with the outer ones at the card's 20px — over the same
+        <details> rows, so the session anchor (ADR-0023) and its
+        outside-filter line are untouched."""
+        _, what = self.get("/what")
+        css = what[what.index("<style>"):what.index("</style>")]
+        self.assertIn('<div class="o-card o-card-table"><div class="o-card-table-head">'
+                      "<span>project</span><span>session</span><span>entry</span></div>"
+                      '<div id="ledger"></div></div>', what)
+        self.assertIn('out += `<h2 class="o-card-table-group">${day ?? "undated"}</h2>`', what)
+        self.assertNotIn('class="day"', what)
+        for sel in (r"\.o-card-table-head", r"\.o-card-table-group"):
+            self.assertRegex(css, sel + r"[^{]*\{[^}]*background: var\(--o-bg\);[^}]*"
+                                        r"text-transform: uppercase;")
+        self.assertRegex(css, r"\.o-card-table-row \{[^}]*display: grid;[^}]*"
+                              r"padding: \.75rem 20px;[^}]*column-gap: 1\.5rem;")
+        self.assertIn('<summary class="o-card-table-row">', what)
+        self.assertIn('<div class="row srow o-card-table-row">', what)
+        # the session anchor and the open-row handling, unchanged in substance
+        self.assertIn('querySelectorAll("#ledger details[open]")', what)
+        self.assertIn('document.querySelector(`#ledger details[data-id="${CSS.escape(want)}"]`)', what)
+        self.assertIn("el.open = true; el.scrollIntoView(); anchored = true;", what)
+        self.assertIn("is outside the current filter", what)
+
+    def test_what_status_marks_are_filled_badges(self):
+        """#54 (ADR-0029 §2, §8; #48): each session status is a filled badge
+        carrying its word before the row text — pending on caution, lost and
+        refused on problem, empty and trivial on neutral; the project, the
+        continuation and subagent notes and the ADR count are neutral badges."""
+        _, what = self.get("/what")
+        for role, word in (("caution", "pending"), ("problem", "lost"), ("problem", "refused"),
+                           ("neutral", "empty"), ("neutral", "trivial")):
+            self.assertIn(f'<span class="o-badge o-{role}">{word}</span>', what)
+        for mark in ('<span class="o-badge o-neutral" title="${esc(r.p)}">${esc(r.p)}</span>',
+                     '<span class="o-badge o-neutral">${r.cont}</span>',
+                     '<span class="o-badge o-neutral" title="subagent transcripts',
+                     '<span class="o-badge o-neutral">${r.adr} ADR</span>'):
+            self.assertIn(mark, what)
+        for old in ('class="pchip"', 'class="cont"', 'class="adr"'):
+            self.assertNotIn(old, what)
+
+    def test_help_popover_on_what_not_on_how(self):
+        """#54 (ADR-0029 §2, ADR-0030 §4, §5): what's `?` sits in the
+        Sessions per day card's actions, the hint stays its subtitle, and
+        the popover carries ADR-0028 §3's counting rule verbatim. The
+        platform popover opens and dismisses it (no script), floating at
+        --o-elev-float; the `?` is the fallback the glyph replaces."""
+        _, what = self.get("/what")
+        card = what[what.index('<div class="o-card">'):what.index('<div class="o-card-body">')]
+        self.assertLess(card.index('<p class="o-card-sub">click a day'),
+                        card.index('<div class="o-card-actions">'))
+        self.assertIn('<button class="o-help" popovertarget="whelp" aria-label="help">'
+                      '<span data-icon="help-circle" aria-hidden="true">?</span></button>'
+                      '<div class="o-pop" id="whelp" popover>', card)
+        pop = card[card.index('id="whelp" popover>'):]
+        pop = pop[pop.index(">") + 1:pop.index("</div>")]
+        adr = next((serve.REPO / "docs" / "adr").glob("0028-*.md")).read_text()
+        rule = next(ln for ln in adr.splitlines() if ln.startswith("3. "))[3:]
+        self.assertEqual(re.sub(r"<[^>]+>", "", pop), re.sub(r"\*\*|`", "", rule))
+        css = what[what.index("<style>"):what.index("</style>")]
+        self.assertRegex(css, r"\.o-pop \{[^}]*box-shadow: var\(--o-elev-float\);")
+        self.assertRegex(css, r"\.o-card-actions \{[^}]*margin-left: auto;")
+        self.assertNotIn("showPopover", what)
+        self.assertNotIn('class="o-help"', self.get("/how")[1])
 
     def test_icons_asset_inlined_with_its_tabler_notice(self):
         """#52 (ADR-0029 §7, ADR-0030 §2): every glyph of #47's table, keyed

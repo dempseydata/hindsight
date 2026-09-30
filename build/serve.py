@@ -699,14 +699,29 @@ def _blob(obj):
     return json.dumps(obj).replace("</", "<\\/")
 
 
-def _icon(name):
-    """A glyph placeholder (ADR-0030 §2): icons.js fills it with inline SVG."""
-    return f'<span data-icon="{name}" aria-hidden="true"></span>'
+def _icon(name, fallback=""):
+    """A glyph placeholder (ADR-0030 §2): icons.js fills it with inline SVG,
+    replacing the fallback text."""
+    return f'<span data-icon="{name}" aria-hidden="true">{fallback}</span>'
+
+
+def _help(pid, note):
+    """A card's help `?` and its popover (ADR-0029 §2, ADR-0030 §4): the
+    platform popover, so open, Esc and click-outside need no script. `note`
+    is trusted markup; a note a view fills by id keeps its id inside it."""
+    return (f'<button class="o-help" popovertarget="{pid}" aria-label="help">'
+            f'{_icon("help-circle", "?")}</button><div class="o-pop" id="{pid}" popover>{note}</div>')
 
 
 NAV_GLYPH = {"what": "list", "where": "chart-pie", "how": "route"}
 # the header visual's card per view: glyph and title (ADR-0029 §1)
 VISUAL = {"what": ("calendar", "Sessions per day"), "where": ("chart-bar", "Tokens per day")}
+# what's help note: ADR-0028 §3's counting rule, verbatim (ADR-0030 §5)
+COUNTING_RULE = ("<b>The heatmap follows the ledger rule.</b> A session counts on every local"
+                 " day it had usage (#9's rule); actions, decisions and ADRs count on the"
+                 " session's first day, where the entry lives. The heatmap and the ledger agree"
+                 " on which days are empty, under any project filter — the same invariant"
+                 " <code>what_data</code> already states for the chart.")
 
 
 def _nav(view):
@@ -763,7 +778,9 @@ def render(view, conn, query="", projects_dir=DEFAULT_PROJECTS_DIR):
                 f'<h2 class="o-card-title">{_icon(glyph)}{title}</h2>'
                 '<p class="o-card-sub">click a day to filter to it, more days to add them,'
                 " shift-click for a range, a selected day again to remove it — a preset or"
-                " clear empties the selection</p></div></div>"
+                " clear empties the selection</p></div>"
+                + (f'<div class="o-card-actions">{_help("whelp", COUNTING_RULE)}</div>'
+                   if view == "what" else "") + "</div>"
                 '<div class="o-card-body"><div id="chart"></div></div></div>'
                 + _asset(f"{view}.html"))
         tail = (f"<script>const DATA = {_blob(data)};{_asset('chrome.js')}"

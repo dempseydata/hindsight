@@ -11,31 +11,36 @@ const full = Object.fromEntries(WHAT.filter(r => !r.cont).map(r => [r.id, r]));
 const SECTION_LABEL = { Did: "Actions", Decided: "Decisions" };
 const counts = r => ({ actions: secN(r, "Did"), decisions: secN(r, "Decided"), adrs: r.adr || 0 });
 
+// a row is a card-table row (ADR-0030 §10): project · session · entry; a
+// status is a filled badge carrying its word before the row text (#48)
 function rowHtml(r, open) {
-  const cont = r.cont ? `<span class="cont">${r.cont}</span>` : "";
+  const cont = r.cont ? `<span class="o-badge o-neutral">${r.cont}</span>` : "";
   // #13: mechanical note — the session spawned subagents, whose tokens and
   // tool calls are counted in it (their work is the session's work)
-  const sub = r.sub ? `<span class="cont" title="subagent transcripts filed under this session — their tokens count here">${r.sub} subagent${r.sub > 1 ? "s" : ""}</span>` : "";
-  const chip = `<span class="pchip" title="${esc(r.p)}">${esc(r.p)}</span>${cont}${sub}`;
+  const sub = r.sub ? `<span class="o-badge o-neutral" title="subagent transcripts filed under this session — their tokens count here">${r.sub} subagent${r.sub > 1 ? "s" : ""}</span>` : "";
+  const proj = `<span class="p"><span class="o-badge o-neutral" title="${esc(r.p)}">${esc(r.p)}</span></span>`;
+  const sess = (mark, ttl) => `<span class="s">${mark}${cont}${sub}${ttl}</span>`;
+  const srow = (mark, text) =>
+    `<div class="row srow o-card-table-row">${proj}${sess(mark, `<span class="ttl dim">${text}</span>`)}<span></span></div>`;
   if (r.lost)
-    return `<div class="row srow">${chip}<span class="ttl dim">transcript pruned before analysis \u2014 unrecoverable</span></div>`;
+    return srow('<span class="o-badge o-problem">lost</span>', "transcript pruned before analysis \u2014 unrecoverable");
   if (r.empty)
-    return `<div class="row srow">${chip}<span class="ttl dim">empty session \u2014 nothing to analyze</span></div>`;
+    return srow('<span class="o-badge o-neutral">empty</span>', "empty session \u2014 nothing to analyze");
   if (r.pend)
-    return `<div class="row srow">${chip}<span class="ttl dim">synced, not yet analyzed \u2014 run an analysis</span></div>`;
+    return srow('<span class="o-badge o-caution">pending</span>', "synced, not yet analyzed \u2014 run an analysis");
   if (r.skip)
-    return `<div class="row srow">${chip}<span class="ttl dim">trivial session \u2014 skipped</span></div>`;
+    return srow('<span class="o-badge o-neutral">trivial</span>', "trivial session \u2014 skipped");
   const attrs = `data-id="${r.id}" data-day="${r.d}"`;
   const op = open.has(r.id + "@" + r.d) ? " open" : "";
   if (r.title == null)
-    return `<details class="row" ${attrs}${op}><summary>${chip}<span class="ttl dim">no entry \u2014 the model refused this session (defect #38)</span></summary><div class="entry"><pre>${esc(r.raw)}</pre></div></details>`;
-  const adr = r.adr >= 1 ? `<span class="adr">${r.adr} ADR</span>` : "";
+    return `<details class="row" ${attrs}${op}><summary class="o-card-table-row">${proj}${sess('<span class="o-badge o-problem">refused</span>', '<span class="ttl dim">no entry \u2014 the model refused this session (defect #38)</span>')}<span></span></summary><div class="entry"><pre>${esc(r.raw)}</pre></div></details>`;
+  const adr = r.adr >= 1 ? `<span class="o-badge o-neutral">${r.adr} ADR</span>` : "";
   const pl = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
   const cnt = `${pl(secN(r, "Did"), "action")} \u00b7 ${pl(secN(r, "Decided"), "decision")}`;
   const secs = (r.sections || []).map(s => `<h3>${esc(SECTION_LABEL[s.name] ?? s.name)}</h3>`
     + (s.para ? `<p>${inline(s.items[0])}</p>`
               : `<ul>${s.items.map(i => `<li>${inline(i)}</li>`).join("")}</ul>`)).join("");
-  return `<details class="row" ${attrs}${op}><summary>${chip}<span class="ttl">${inline(r.title)}</span><span class="cnt">${cnt}${adr}</span></summary><div class="entry">${secs}</div></details>`;
+  return `<details class="row" ${attrs}${op}><summary class="o-card-table-row">${proj}${sess("", `<span class="ttl">${inline(r.title)}</span>`)}<span class="cnt">${cnt}${adr}</span></summary><div class="entry">${secs}</div></details>`;
 }
 
 // The header visual on this view (ADR-0028): a session heatmap, one cell
@@ -128,7 +133,7 @@ function renderWhat() {
   const vis = inView(hs.inWin);
   let out = "", day = null;
   for (const r of vis) {
-    if (r.d !== day) { day = r.d; out += `<h2 class="day">${day ?? "undated"}</h2>`; }
+    if (r.d !== day) { day = r.d; out += `<h2 class="o-card-table-group">${day ?? "undated"}</h2>`; }
     out += rowHtml(r.cont ? { ...full[r.id], d: r.d, cont: r.cont } : r, open);
   }
   document.getElementById("ledger").innerHTML =

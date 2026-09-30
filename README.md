@@ -12,7 +12,7 @@ Local observability over Claude Code history, built for a solo, skill-heavy oper
 
 Every error count in the league has the errors behind it. Opening a consumer's row lists them grouped by their error line, count-first, with the verbatim text and the session behind each occurrence one click away; a category chip carries its in-window error count whether it is on or off, so a switched-off category's errors are stated, never silent. An error whose transcript was pruned before capture is counted and read as *text not captured* — unknown is never zero.
 
-![A consumer row opened in the league, one project in view: three errors grouped by error line, the category chips carrying their error counts](docs/screenshots/errors.png)
+![A consumer row opened in the league, one project in view: four errors grouped by error line, the category chips carrying their error counts](docs/screenshots/errors.png)
 
 **How — the process trail.** One project's declared process beside what actually happened: phase runs, a model-written status narrative, and the mechanical trail behind it. Work that matches no declared stage is off-script, and it is shown rather than hidden: listed beside the stated process, tallied on every run, and forming runs of its own when nothing declared was going on.
 

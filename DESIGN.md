@@ -1,6 +1,6 @@
 ---
 name: Hindsight
-description: Local observability over Claude Code history — an indigo instrument deck for one operator, in a dark and a light theme.
+description: Local observability over Claude Code history — Tabler's layout and card grammar on the indigo deck's palette, for one operator, in a dark and a light theme.
 # Values below are the dark theme (the :root base in design/tokens.css).
 # Light-theme values live in tokens.css's light blocks and in the sidecar.
 colors:
@@ -15,10 +15,18 @@ colors:
   compare: "#f0b23f"
   ok: "#7c9bff"
   ok-text: "#a3b8ff"
+  ok-fill: "#7c9bff"
+  ok-on: "#0b0d14"
   caution: "#e3b859"
   caution-text: "#eac878"
+  caution-fill: "#e3b859"
+  caution-on: "#0b0d14"
   problem: "#f27878"
   problem-text: "#f79b9b"
+  problem-fill: "#f27878"
+  problem-on: "#0b0d14"
+  neutral-fill: "#6c7491"
+  neutral-on: "#ffffff"
   ink-1: "#82a9e8"
   ink-2: "#5c83c4"
   ink-3: "#41639b"
@@ -33,7 +41,16 @@ colors:
   stage-5: "#d4c95a"
   stage-off: "#6f7794"
 typography:
-  title:
+  page-title:
+    fontFamily: "system-ui, 'Helvetica Neue', sans-serif"
+    fontSize: "20px"
+    fontWeight: 600
+    lineHeight: 1.4
+  card-title:
+    fontFamily: "system-ui, 'Helvetica Neue', sans-serif"
+    fontSize: "16px"
+    fontWeight: 500
+  brand:
     fontFamily: "system-ui, 'Helvetica Neue', sans-serif"
     fontSize: "15px"
     fontWeight: 600
@@ -42,9 +59,19 @@ typography:
     fontSize: "13px"
     fontWeight: 400
     lineHeight: 1.5
+  caps:
+    fontFamily: "system-ui, 'Helvetica Neue', sans-serif"
+    fontSize: "11px"
+    fontWeight: 500
+    letterSpacing: "0.04em"
+  badge:
+    fontFamily: "system-ui, 'Helvetica Neue', sans-serif"
+    fontSize: "11px"
+    fontWeight: 500
+    lineHeight: 1.6
   stat:
     fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace"
-    fontSize: "28px"
+    fontSize: "24px"
     fontWeight: 600
     lineHeight: 1.25
   data:
@@ -57,23 +84,75 @@ typography:
     fontWeight: 600
     letterSpacing: "0.05em"
 rounded:
+  card: "8px"
   panel: "6px"
   control: "2px"
 spacing:
+  gutter: "12px"
+  card-gap: "16px"
+  card-pad: "20px"
+  section: "24px"
+  cell: "0.75rem"
   gap-sm: "0.35rem"
-  gap-md: "0.6rem"
 components:
-  panel:
+  top-bar:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.text}"
+    typography: "{typography.brand}"
+    height: "56px"
+  nav-item:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.dim}"
+    padding: "0 0.75rem"
+    height: "56px"
+  nav-item-current:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.text}"
+    padding: "0 0.75rem"
+    height: "56px"
+  card:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.card}"
+    padding: "20px"
+  card-head:
+    textColor: "{colors.text}"
+    typography: "{typography.card-title}"
+    padding: "0.75rem 20px"
+    height: "65px"
+  card-table-head:
+    backgroundColor: "{colors.bg}"
+    textColor: "{colors.dim}"
+    typography: "{typography.caps}"
+    padding: "0.5rem 20px"
+  stage-panel:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.text}"
     rounded: "{rounded.panel}"
     padding: "0.9rem 1.1rem"
-  stat-tile:
+  stat-card:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.text}"
+    rounded: "{rounded.card}"
+    padding: "20px"
+  badge-ok:
+    backgroundColor: "{colors.ok-fill}"
+    textColor: "{colors.ok-on}"
+    typography: "{typography.badge}"
     rounded: "{rounded.panel}"
-    padding: "0.55rem 1rem 0.5rem"
-    width: "min-width 7rem"
+    padding: "0 0.4rem"
+  badge-caution:
+    backgroundColor: "{colors.caution-fill}"
+    textColor: "{colors.caution-on}"
+    typography: "{typography.badge}"
+    rounded: "{rounded.panel}"
+    padding: "0 0.4rem"
+  badge-problem:
+    backgroundColor: "{colors.problem-fill}"
+    textColor: "{colors.problem-on}"
+    typography: "{typography.badge}"
+    rounded: "{rounded.panel}"
+    padding: "0 0.4rem"
   chip-button:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.dim}"
@@ -84,20 +163,16 @@ components:
     textColor: "{colors.accent}"
     rounded: "{rounded.control}"
     padding: "0.2rem 0.55rem"
-  project-chip:
-    textColor: "{colors.dim}"
-    rounded: "{rounded.control}"
-    padding: "0.05rem 0.4rem"
-    typography: "{typography.label}"
-  adr-badge:
-    textColor: "{colors.accent}"
-    rounded: "{rounded.control}"
-    padding: "0 0.3rem"
   theme-toggle:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.dim}"
     rounded: "{rounded.control}"
     padding: "0.2rem 0.55rem"
+  help-popover:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.card}"
+    padding: "12px 16px"
   breakage-banner-problem:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.problem-text}"
@@ -116,15 +191,14 @@ components:
 ---
 
 <!--
-DERIVED DOCUMENTATION — generated from the shipped artifact (build/serve.py +
-design/tokens.css) for Impeccable's tooling. design/tokens.css remains the sole
-authoritative direction contract; the server inlines it into every page at
-render time. On any conflict between this file and tokens.css, tokens.css wins.
-Re-derive this file (re-run the documenter) whenever tokens.css or the UI's
-visual system changes. Derived 2026-08-31 from the post-light-theme surface
-(ticket #83, ADR-0017); panel sub-headings added 2026-09-10 from the shipped
-reliability panel (issue #14); breakage banner (#15), off-script run bands (#17),
-nested error groups and chip error counts (#33) re-derived 2026-09-17.
+DERIVED DOCUMENTATION — generated from the shipped artifact (build/serve.py,
+build/assets/, design/tokens.css) for Impeccable's tooling. design/tokens.css
+remains the sole authoritative direction contract; the server inlines it into
+every page at render time. On any conflict between this file and tokens.css,
+tokens.css wins. Re-derive this file whenever tokens.css or the UI's visual
+system changes. Re-derived 2026-09-30 from the Tabler layout and card-grammar
+restyle (spec #50, ADR-0029, ADR-0030; tickets #51–#56), including the
+post-shift change that puts record badges on the ok role.
 -->
 
 # Design System: Hindsight
@@ -133,171 +207,186 @@ nested error groups and chip error counts (#33) re-derived 2026-09-17.
 
 **Creative North Star: "The Indigo Deck"**
 
-Hindsight is an observability workhorse in the Grafana/Honeycomb lineage, with one graft from the terminal-instrument family: bar sparklines rather than heat strips for the per-consumer sparks (V3 · Indigo deck, ADR-0007); the what view's header is the one heatmap, a session calendar on the same ink ramp (ADR-0028). It now ships two themes from one token contract (ADR-0017): the dark deck — near-black indigo ground carrying elevated panels — remains the incumbent `:root` base, and a light derivation ("C · Ledger") keeps the same hues and roles on an inverted value structure: white ground, recessed indigo panels, borders over elevation. System preference decides the theme by default; a three-state header toggle (system → light → dark) pins it per browser, applied before first paint. A single periwinkle-family accent marks the active and the interactive; everything numeric sits in the system monospace with tabular figures. The whole surface is server-rendered HTML with inline SVG charts — zero dependencies, no imagery, no runtime font fetches.
+Hindsight is an observability workhorse in the Grafana/Honeycomb lineage. Since ADR-0029 it is a mix, chosen strand by strand on real data: **Tabler's layout and card grammar, on the Indigo deck's palette**. Tabler is a reference, not a dependency — nothing is vendored; its shell, cards, card-tables, stat cards, filled badges, help popovers and icon set were ported by hand into `design/tokens.css` and `build/assets/`. The palette, type, and honesty grammar are the incumbent deck's (ADR-0007): near-black indigo ground, elevated panels, one periwinkle voice, system faces, bar sparks on a shared 30-day axis. Two themes ship from one token contract (ADR-0017): the dark deck is the `:root` base; the light "C · Ledger" derivation keeps every hue and role on a white ground with recessed panels and borders over elevation. The surface is server-rendered HTML with inline SVG charts and inline SVG glyphs — no dependencies, no imagery, no webfont, no runtime font fetches.
 
-The system's second personality trait is honesty grammar: missing data is drawn as absence, never as zero. A day without data is a gap in the chart, an unknown value is an em-dash, unpaired calls read "+n?", and pre-coverage regions of a spark are shaded. The visual language is built to make "unknown" and "zero" impossible to confuse.
+Two chassis carry everything, on purpose (ADR-0029 §4): the **card** (8px) holds data; the **stage panel** (6px, 3px stage-hue left rule) marks stage identity. The radius is the only structural difference between them. No density trim was taken — Tabler's 20px card padding and 65px card headers were measured against the old deck and kept, knowing the pages grow.
+
+The system's second trait is honesty grammar: missing data is drawn as absence, never as zero. A day without data is a gap in a bar spark, an unknown value is an em-dash, unpaired calls read "+n?", pre-coverage regions are shaded, and a trend spark breaks before the first synced day and across unselected days. Any sentence stating a coverage gap stays visible under its card title; only explanation moves behind a help `?`.
 
 **Key Characteristics:**
-- Dense, data-first: 13px body, 10–12px monospace labels and figures, 28px stat numerals.
-- Two themes, one contract: every token holds a value in both; view code is theme-blind and identical under each.
-- One accent (periwinkle family) used sparingly for interaction and state; the amber family reserved for selection/compare.
-- Titled panels; per-day bar sparks on one shared 30-calendar-day axis.
+- Tabler horizontal shell: 56px top bar, 56px nav row, page header, 1320px container.
+- Two chassis: card (8px, ruled 65px header, 20px body) for data; stage panel (6px, 3px stage rule) for stage identity.
+- Dense data type: 13px body, 11–12px monospace figures, 24px stat-card values, uppercase 10–11px labels.
+- One accent (periwinkle) for interaction and current state; amber reserved for selection; status carried by filled badges in the ok / caution / problem roles.
 - Every colour on screen is a `var(--o-*)` token from `design/tokens.css`; no literals in view code.
 
 ## Colors
 
-One set of roles, two value sets: dark is a near-black indigo ground with cool blue-grey text tiers, one periwinkle voice, and a desaturated blue ink ramp; light keeps every hue family and deepens it for contrast on a white ground. The light set was floor-verified before acceptance: worst text contrast 5.18:1 at rendered sizes, every stage hue ≥6.5:1 on the light panel (ADR-0017). Values below read dark · light.
+One set of roles, two value sets: dark is a near-black indigo ground with cool blue-grey text tiers, one periwinkle voice, and a desaturated blue ink ramp; light keeps every hue family and deepens it for contrast on a white ground. Values below read dark · light. Every `-text` weight and every fill/on pair clears AA in both themes (fill/on pairs: ok 7.38 · 6.81, caution 10.41 · 4.69, problem 7.15 · 5.24, neutral 4.62 · 4.61).
 
 ### Primary
-- **Periwinkle** (`--o-accent`, #7c9bff · #2f4fc9): the single interactive voice — links, the current nav item, chip on-state text and border, the ADR badge, the `now` run badge. Never body text, never a fill on a large surface. `--o-accent-ink` (#0b0d14 · #ffffff) is the reserved on-accent ink; the shipped UI never fills a surface with accent, so it currently has no call site.
-- **Compare Amber** (`--o-compare`, #f0b23f · #956609): the selection/compare hue — the selected token-chart column wash at `--o-wash-sel` (0.06 · 0.12 fill-opacity) and the selection rule at `--o-wash-rule` (0.7 · 1); and the in-window heatmap cells, which flip from the ink ramp to compare at four opacities (0.3 · 0.55 · 0.8 · 1), an empty in-window day at `--o-wash-sel`. Nothing else.
+- **Periwinkle** (`--o-accent`, #7c9bff · #2f4fc9): the single interactive voice — links, the nav row's 2px current-view rule, chip-button on-state text and border, the 2px top bar on the pressed stat card, focus rings and strokes, the checkbox `accent-color`, and underlined link-buttons inside notes. Never body text, never a large fill. `--o-accent-ink` (#0b0d14 · #ffffff) is the reserved on-accent ink; nothing fills a surface with accent, so it has no call site.
+- **Selection Amber** (`--o-compare`, #f0b23f · #956609): selection only — the selected token-chart column wash at `--o-wash-sel` (0.06 · 0.12) with its selection rule at `--o-wash-rule` (0.7 · 1), and in-window heatmap cells at four opacities (0.3 · 0.55 · 0.8 · 1), an empty in-window day at `--o-wash-sel`.
 
 ### Semantic
-Text in a semantic role always renders in the `-text` weight (AA on panel); the bright weight is for non-text marks.
-- **Signal Blue** (ok: `--o-ok` #7c9bff · #2f4fc9 / `--o-ok-text` #a3b8ff · #2c49bd): the "fine" pole — shipped usage is inline `code` in ledger entries (`--o-ok-text`) and the *informational* breakage banner (`--o-ok` border, `--o-ok-text` text). Deliberately blue, not green.
-- **Caution Amber** (`--o-caution` #e3b859 · #a87d08 / `--o-caution-text` #eac878 · #846007): the stale-warning role — the dashed `warn` border (bright weight) with its text and code in the `-text` weight; `stale` markers in the how-view.
-- **Problem Red** (`--o-problem` #f27878 · #c23c3c / `--o-problem-text` #f79b9b · #ac3232): error counts in tables and the bold `N ×` count that opens a nested error group (`.err`, `-text` weight); the ` · N err` suffix a category chip carries whether on or off (`.ec`, `-text` weight); the *problem* breakage banner (`--o-problem` border, `--o-problem-text` text); and the errors-per-day bars beneath call sparks (bright weight, non-text mark).
+Each role has three weights: the bright weight for non-text marks, the `-text` weight for text on a surface, and a `-fill` / `-on` pair for filled badges.
+- **Signal Blue** (ok: `--o-ok` #7c9bff · #2f4fc9 / `--o-ok-text` #a3b8ff · #2c49bd / `--o-ok-fill` #7c9bff · #2f4fc9 on `--o-ok-on` #0b0d14 · #ffffff): the "fine" pole, deliberately blue. Text weight: inline `code` in ledger entries, the informational breakage banner, the falling delta on a cost card. Fill: the `empty` and `trivial` status badges, the `now` run badge, the `informational` tier badge — and every record badge (project, continuation, subagent count, ADR count, type and category badges on where).
+- **Caution Amber** (`--o-caution` #e3b859 · #a87d08 / `--o-caution-text` #eac878 · #846007 / `--o-caution-fill` on `--o-caution-on` #0b0d14 · #14182a): the `pending` badge; the invalid-declaration warning's dashed border (bright) with its heading and code in the `-text` weight; `stale` markers on How.
+- **Problem Red** (`--o-problem` #f27878 · #c23c3c / `--o-problem-text` #f79b9b · #ac3232 / `--o-problem-fill` on `--o-problem-on` #0b0d14 · #ffffff): the `lost` and `refused` badges and the `problem` tier badge (fill); error counts, the `N ×` of a nested error group, a category chip's ` · N err`, the problem breakage banner and the rising delta on a cost card (`-text`); the banner border and the error series under a bar spark (bright).
+- **Neutral** (`--o-neutral-fill` #6c7491 · #7a829c on `--o-neutral-on` #ffffff · #14182a): in the contract for a status with no role; no badge uses it.
 
 ### Chart Ink
-Data volume never borrows the accent or semantic hues; it has its own desaturated blue ramp. The ramp orders by contrast against the panel, not by lightness: ink-1 is always the most visible step, so it is the lightest in dark and the darkest in light.
-- **Ink 1–4** (#82a9e8 → #2b4468 dark · #24406e → #b9c4dd light): the stacked token-chart segments (input / output / cache-create / cache-read), highest-contrast first. The same four steps are the heatmap's sequential ramp — ink-4 for the lowest quartile of the in-view peak up to ink-1 for the top — with an empty day on `--o-border`; no separate heat tokens exist.
-- **Spark Blue** (`--o-spark`, #82a9e8 · #24406e): all sparkline call bars.
-- **Gapline** (`--o-gapline`, #4c5470 · #ccd2e2): non-text chart furniture — shipped as the pre-coverage shading on OTEL-fed sparks at `--o-wash-precov` (0.22 · 0.35 opacity).
-- **Axis** (`--o-axis`, #6f7794 · #a0a8be): reserved for non-text chart lines only, in both themes. Axis *text* renders in `--o-dim` — the dark value is 3.99:1 on panel, below AA for text (floor audit, ticket #47).
+Data volume never borrows the accent or semantic hues; it has its own desaturated blue ramp, ordered by contrast against the panel — ink-1 is always the most visible step, so it is the lightest in dark and the darkest in light.
+- **Ink 1–4** (#82a9e8 → #2b4468 · #24406e → #b9c4dd): stacked token-chart segments (input / output / cache-create / cache-read), and the heatmap's sequential ramp (ink-4 lowest quartile up to ink-1), an empty day on `--o-border`.
+- **Spark Blue** (`--o-spark`, #82a9e8 · #24406e): bar-spark call bars and the trend spark's line; its area under the line at `--o-wash-spark` (0.16 · 0.2).
+- **Gapline** (`--o-gapline`, #4c5470 · #ccd2e2): pre-coverage shading on OTEL-fed bar sparks at `--o-wash-precov` (0.22 · 0.35).
+- **Axis** (`--o-axis`, #6f7794 · #a0a8be): non-text chart lines only. Axis *text* is `--o-dim`; the dark axis value is 3.99:1 on panel, below AA for text (ticket #47).
 
 ### Stage Identity
-A categorical palette for the how-view: which declared stage a stated-process card or phase-run band belongs to. Carried only by the 3px left border of `.stage` and `.run` panels (via an inline `--stage` custom property); labels stay `--o-text`, so no `-text` weight exists.
-- **Stage 1–5** (`--o-stage-1..5`: Teal #2fc4c4 · #096060, Violet #a98cf5 · #6137c5, Magenta #e07ad8 · #922a82, Orange #f0995a · #8a4209, Gold #d4c95a · #61570d): assigned positionally — a declaration's stages take 1..5 in declared order and cycle past five. Identity is per project, not per stage name. Light values deepen each hue to hold ≥6.5:1 on the light panel.
-- **Stage Off** (`--o-stage-off`, #6f7794 · #525a74): the fallback rule for anything without a declared stage — an off-script phase-run band (the server sets no inline `--stage`, so `var(--stage, var(--o-stage-off))` resolves to it), the unbucketed lane, and undeclared cards. The status line tallies `off-script ×n` beside the declared stages in the same `--o-dim` mono; session boundaries (`/clear`, `/model`, `/compact`, wayfinder) are excluded from runs and stated in a `.mk` note, never drawn.
-The current run is marked with a small accent `now` badge, not an accent rule, so the rule is free to carry the stage.
+A categorical palette for How: which declared stage a stage panel or run card belongs to, carried only by a 3px left rule (inline `--stage`, falling back to `--o-stage-off`). Labels stay `--o-text`; no `-text` weight exists.
+- **Stage 1–5** (Teal #2fc4c4 · #096060, Violet #a98cf5 · #6137c5, Magenta #e07ad8 · #922a82, Orange #f0995a · #8a4209, Gold #d4c95a · #61570d): positional per declaration, cycling past five; light values hold ≥6.5:1 on the light panel.
+- **Stage Off** (`--o-stage-off`, #6f7794 · #525a74): off-script run cards, the unbucketed lane, undeclared stages.
 
 ### Neutral
-- **Ground** (`--o-bg`, #0b0d14 · #fcfcfe): page background; also the recessed background of open detail rows inside panels.
-- **Panel** (`--o-panel`, #141826 · #f1f3f9): every elevated (dark) or recessed (light) surface — panels, tiles, rows, chips, the header chart.
-- **Border** (`--o-border`, #272e45 · #d9dde9): all borders, dividers, and table rules.
-- **Text** (`--o-text`, #dde2f0 · #14182a): primary text.
-- **Dim** (`--o-dim`, #9aa3bd · #4a5169): secondary text — notes, labels, table heads, counts, axis text.
-- **Faint** (`--o-faint`, #6f7794 · #767e98): the quietest tier; shipped as the ledger row's hover border.
+- **Ground** (`--o-bg`, #0b0d14 · #fcfcfe): the page; also the tint of card-table header and group rows and the recess of an open detail row.
+- **Panel** (`--o-panel`, #141826 · #f1f3f9): top bar, nav row, cards, stat cards, stage panels, chips, popovers, banners.
+- **Border** (`--o-border`, #272e45 · #d9dde9): every border, card-header rule, row rule, and the top bar and nav row's bottom rule.
+- **Text** (`--o-text`, #dde2f0 · #14182a): primary text and the current nav item.
+- **Dim** (`--o-dim`, #9aa3bd · #4a5169): secondary text — pretitle, description, card subtitles, labels, table heads, deltas, notes, axis text, idle nav items and help `?`.
+- **Faint** (`--o-faint`, #6f7794 · #767e98): the quietest tier; shipped only as a run card's hover border. Not for text (3.99 · 3.63:1).
 
 ### Named Rules
-**The One-Contract Rule.** Both themes live in `design/tokens.css` and nowhere else: dark verbatim in `:root`, light behind `@media (prefers-color-scheme: light)` guarded `:root:not([data-theme="dark"])`, plus explicit `[data-theme="light"]` / `[data-theme="dark"]` pin blocks. A new token lands in all four blocks; the two light blocks stay identical; view code never branches on theme.
-**The Token-Only Ink Rule.** Every colour renders via a `var(--o-*)` token from tokens.css. View code contains no colour literals; the only non-token paint is `transparent` on hit-target rects. Theme-sensitive opacities go through the wash tokens (`--o-wash-sel` / `--o-wash-rule` / `--o-wash-precov`), never literals.
-**The Red-With-Blue Rule.** The ok pole is periwinkle blue, never green; red pairs with blue (Few). Nothing in the system is green — in either theme.
-**The Own-Ink Rule.** Chart volume ink comes only from the ink/spark tokens — never accent, never compare. The one semantic colour permitted in a chart is `--o-problem`, and only for the error series drawn beneath its calls spark.
-**The Stage-Rule Rule.** Stage hues are non-text marks only (left rules, dots), positional per declaration, never chart ink and never a stand-in for ok/caution/problem; conversely ink and semantic tokens never key a stage.
+**The One-Contract Rule.** Both themes live in `design/tokens.css` and nowhere else: dark verbatim in `:root`, light behind `@media (prefers-color-scheme: light)` guarded `:root:not([data-theme="dark"])`, plus `[data-theme="light"]` / `[data-theme="dark"]` pin blocks. A new token lands in all four; the two light blocks stay identical; view code never branches on theme.
+**The Token-Only Ink Rule.** Every colour renders via a `var(--o-*)` token. View code contains no colour literals; the only non-token paint is `transparent` on hit-target rects and the idle nav rule. Theme-sensitive opacities go through the wash tokens, never literals.
+**The Red-With-Blue Rule.** The ok pole is periwinkle blue, never green; red pairs with blue (Few) — in banners, tier badges and cost-card deltas alike. Nothing in the system is green.
+**The Filled-Badge Rule.** Badge text sits in its role's `-on` weight on its `-fill`; everywhere else semantic text uses the `-text` weight and the bright weight marks only.
+**The Amber-Caution Rule.** Selection amber never carries text and appears only as a cell or column fill, or the selection rule, in a header visual. Caution appears only as `-text`-weight text, a dashed border, or a filled badge carrying its word — never an unlabelled swatch, never a delta. The same form rule separates `--o-stage-5` from caution on How.
+**The Own-Ink Rule.** Chart volume ink comes only from the ink/spark tokens. The one semantic colour permitted in a chart is `--o-problem`, for the error series beneath its bar spark.
+**The Stage-Rule Rule.** Stage hues are non-text marks only — left rules — positional per declaration, never chart ink and never a stand-in for a semantic role.
 
 ## Typography
 
 **Body Font:** system-ui (with 'Helvetica Neue', sans-serif)
 **Data/Label Font:** ui-monospace (with 'SF Mono', Menlo, monospace)
 
-**Character:** Zero-fetch system faces, identical in both themes — faces, shape, and motion are theme-invariant and live in `:root` alone. The sans carries prose and titles; the monospace carries everything that is a datum — numerals, labels, chips, axis text — always with `font-variant-numeric: tabular-nums` where columns of figures align.
+**Character:** Zero-fetch system faces, identical in both themes. The sans carries prose, titles, badges and Tabler's uppercase caps labels; the monospace carries everything that is a datum — values, figures, deltas, chips, table heads over data, axis text — with `tabular-nums` where figures align in columns.
 
 ### Hierarchy
-- **Stat** (600, 28px `--o-stat-size`, 1.25, mono, tabular-nums): stat-tile numerals only. The largest type on any screen.
-- **Title** (600, 15px): the `h1` wordmark. The measured-median figure in the sunk-cost panel reuses this size in mono (600, 15px).
-- **Panel heading** (bold, 13px): `h2` panel titles, same size as body — hierarchy by weight and position, not size.
-- **Body** (400, 13px, 1.5): default prose and ledger entry text.
-- **Data** (400, 12px, mono): table cells, numeric columns, code, raw-entry `pre` (1.5 line-height on multi-line), the summary line of a nested error group (`--o-text`, count in bold). Verbatim error text steps down to 11px/1.5 mono `--o-dim` in a wrapping `pre`, with its occurrence line (session link · day) at 11px mono `--o-dim`.
-- **Label** (600, 10–11px, mono, 0.05em, UPPERCASE): section heads inside entries, `h3` sub-headings inside a where-view panel that holds more than one table (the reliability panel), table headers, league grid headers, and every how-view `h2` (10px — the how-view's panel headings sit in the Label tier, not the 13px `h2` tier). Non-uppercase 11px mono: day headings, counts, chip buttons, the theme toggle; 10px: project chips; 9px: chart axis text.
+- **Stat** (600, 24px `--o-stat-size`, 1.25, mono, tabular-nums): stat-card values only. The largest type on any screen.
+- **Page title** (600, 20px, 1.4): the view name in the page header.
+- **Card title** (500, 16px): every card header, glyph first.
+- **Brand** (600, 15px): the top bar's wordmark. The sunk-cost panel's measured median reuses 15px in mono.
+- **Body** (400, 13px, 1.5): default prose, ledger entry text, stage and run names.
+- **Data** (400, 12px, mono): numeric cells, code, raw-entry `pre` (1.5 when multi-line), the page description (12px sans) and popover text (12px/1.5 sans) share the size. Verbatim error text steps to 11px/1.5 mono `--o-dim`.
+- **Caps** (500, 11px, 0.04em, UPPERCASE, sans, `--o-dim`): stat-card labels, card-table header and group rows. The pretitle is its 10px/600 sibling.
+- **Label** (600, 10–11px, mono, 0.05em, UPPERCASE, `--o-dim`): `<th>` heads in where's tables, How's section headings and fact heads (10px), ledger entry section heads (11px).
+- **Small mono** (400, 11px): card subtitles and notes are 11px sans `--o-dim`; deltas, counts, chip buttons, the theme toggle, run metadata and error occurrences are 11px mono. Badges are 500 11px/1.6 sans. Chart axis text is 9px mono `--o-dim`.
 
 ### Named Rules
-**The Mono-Datum Rule.** If it is a number, a label over data, or an identifier, it is monospace; if it is prose, it is the sans. Numerals in columns always carry tabular figures.
+**The Mono-Datum Rule.** If it is a number, a label over data, or an identifier in a chip, it is monospace; if it is prose, a title or a badge word, it is the sans. Columns of figures carry tabular figures.
 
 ## Layout
 
-Single-column, full-width, dense. Body padding 1.1rem 1.4rem 2rem; `main` sits 1.1rem below the shared header chrome (wordmark + nav inline, theme toggle floated right, coverage line, project-chip row, window controls, and the view's own header visual in one scrollable mount — a session heatmap on what, the token chart on where). On the what view a four-tile radio row sits 0.6rem above the ledger. Panels stack vertically with 1rem top margins; stat tiles flex-wrap with 0.6rem gaps (min-width 7rem per tile); chip rows flex-wrap at 0.35rem gaps. Panel interior padding is 0.9rem 1.1rem. Tables are full-width, collapsed borders, 12px, with row rules in `--o-border` and no rule after the last row. The consumer league uses a six-column grid (`minmax(9rem,1fr) 128px 3.5rem 3rem 4.5rem 4.5rem`); nested error groups inside an open row's detail leave that grid — plain block summaries indented 0.6rem, each occurrence a further 1rem, and verbatim text wraps (`pre-wrap` + `break-word`) so a long error line never scrolls the page. Breakage banners sit between the header chrome and `main`, 1.1rem below the chart, 0.4rem apart when stacked. Wide charts scroll horizontally inside their panel (`overflow-x: auto`), newest day at the right. The how-view's two-column grids collapse to one column below 760px; everywhere else one layout serves every width, with flex-wrap and scroll absorbing narrowness.
+A Tabler horizontal shell, centred in a 1320px container with 12px gutters. From the top: a 56px **top bar** (brand left, theme toggle right) and a 56px **nav row** (three glyph-led links, the current one on a 2px accent bottom rule), both on `--o-panel` with a 1px `--o-border` bottom rule; then the **page header** 24px below — a wrapping flex row holding pretitle, title and description on the left and the actions slot on the right (window presets, clear, hide cache reads on What and Where; empty on How), gaps 0.75rem × 1.5rem; then the **page body** 24px below, closing on 2rem. The body opens with breakage banners (1rem apart), then the project chip row with its note (and where's coverage line), then on What and Where the header visual as the first card.
+
+Cards stack with 16px between them. Stat cards sit in a four-column grid at 16px gaps, two columns at ≤720px. Card bodies pad 20px; card-table rows pad 0.75rem 20px with 1.5rem column gaps, full-bleed to the card edge, header and group rows 0.5rem 20px. What's ledger is a three-column card-table (`minmax(0,12rem) 1fr auto`: project · session · counts); an open row's entry indents 40px. Where's league keeps its six-column grid (`minmax(9rem,1fr) 128px 3.5rem 3rem 4.5rem 4.5rem`); nested error groups leave it — plain summaries indented 0.6rem, occurrences a further 1rem, verbatim text wrapping. How is a two-column grid (260px aside of stage panels · 1fr), run card bodies a 200px + 1fr grid; both collapse to one column at ≤760px. Wide charts scroll horizontally inside their card, newest day at the right. Chip rows flex-wrap at 0.35rem.
 
 ## Elevation & Depth
 
-Per theme. Dark is a hybrid: tonal layering (panel over ground) plus one shared ambient shadow — panels and stat tiles sit on `--o-panel` with a `--o-border` border and the single elevation token `--o-elev` (`0 3px 10px rgba(0, 0, 0, 0.45)`). Light is flat by contract: `--o-elev: none`, borders over elevation, with the indigo panels reading as recessed fields on the white ground. In both themes depth also runs inward: an open detail row's summary and body recess to `--o-bg`, reading as a well cut into the panel. Motion is one token, `--o-motion` (200ms ease): where-view panels lift `translateY(-1px)` on hover (transform + box-shadow transition; in light only the transform is visible); what-view ledger rows and how-view run bands brighten their border to `--o-faint` instead — the flat surface's hover (a run band keeps its stage-hued left rule through the hover).
+Per theme. Dark is a hybrid: tonal layering (panel over ground) plus one resting shadow, `--o-elev`, on cards, stat cards and stage panels alike — Tabler's `0 1px 2px` card shadow was not adopted. Light is flat at rest (`--o-elev: none`): borders over elevation, the indigo panels reading as recessed fields on white. Floating surfaces take `--o-elev-float` in both themes. Depth also runs inward: card-table header rows and open detail rows recess to `--o-bg`. The top bar and nav row draw their bottom rule as a 1px inset in `--o-border` — a rule, not elevation.
+
+Motion is one token, `--o-motion` (200ms ease), shipped on a single transition: a run card's border brightens to `--o-faint` on hover, keeping its stage rule. Nothing lifts on hover.
 
 ### Shadow Vocabulary
-- **Elevation** (`--o-elev`: `box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45)` dark · `none` light): the only shadow. Panels and stat tiles at rest.
+- **Resting** (`--o-elev`: `0 3px 10px rgba(0, 0, 0, 0.45)` dark · `none` light): cards, stat cards, stage panels. A dashed stage panel drops it.
+- **Floating** (`--o-elev-float`: `0 8px 24px rgba(0, 0, 0, 0.45)` dark · `0 8px 24px rgba(18, 18, 23, 0.12)` light): the help popover only.
 
 ### Named Rules
-**The One-Shadow Rule.** There is exactly one shadow token, and only the dark theme populates it. New surfaces either carry `--o-elev` or are flat; no bespoke shadows, and never a shadow that exists only in light.
+**The Two-Shadow Rule.** Exactly two shadow tokens: resting (dark only) and floating (both themes). A surface at rest in light is flat; only something that floats above the page casts a shadow there. No bespoke shadows.
 
 ## Shapes
 
-Two radii, strictly assigned and theme-invariant: 6px (`--o-radius`) for panels, tiles, ledger rows, and the header chart container; 2px for everything chip-sized — chip buttons, project chips, the ADR badge, the theme toggle. Borders are 1px `--o-border` everywhere. Native `<details>/<summary>` provides all expansion, with the marker suppressed; charts are inline SVG rectangles — bars and 12px heat cells only, no curves, no rounded corners.
+Three radii, strictly assigned and theme-invariant: 8px (`--o-radius-card`) for cards, stat cards and the help popover; 6px (`--o-radius`) for stage panels, filled badges, breakage banners, the dashed warning box and the help button; 2px for chip-sized controls — chip buttons, the theme toggle. Borders are 1px `--o-border`, except the stage rule (3px) and the accent rules (2px nav rule, 2px pressed-stat bar). Native `<details>/<summary>` provides all expansion, marker suppressed. Charts are inline SVG rectangles — bars and 12px heat cells, square-cornered; the trend spark alone is a line, with round caps and joins.
 
 ### Named Rules
-**The Dashed-Absence Rule.** A dashed border means "present but empty, hidden, or invalid" — a declared stage with nothing observed (`.stage.none`, dashed and shadowless), a hidden project chip revealed on demand, the invalid-declaration `warn` card. Solid borders carry everything that has data.
+**The Two-Chassis Rule.** A data section is a card (8px); a stage-identity surface is a stage panel (6px, 3px stage rule). Never swap them; a run card borrows only the stage rule.
+**The Dashed-Absence Rule.** A dashed border means present but empty, hidden, or invalid — a declared stage with nothing observed, a revealed hidden project chip, the invalid-declaration warning. Solid borders carry everything that has data.
 
 ## Components
 
-### Chip Buttons (project chips, window presets, league category chips)
-- **Style:** 11px mono `--o-dim` on `--o-panel`, 1px `--o-border` border, 2px radius, padding 0.2rem 0.55rem, cursor pointer.
-- **On state:** text and border switch to `--o-accent`; background unchanged.
-- **Error count:** a league category chip carries ` · N err` in `--o-problem-text` (`.ec`) whether the chip is on or off, so a switched-off category's errors stay visible.
-- **Checkbox:** the hide-cache-reads toggle uses `accent-color: var(--o-accent)`.
-- **Note action:** a button inside a `.note` is a bare underlined `--o-accent` link-button — no fill, border, or padding.
+### Shell
+- **Top bar:** 56px, `--o-panel`, brand in 15px/600 sans left, theme toggle right.
+- **Nav row:** 56px, links `/what` `/where` `/how` inside `<header>`, each a 16px glyph (list · chart-pie · route) and the view name, padding 0 0.75rem, gap 0.5rem; idle `--o-dim` with a transparent 2px bottom rule, current `--o-text` on a 2px `--o-accent` rule.
+- **Page header:** pretitle (10px/600 uppercase 0.04em `--o-dim`) carrying the coverage datum — "synced through … · N sessions" — then the 20px/600 view title, then a 12px `--o-dim` description; actions slot right, in chip buttons.
 
-### Theme Toggle
-- **Style:** the chip-button treatment floated right in the header — 11px mono `--o-dim` on `--o-panel`, 1px `--o-border`, 2px radius, padding 0.2rem 0.55rem. Label reads `theme: system|light|dark`.
-- **Behavior:** cycles system → light → dark. The pin lives in `localStorage` per browser and is applied as `data-theme` on `<html>` by an inline script in `<head>` (build/assets/theme.js) before first paint — a pinned page never flashes the other theme. The server stores nothing per viewer.
+### Cards
+- **Chassis:** `--o-panel`, 1px `--o-border`, 8px radius, `--o-elev`, 16px vertical margin.
+- **Header:** min 65px, padding 0.75rem 20px, ruled below in `--o-border`; a 16px/500 title led by its glyph, an 11px `--o-dim` subtitle beneath (hint, or any coverage-gap sentence), and card-actions pushed right (chip rows, the help `?`).
+- **Body:** 20px padding. A **headerless card** (How's runs) is body only.
 
-### Project Chip (inline identifier)
-- **Style:** 10px mono `--o-dim`, 1px `--o-border` border, 2px radius, padding 0.05rem 0.4rem; max-width 14rem with ellipsis. Non-interactive; identifies a project or type inside rows.
+### Card-Tables
+- **Grammar:** a visual grammar over the view's own rows, not an element — What's ledger and Where's league keep their `<details>` rows. Full-bleed to the card edge; a header row and group rows in 11px/500 uppercase 0.04em `--o-dim` on `--o-bg`; rows padded 0.75rem 20px, ruled in `--o-border`, the last row unruled. Where's `<table>`s follow the same geometry with 10px/600 mono `<th>` heads and right-aligned 12px mono tabular numerals; errors `--o-problem-text`, unknowns `--o-dim` em-dashes. An open league row recesses to `--o-bg`.
 
-### ADR Badge
-- **Style:** `--o-accent` text and 1px accent border, 2px radius, padding 0 0.3rem — accent outlining content, marking "this session wrote an ADR"; the how-view's `now` run badge reuses the treatment at 10px.
+### Stat Cards
+- **Style:** the card chassis at 20px padding, in a four-up grid. Top line: the 11px/500 uppercase label left, the delta right (11px mono). Then the 24px/600 mono value, an 11px `--o-dim` line (awaiting analysis · unrecoverable, `+n unknown`, share of tokens — or a blank), and a 32px trend spark 12px below.
+- **Delta:** a rounded percent against the equal-length prior window, `—` when there is no whole prior window, no arrow at 0%. `--o-dim` with an arrow glyph on every card except the cost cards (tokens, errors), where up is `--o-problem-text` and down `--o-ok-text`. Never caution.
+- **Radio (What):** the four cards (sessions · actions · decisions · ADRs) are `<button aria-pressed>`; the pressed one keys the heatmap and wears a 2px `--o-accent` bar along its top edge. Nothing else changes.
 
-### Panels
-- **Corner Style:** 6px (`--o-radius`).
-- **Background / Border / Shadow:** `--o-panel` / 1px `--o-border` / `--o-elev` (dark only; flat in light).
-- **Heading:** 13px `h2`, then an 11px `--o-dim` note paragraph explaining the panel's honesty caveats.
-- **Sub-headings:** a panel holding more than one table (reliability: API retries · MCP connection health) separates them with `h3` in the Label tier — 600 11px mono UPPERCASE 0.05em `--o-dim`, margin 0.8rem 0 0.3rem. Hierarchy stays by weight and case, never size; one note paragraph serves the whole panel.
-- **Hover (where-view):** `translateY(-1px)` lift over `--o-motion`.
-- **How-view cards:** `.stage` and `.run` panels add a 3px left rule in the stage hue (inline `--stage`, falling back to `--o-stage-off` for off-script runs); their `h2` headings sit in the Label tier; the current run wears the accent `now` badge.
+### Trend Spark
+- **Grammar:** a 2px `--o-spark` line over a `--o-spark` area at `--o-wash-spark`, over the selected days in date order, own peak. One segment per contiguous run of days; a lone day is a 4px dot. Days before the first synced day are gaps on every card, and on the three analysis cards so is a day whose sessions are all pending (ADR-0030 §7); elsewhere zero is zero.
 
-### Stat Tiles
-- **Style:** panel treatment at padding 0.55rem 1rem 0.5rem, min-width 7rem; a 28px/1.25 600 mono tabular numeral over an 11px `--o-dim` label. Where-view tiles are static (input · output · cache create · cache read · sessions · tool calls · errors · subagents); the errors sub-label carries `+n unknown` when unpaired calls are in view, and the subagents sub-label their share of tokens.
-- **Radio tiles (what-view):** the four tiles — sessions (sub-label carries the trivial · awaiting analysis · unrecoverable qualifiers) · actions · decisions · ADRs — are `<button aria-pressed>`; the pressed one keys the heatmap and takes an `--o-accent` border and label, nothing else changes.
+### Badges
+- **Style:** filled, 6px radius, padding 0 0.4rem, 500 11px/1.6 sans, no wrap; `-on` text on the role's `-fill`. Status badges carry their word before the row text: `pending` caution, `lost` and `refused` problem, `empty` and `trivial` ok. Record badges — project, continuation, subagents, `N ADR`, types and categories on Where — and How's `now` take the ok fill. Breakage tiers: `problem` on the problem fill, `informational` on the ok fill. A project badge ellipsises inside its 12rem column.
 
-### Ledger Rows (what-view)
-- **Style:** native `<details>` styled as a 6px-radius bordered row on `--o-panel`; summary is a flex line of project chip · title · `n actions · n decisions` counts (the stored Did / Decided headers render as Actions / Decisions, ADR-0028). Hover shifts border to `--o-faint` over `--o-motion`. Dim one-liners (`--o-dim` title) mark trivial/pending/defect rows.
-- **Session anchor:** `/what#<sid>` opens and scrolls to the row once; a session outside the current filter is stated in an 11px `--o-dim` `.note` under the ledger, never silently nothing.
+### Chip Buttons (project chips, window presets, clear, category chips)
+- **Style:** 11px mono `--o-dim` on `--o-panel`, 1px `--o-border`, 2px radius, padding 0.2rem 0.55rem.
+- **On state:** text and border to `--o-accent`; background unchanged. A category chip carries ` · N err` in `--o-problem-text` on or off. A revealed hidden project chip is dashed.
+- **Theme toggle:** the same treatment in the top bar, reading `theme: system|light|dark`; cycles system → light → dark, pinned in `localStorage` and applied as `data-theme` before first paint.
 
-### Error Groups (where-view league detail)
-- **Style:** inside an open league row's `--o-bg` detail, one nested `<details class="sub errg">` per exact error line — summary 12px mono `--o-text` with the count `N ×` in bold `--o-problem-text`, a `(no message)` placeholder in `--o-dim`; no grid, no rule, no background change on open.
-- **Occurrences:** each `.occ` is an 11px mono `--o-dim` line — session id as an `--o-accent` link into `/what#<sid>` · day — over a wrapping 11px/1.5 mono `--o-dim` `pre` of the verbatim text.
-- **Uncaptured:** errors whose text was pruned before capture close the list as a `--o-dim` line, "N errors, text not captured" — counted, never dropped.
+### Help Popover
+- **Trigger:** a bare `?` button — the 16px help-circle glyph in `--o-dim`, `--o-text` on hover and focus, 2px `--o-accent` focus outline, 6px radius — in the card's actions.
+- **Popover:** the platform `popover` (open, Esc and click-outside are native); `--o-panel`, 1px `--o-border`, 8px radius, `--o-elev-float`, padding 12px 16px, 12px/1.5 text, max-width min(26rem, 100vw − 32px). Anchored below its trigger (bottom span-left, flipping) where the browser supports anchoring, viewport-centred where not. It carries explanation only; coverage statements stay visible.
+
+### Stage Panels (How)
+- **Style:** `--o-panel`, 1px `--o-border`, 6px radius, `--o-elev`, padding 0.9rem 1.1rem, a 3px left rule in the stage hue. Status and each stated-process stage are stage panels (a stage at 0.5rem 0.7rem, name 13px, detail 11px mono `--o-dim`). A stage with nothing observed is dashed and shadowless, its name `--o-dim`.
+- **Run cards:** headerless cards with the same 3px stage rule, newest first; the current run wears the `now` badge. Off-script is a titled card (route-slash glyph) with its list collapsed behind `show list`.
+- **Warning:** the invalid-declaration box is 1px dashed `--o-caution`, 6px radius, its alert-triangle glyph and heading in `--o-caution-text`.
 
 ### Breakage Banner
-- **Style:** one per open breakage row, on every view, between header and `main`: 12px on `--o-panel`, 6px radius, padding 0.55rem 0.9rem, 1px border in the tier's bright weight and text in its `-text` weight — problem (`--o-problem` / `--o-problem-text`) or informational (`--o-ok` / `--o-ok-text`); inline `code` at 11px mono. Red pairs with blue here, never green.
+- **Style:** one per open breakage row, at the top of every page body: 12px on `--o-panel`, 6px radius, padding 0.55rem 0.9rem, a 1px border in the tier's bright weight and text in its `-text` weight, led by the tier badge. Problem red pairs with informational blue.
 
-### Tables
-- **Style:** 12px, full-width, collapsed; headers 10px 600 mono UPPERCASE 0.05em `--o-dim` with a `--o-border` bottom rule; numeric cells right-aligned 12px mono tabular-nums; errors in `--o-problem-text`; unknowns as `--o-dim` em-dashes.
+### Error Groups (Where league detail)
+- **Style:** inside an open league row's `--o-bg` detail, one nested `<details>` per exact error line — 12px mono `--o-text` summary with the count `N ×` in 600 `--o-problem-text`; each occurrence an 11px mono `--o-dim` line (session link · day) over a wrapping 11px/1.5 `pre`. Uncaptured errors close the list as a stated count, never dropped.
 
-### Sparklines (signature component)
-- **Grammar:** per-day bars on the shared 30-calendar-day axis ending at the last synced day; 3px bars, 1px gaps, 14px tall (own peak per spark; minimum bar height 1px). A missing day is a gap, never a zero-height bar.
-- **Error series:** when errors exist, a second 6px-tall red (`--o-problem`) band renders 2px beneath the calls band, on its own peak.
-- **Coverage shading:** OTEL-fed sparks shade the pre-coverage region with `--o-gapline` at `--o-wash-precov` opacity — capture didn't exist yet, not zero activity.
-- **Header chart (where-view):** the same grammar scaled up — 14px bars, 3px gaps, 96px tall, stacked in ink-1…ink-4; axis labels 9px mono in `--o-dim` every 7th day; selection washes the column in `--o-compare` at `--o-wash-sel` with a 2px compare rule beneath at `--o-wash-rule`.
+### Icons
+- **Set:** 19 glyphs derived from Tabler Icons 3.48.0 (MIT, credited in `LICENSES/tabler-icons.txt`), paths in `build/assets/icons.js`. Markup carries `data-icon="<name>"` placeholders; the script fills each with a 16px inline SVG, stroke 2, `currentColor`, round caps and joins. One glyph per nav item, card title, help trigger and delta arrow, plus How's clock (Status) and alert-triangle (warning). No webfont, nothing vendored.
 
-### Session Heatmap (what-view header)
-- **Grammar:** one 12px cell per local day, 2px gaps, seven rows Monday-first with Mon and Fri labelled down the left, one column per calendar week from the ledger's first day to the last synced day, newest at right; month labels along the top at each month's first column, 9px mono `--o-dim`. Hue is `ceil(value / peak × 4)` over the in-view peak, keyed by the pressed tile: an empty day on `--o-border`, then ink-4 → ink-1. The tooltip and `aria-label` carry all four counts whichever keys the heat.
-- **Selection:** a day is a `.col` button in either header visual; a cell in the window — the selected set, else the preset range — leaves the ink ramp for `--o-compare` at an opacity per level (0.3 · 0.55 · 0.8 · 1); an empty in-window day is the column wash, `--o-wash-sel`. No outline: red is the problem hue here, so the window's hue is compare amber, never a red scale. The focus ring is an `--o-accent` stroke. The selection is a set of days shared with the where view — click toggles, shift-click ranges from the last-clicked day, a preset or clear empties it.
+### Bar Sparks (signature component)
+- **Grammar:** per-day bars on table rows over the shared 30-calendar-day axis ending at the last synced day: 3px bars, 1px gaps, 14px tall, own peak, minimum bar 1px. A missing day is a gap, never a zero-height bar. An error series, when present, is a 6px `--o-problem` band 2px beneath, on its own peak. OTEL-fed sparks shade the pre-coverage region in `--o-gapline` at `--o-wash-precov`.
+
+### Header Visuals
+- **Token chart (Where):** the bar grammar scaled up — 14px bars, 3px gaps, 96px tall, stacked ink-1…ink-4; 9px mono `--o-dim` axis labels every 7th day; a selected column washes in `--o-compare` at `--o-wash-sel` with the compare rule beneath at `--o-wash-rule`.
+- **Session heatmap (What):** one 12px cell per local day, 2px gaps, seven rows Monday-first (Mon and Fri labelled), one column per week, month labels on top in 9px mono `--o-dim`. Level is `ceil(value / peak × 4)` keyed by the pressed stat card: empty on `--o-border`, then ink-4 → ink-1; in-window cells flip to compare at four opacities.
+- **Selection:** a day is a focusable column in either visual (focus is an `--o-accent` stroke); click toggles, shift-click ranges, a preset or clear empties the shared day set.
 
 ## Do's and Don'ts
 
 ### Do:
 - **Do** render every colour via a `var(--o-*)` token; tokens.css is inlined into every page and is the only place a colour value lives.
 - **Do** land any new token in all four blocks of tokens.css — dark `:root`, the light media block, and both pin blocks — and keep the two light blocks identical.
-- **Do** use the `-text` weight whenever a semantic colour carries text; the bright weight is for marks (spark bars, rules, the warn border).
-- **Do** route theme-sensitive opacities through the wash tokens (`--o-wash-sel` / `--o-wash-rule` / `--o-wash-precov`); a wash that reads on near-black disappears on white.
-- **Do** draw absence as absence: missing day = gap, unknown value = em-dash in `--o-dim`, unpaired = "+n?", pre-coverage = shaded region, uncaptured error text = a stated count line. Never render an unknown as zero.
-- **Do** keep sparks on the shared 30-calendar-day axis with their own peak, and put figures in monospace with tabular-nums.
-- **Do** pair each panel with a dim note stating its coverage caveats — the honesty prose is part of the component.
+- **Do** put a data section in a card (8px, ruled 65px header, 20px body) and stage identity in a stage panel (6px, 3px stage rule).
+- **Do** use the `-text` weight for semantic text, the `-fill`/`-on` pair for a filled badge, and the bright weight for marks only.
+- **Do** keep any sentence that states a coverage gap or capture start visible under its card title; only explanation goes behind the help `?`.
+- **Do** draw absence as absence: missing day = gap, unknown value = `--o-dim` em-dash, unpaired = "+n?", pre-coverage = shaded, trend spark broken across unsynced or unselected days.
+- **Do** keep bar sparks on the shared 30-calendar-day axis with their own peak, and figures in monospace with tabular-nums.
+- **Do** draw every glyph from `icons.js` as 16px inline SVG in `currentColor`.
 
 ### Don't:
-- **Don't** branch on theme in view code or assets; views are theme-blind. Theme is decided entirely by tokens.css plus the pre-paint pin in theme.js.
-- **Don't** introduce green; the ok pole is periwinkle blue and red pairs with blue, in both themes — the breakage banner's problem/informational pair is the shipped instance.
-- **Don't** put the accent on body text or large surfaces — it marks interaction and state only.
-- **Don't** use accent, compare, or semantic hues for chart volume ink; volume is ink/spark only (the error series in `--o-problem` is the sole semantic chart mark).
-- **Don't** set axis or other sub-AA text in `--o-axis`; chart text uses `--o-dim` (ticket #47). `--o-axis` is for non-text chart lines, in both themes.
-- **Don't** set text in a stage hue or key a stage to an ink/semantic token; stage colour lives on rules only.
-- **Don't** add shadows in the light theme — light conveys depth with borders and recessed panels (`--o-elev: none` is the contract, not an omission).
-- **Don't** fetch fonts, load imagery, or add dependencies; the surface is system faces, inline SVG, and one inline stylesheet.
+- **Don't** branch on theme in view code or assets; views are theme-blind.
+- **Don't** introduce green; the ok pole is periwinkle blue and red pairs with blue, in both themes.
+- **Don't** put the accent on body text or large surfaces — it marks interaction and current state only.
+- **Don't** let selection amber carry text, or caution appear as an unlabelled swatch or a delta hue.
+- **Don't** use accent, compare, or semantic hues for chart volume ink; the error series in `--o-problem` is the sole semantic chart mark.
+- **Don't** set text in `--o-axis`, `--o-faint`, or a stage hue.
+- **Don't** give a surface at rest a shadow in light, or invent a shadow beyond `--o-elev` and `--o-elev-float`.
+- **Don't** fetch fonts, load imagery, vendor Tabler, or add dependencies; the surface is system faces, inline SVG and one inline stylesheet.

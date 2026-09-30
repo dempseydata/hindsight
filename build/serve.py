@@ -701,8 +701,9 @@ def _asset(name):
 
 
 def _blob(obj):
-    """JSON safe to embed in a <script> tag (model text can hold "</...")."""
-    return json.dumps(obj).replace("</", "<\\/")
+    """JSON safe to embed in a <script> tag: model text can hold "</script>"
+    or "<!--", so every "<" goes out as its JSON escape."""
+    return json.dumps(obj).replace("<", "\\u003c")
 
 
 def _icon(name, fallback=""):

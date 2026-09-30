@@ -154,7 +154,7 @@ def fixture_db(path):
          "- **Decided:**\n  - Ship on Friday", 2),
         ("s2", "big", "2026-08-03", 1, None, None),          # SKIP
         ("s3", "small", "2026-08-02", 0,
-         "I'm ready to help, but I don't see a transcript.", None),  # #38 row
+         "I'm ready to help, but I don't see a transcript. <!--<script>", None),  # #38 row
         ("s4", "pruned", "2026-08-02", 0,
          "### Paragraph entry\n\n**Did:** Read a; wrote b; shipped c.", None),
         ("s5", "pruned", "2026-08-04", 1, None, None),
@@ -539,6 +539,14 @@ class ServerTest(unittest.TestCase):
         # a usage-less session keeps its start day; one row, no note
         self.assertEqual([r["d"] for r in rows if r["id"] == "s4"],
                          ["2026-08-02"])
+
+    def test_blob_cannot_open_a_script_comment(self):
+        """A model's text holding `<!--<script>` must not reach the inline
+        script raw: the HTML parser would enter script-data-escaped state
+        and swallow the page's own closing tag (handover preflight, #57)."""
+        _, body = self.get("/what")
+        self.assertNotIn("<!--", body)
+        self.assertIn(r"\u003c!--\u003cscript>", body)
 
     def test_where_view_embeds_blob(self):
         _, body = self.get("/where")

@@ -167,6 +167,7 @@ def fixture_db(path):
     # invalid fence; "pruned" declares nothing and must not be selectable
     conn.executemany("INSERT INTO command_grains (session_id, command, at)"
                      " VALUES (?, ?, ?)", [
+        ("s1", "/clear", "2026-08-01T08:59:00Z"),    # a session boundary (#70)
         ("s1", "/grill-me", "2026-08-01T09:00:00Z"),
         ("s1", "/grill-me", "2026-08-01T09:30:00Z"),
         ("s1", "/grill-me", "2026-08-01T09:45:00Z"),
@@ -278,6 +279,34 @@ class ParseEntryTest(unittest.TestCase):
         self.assertIsNone(serve.parse_entry(None))
 
 
+class QuietHowTest(unittest.TestCase):
+    """#55 (story 33): a declaring project whose trail is only a session
+    boundary has no phase runs — its own tiny DB, so the shared fixture's
+    counts stay put."""
+    def test_status_dashed_without_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = analyze.init_db(Path(tmp) / "hindsight.db")
+            conn.executescript(listener.SCHEMA)
+            conn.execute("INSERT INTO sessions (id, project, transcript_path,"
+                         " date, status) VALUES ('q1', 'quiet', 'x', '2026-08-02', 'done')")
+            conn.execute("INSERT INTO command_grains (session_id, command, at)"
+                         " VALUES ('q1', '/clear', '2026-08-02T10:00:00Z')")
+            conn.commit()
+            conn.close()
+            d = Path(tmp) / "quiet" / ".claude"
+            d.mkdir(parents=True)
+            (d / "my-process.md").write_text(DECL)
+            self.server = serve.make_server(0, Path(tmp) / "hindsight.db", tmp)
+            self.port = self.server.server_address[1]
+            threading.Thread(target=self.server.serve_forever, daemon=True).start()
+            try:
+                _, body = ServerTest.get(self, "/how?p=quiet")
+            finally:
+                self.server.shutdown()
+                self.server.server_close()
+        self.assertIn('<div class="o-stage-panel status none"><h2>', body)
+
+
 class ServerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -369,16 +398,55 @@ class ServerTest(unittest.TestCase):
         self.assertIn("Ideate ×1 · Build ×1 · off-script ×1</p>", body)
         # stage hue on both sides, current run badged (ticket #71); the
         # off-script run carries no --stage, so it wears the off hue (#17)
-        self.assertIn('class="panel run"><div class="who"><b>off-script<span class=now>now</span>', body)
-        self.assertIn('class="panel run" style="--stage: var(--o-stage-2)"><div class="who"><b>Build</b>', body)
-        self.assertIn('class="panel stage" style="--stage: var(--o-stage-2)"><b>Build', body)
+        # runs are headerless cards (#55, #44), the now marker a filled ok badge
+        self.assertIn('class="o-card run"><div class="o-card-body"><div class="who">'
+                      '<b>off-script<span class="o-badge o-ok">now</span>', body)
+        self.assertIn('class="o-card run" style="--stage: var(--o-stage-2)">'
+                      '<div class="o-card-body"><div class="who"><b>Build</b>', body)
+        self.assertIn('class="o-stage-panel stage" style="--stage: var(--o-stage-2)"><b>Build', body)
         self.assertIn("write .claude/skills/x/SKILL.md ×1", body)   # still in the aside's list
-        self.assertNotIn('class="panel stage"><b>off-script', body)  # never a stated stage
+        self.assertNotIn('class="o-stage-panel stage"><b>off-script', body)  # never a stated stage
+        self.assertNotIn('class="panel', body)
         self.assertIn("used: grilling, implement", body)
         self.assertIn("Stated process", body)
         self.assertNotIn('id="chart"', body)       # no shared filter chrome
         self.assertNotIn("const DATA", body)       # no filter data blob (#83:
         # the theme pin script is shared chrome and does render here)
+
+    def test_how_chassis_off_script_card_and_stage_hues(self):
+        """#55 (ADR-0029 §4, #44): Status and the stated-process aside are
+        stage panels (6px, a 3px stage-hue rule, dashed when nothing is
+        observed), runs and off-script are cards; the section titles carry
+        #47's glyphs; off-script's list is collapsed behind `show list`,
+        its exclusion note visible. Stage hues are non-text marks only
+        (ADR-0007, #71 amendment): every declaration using one is a border."""
+        _, body = self.get("/how?p=big")
+        self.assertIn('<div class="o-stage-panel status"><h2>'
+                      '<span data-icon="clock" aria-hidden="true"></span>Status</h2>', body)
+        self.assertIn('<h2><span data-icon="list-check" aria-hidden="true"></span>'
+                      "Stated process</h2>", body)
+        self.assertIn('<div class="o-card"><div class="o-card-head"><div>'
+                      '<h2 class="o-card-title"><span data-icon="route-slash" aria-hidden="true">'
+                      '</span>Off-script</h2><p class="o-card-sub">4 events · 4 distinct</p>'
+                      '</div></div><div class="o-card-body">', body)
+        off = body[body.index("Off-script</h2>"):]
+        self.assertLess(off.index('<p class="mk">'), off.index("<details><summary>show list</summary>"))
+        self.assertNotIn("<details open", off)
+        css = body[body.index("<style>"):body.index("</style>")]
+        self.assertRegex(css, r"\.o-stage-panel \{[^}]*border-radius: var\(--o-radius\);"
+                              r"[^}]*box-shadow: var\(--o-elev\);")
+        self.assertRegex(css, r"\.o-stage-panel \{[^}]*"
+                              r"border-left: 3px solid var\(--stage, var\(--o-stage-off\)\);")
+        self.assertRegex(css, r"\.o-stage-panel\.none \{[^}]*border-style: dashed;")
+        self.assertRegex(css, r"#how \.run \{[^}]*"
+                              r"border-left: 3px solid var\(--stage, var\(--o-stage-off\)\);")
+        uses = re.findall(r"([\w-]+)\s*:[^;{}]*var\(--(?:o-)?stage", css)
+        self.assertTrue(uses)
+        for prop in uses:
+            self.assertTrue(prop.startswith("border"), prop)
+        _, small = self.get("/how?p=small")
+        self.assertIn('<div class="warn">', small)
+        self.assertRegex(small, r"#how \.warn \{[^}]*border: 1px dashed var\(--o-caution\);")
 
     def test_former_name_on_how_page_body_and_nowhere_else(self):
         """Ticket #6 / ADR-0018: the how-view's page body says "formerly
@@ -403,7 +471,11 @@ class ServerTest(unittest.TestCase):
         self.assertIn("line 4: unknown key `cmds`", body)
         self.assertIn("unbucketed", body)
         self.assertIn("used: implement", body)     # trail still shown
+        # the unbucketed lane takes the run's card, in the off hue (#55)
+        self.assertIn('<div class="o-card run"><div class="o-card-body"><div class="who">', body)
+        self.assertIn('<div class="warn"><b>', body)  # the dashed box, not a card
         self.assertNotIn("Status", body)
+        self.assertNotIn('class="o-stage-panel', body)
         _, body = self.get("/how?p=nope")
         self.assertIn('aria-current=page>big</a>', body)  # falls back
         self.assertIn("nope declares no process", body)

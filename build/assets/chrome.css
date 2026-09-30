@@ -28,7 +28,7 @@ a { color: var(--o-accent); text-decoration: none; }
 .o-page-desc { margin: 0; color: var(--o-dim); font-size: 12px; }
 .o-page-body { margin-top: 24px; padding-bottom: 2rem; }
 /* The card chassis (ADR-0029 §2, §4): holds data; the stage panel below
-   (.panel, --o-radius) marks stage identity */
+   (.o-stage-panel, --o-radius) marks stage identity */
 .o-card, .o-stat-card { background: var(--o-panel); border: 1px solid var(--o-border);
   border-radius: var(--o-radius-card); box-shadow: var(--o-elev); margin: 16px 0; }
 .o-card-head { display: flex; align-items: center; gap: .75rem; min-height: 65px;
@@ -136,4 +136,11 @@ button.o-stat-card[aria-pressed="true"]::before { content: ""; position: absolut
 .panel { background: var(--o-panel); border: 1px solid var(--o-border);
   border-radius: var(--o-radius); box-shadow: var(--o-elev); padding: .9rem 1.1rem; }
 .panel h2 { margin: 0 0 .4rem; font-size: 13px; }
-.panel p { margin: .2rem 0; color: var(--o-dim); }
+.panel p, .o-stage-panel p { margin: .2rem 0; color: var(--o-dim); }
+/* The stage panel (ADR-0029 §4, #44, #46): the incumbent panel at 6px, its
+   3px left rule in the stage hue — a non-text mark (ADR-0007 #71) — dashed
+   when nothing is observed */
+.o-stage-panel { background: var(--o-panel); border: 1px solid var(--o-border);
+  border-radius: var(--o-radius); box-shadow: var(--o-elev); padding: .9rem 1.1rem;
+  border-left: 3px solid var(--stage, var(--o-stage-off)); }
+.o-stage-panel.none { border-style: dashed; box-shadow: none; }

@@ -7,8 +7,8 @@ Authority: push + tracker yes · End state: branch only · Baseline: 221 tests, 
 | #51 Contract: grammar tokens, amber/caution rule, floor check | done | 440cf3a | 1 | 226 / 31.0 s | --o-stat-size 24px already live on today's tiles |
 | #52 One shell for all three views | done | bb2abf5 | 1 | 232 / 34.4 s | browser check: chip, preset, day-set re-render; how link gains ?p= |
 | #53 Stat cards with delta and trend spark | done | 01b9f6a | 1 | 233 / 30.7 s | browser check: day-set 09-23,24,26 → one segment + dot, delta —; preset 14 hues per card |
-| #54 What: ledger card-table, badges, help popover | done | (next row's commit) | 0 | 236 / 33.6 s | browser check: card-table + group rows, anchors, popover by mouse/keyboard both themes |
-| #55 How: runs as cards, stage panels, off-script card | todo | | | | |
+| #54 What: ledger card-table, badges, help popover | done | 3316edc | 0 | 236 / 33.6 s | browser check: card-table + group rows, anchors, popover by mouse/keyboard both themes |
+| #55 How: runs as cards, stage panels, off-script card | done | (next row's commit) | 1 | 238 / 36.4 s | browser: runs 8px cards + stage rule, stage panels 6px, now badge on ok pair, no hue on text |
 | #56 Where: sections as cards | todo | | | | |
 | #57 Re-derive DESIGN.md, retake screenshots | human | | | | excluded: public screenshots, documenter, public push |
 
@@ -33,6 +33,8 @@ Authority: push + tracker yes · End state: branch only · Baseline: 221 tests, 
 - #54: card-table header tint var(--o-bg); .o-card-table-group / .o-card-table-row — ADR? no
 - #54: ledger rows lose the old border-colour hover — ADR? no
 - #54: popover anchored by CSS position-area, centred where unsupported; shared helper _help(pid, note) — ADR? no
+- #55: Status's 3px rule takes the current run's stage hue (off hue when the current run is off-script); dashed when there are no runs — ADR? no
+- #55: section-title h2s keep the small uppercase label style, glyph beside them — ADR? no
 - #52: .playwright-cli/ added to .gitignore (browser-check snapshots) — ADR? no
 
 ## Blocked
@@ -40,6 +42,9 @@ Authority: push + tracker yes · End state: branch only · Baseline: 221 tests, 
 ## Nits
 - #51: floor-check role regex `(\w+)` skips a hyphenated role (`--o-info-x-fill`); use `(\w[\w-]*)`
 - #51: floor-check asserts are bare `assert`, stripped under `python -O`; self.fail/ValueError sturdier
+- #55: only the off-hue Status rule is tested
+- #55: .o-stage-panel restates .panel's rules (chrome.css:143-145); collapse once where drops .panel
+- #55: QuietHowTest conn.close() not in finally; borrows ServerTest.get — a module-level get(port, path) is cleaner
 - #54: what.css:19 project badge sits ~2px low — add vertical-align: top
 - #54: "entry" header labels the counts column; empty <span></span> third cells can go
 - #54: light-theme header tint (--o-bg) reads lighter than the rows

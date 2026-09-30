@@ -550,7 +550,9 @@ def _status(conn, d):
     nothing generated here (ADR-0008), and no SQL here either."""
     runs = d["runs"]
     nar = how.narrative(conn, d["project"], d)
-    out = ['<div class="panel status"><h2>Status</h2>']
+    # a stage panel (#55): its rule is the current run's stage
+    hue = _hue(d, runs[-1]["stage"]) if runs else ""
+    out = [f'<div class="o-stage-panel status{"" if runs else " none"}"{hue}><h2>{_icon("clock")}Status</h2>']
     if nar:
         out.append('<div class="facts">')
         for g in BOUNDS:  # the contract's group names, in contract order
@@ -582,10 +584,10 @@ def _status(conn, d):
 
 
 def _runs(d):
-    """Phase-run bands, newest first, each ruled in its stage hue; the current
-    run wears the `now` badge (#71)."""
+    """Phase-run bands, newest first: headerless cards (#55), each ruled in
+    its stage hue; the current run wears the filled `now` badge (#71)."""
     out = ["<h2>Phase runs · newest first</h2>"]
-    last = len(d["runs"]) - 1
+    last, badge = len(d["runs"]) - 1, '<span class="o-badge o-ok">now</span>'
     for i, (r, x) in reversed(list(enumerate(zip(d["runs"], d["run_detail"])))):
         titles = "".join(f"<li>{html.escape(t)}</li>" for t in r["titles"])
         if not titles:
@@ -597,12 +599,12 @@ def _runs(d):
             meta += '<p class="meta">also: ' + html.escape(" · ".join(
                 f"{k} {n}" for k, n in x["minor"].items())) + "</p>"
         out.append(
-            f'<div class="panel run"{_hue(d, r["stage"])}>'
+            f'<div class="o-card run"{_hue(d, r["stage"])}><div class="o-card-body">'
             f'<div class="who"><b>{html.escape(r["stage"])}'
-            f'{"<span class=now>now</span>" if i == last else ""}</b>'
+            f'{badge if i == last else ""}</b>'
             f'<small>{_span(r["start"], r["end"])}</small>'
             f'<small>{x["sessions"]} session{"s" * (x["sessions"] != 1)} · {x["events"]} events</small></div>'
-            f"<div><ul>{titles}</ul>{meta}</div></div>")
+            f"<div><ul>{titles}</ul>{meta}</div></div></div>")
     return "".join(out)
 
 
@@ -617,11 +619,12 @@ def _sessions(d):
         t = d["sessions"].get(sid, {}).get("title")
         names = how.used_names(es)
         out.append(
-            f'<div class="panel run"><div class="who"><b>{local_day(es[0]["at"]) or "?"}</b>'
+            f'<div class="o-card run"><div class="o-card-body"><div class="who">'
+            f'<b>{local_day(es[0]["at"]) or "?"}</b>'
             f"<small>{len(es)} events</small></div><div><ul>"
             + (f"<li>{html.escape(t)}</li>" if t else '<li class="dim">no audit title</li>')
             + "</ul>" + (f'<p class="meta">used: {html.escape(", ".join(names))}</p>'
-                         if names else "") + "</div></div>")
+                         if names else "") + "</div></div></div>")
     return "".join(out)
 
 
@@ -635,15 +638,15 @@ def _aside(d):
         return (f'<div class="warn"><b>{_icon("alert-triangle")}Declaration invalid — ignored whole.</b>'
                 f"<br>{html.escape(dec['error'])}<br><code>.claude/my-process.md</code></div>"
                 + tally)
-    out = ["<h2>Stated process</h2>"]
+    out = [f'<h2>{_icon("list-check")}Stated process</h2>']
     for s, agg in zip(dec["stages"], d["summary"]):
         mk = " · ".join(f"{k}: {', '.join(s[k])}" for k in how.MARKER_KEYS if s[k])
         if agg["count"]:
-            out.append(f'<div class="panel stage"{_hue(d, s["name"])}><b>{html.escape(s["name"])}</b>'
+            out.append(f'<div class="o-stage-panel stage"{_hue(d, s["name"])}><b>{html.escape(s["name"])}</b>'
                        f'<small>{agg["count"]} events · {_span(agg["first_seen"], agg["last_seen"])}</small>'
                        f'<span class="mk">{html.escape(mk)}</span></div>')
         else:
-            out.append(f'<div class="panel stage none"{_hue(d, s["name"])}><b>{html.escape(s["name"])}</b>'
+            out.append(f'<div class="o-stage-panel stage none"{_hue(d, s["name"])}><b>{html.escape(s["name"])}</b>'
                        f'<small>nothing observed</small><span class="mk">{html.escape(mk)}</span></div>')
     off, bounds = d["off_script"], d["boundaries"]
     # the exclusion rides a note, not the h2: the label style is uppercase and
@@ -651,11 +654,14 @@ def _aside(d):
     excluded = (f'<p class="mk">{sum(bounds.values())} session-boundary events excluded: '
                 + ", ".join(f"{html.escape(n)} ×{c}" for n, c in bounds.items()) + "</p>"
                 if bounds else "")
-    out.append(f'<h2 class="offh">Off-script · {sum(o["count"] for o in off)} events'
-               f' · {len(off)} distinct</h2>{excluded}<details><summary>show list</summary>'
+    # a card titled Off-script (#55, #44): note visible, list collapsed
+    out.append('<div class="o-card"><div class="o-card-head"><div><h2 class="o-card-title">'
+               f'{_icon("route-slash")}Off-script</h2><p class="o-card-sub">'
+               f'{sum(o["count"] for o in off)} events · {len(off)} distinct</p></div></div>'
+               f'<div class="o-card-body">{excluded}<details><summary>show list</summary>'
                '<ul class="off">' + "".join(
                    f'<li>{html.escape(o["kind"])} {html.escape(o["name"])} ×{o["count"]}</li>' for o in off)
-               + "</ul></details>")
+               + "</ul></details></div></div>")
     out.append(tally)
     return "".join(out)
 

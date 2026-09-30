@@ -21,6 +21,7 @@ local-data/
 # Tooling output and captures — never tracked in a public repo
 .impeccable/
 .playwright-mcp/
+.playwright-cli/
 graphify-out/
 *.png
 !docs/screenshots/*.png

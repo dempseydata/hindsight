@@ -1,5 +1,4 @@
 
-#hsel { margin: .8rem 0 0; display: flex; flex-wrap: wrap; gap: .35rem; }
 #how { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: .9rem;
   align-items: start; margin-top: .9rem; }
 #how aside h2, #how h2 { margin: 0 0 .5rem; color: var(--o-dim);

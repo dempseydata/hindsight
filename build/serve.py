@@ -12,10 +12,11 @@ Every day bucket is the operator's local day, converted at read time from
 the stored UTC timestamp (ADR-0014) — `day_sql()` in SQL, `local_day()` in
 Python, both from analyze.py so the two can never drift.
 
-Shared header chrome (both views): project chips that filter, never
-switch; window presets 7/14/28/90/all, default 14, anchored to the
-last-synced day; a hide-cache-reads toggle; and a `#chart` mount whose
-visual is the view's own (ADR-0028) — a session heatmap on what, the
+One shell for all three views (ADR-0029 §1, #52): top bar, nav row, page
+header, page body. Filter chrome (what and where): project chips that
+filter, never switch, heading the page body; window presets 7/14/28/90/all, default 14, anchored to the
+last-synced day, and a hide-cache-reads toggle, in the page header's
+actions slot; and a `#chart` mount in the first card whose visual is the view's own (ADR-0028) — a session heatmap on what, the
 stacked per-day token chart on where — both calendar-continuous,
 scrollable, newest at right. A click on a day toggles it in a selection
 set, shift-click adds a range from the last-clicked day; the set, when
@@ -47,7 +48,8 @@ absent declaration = no view), rendered server-side with no script: the
 status card (model-written Built / Reversed / Now from `status_narrative`,
 marked stale when its ledger hash no longer matches the live ledger, the
 mechanical line when absent) over the phase runs newest first, beside the
-stated-process panel. The shared chips / chart / window chrome does not
+stated-process panel. It takes the shell with an empty actions slot and
+the selector as the chip row; the chips / chart / window chrome does not
 appear — the choice switches, it never filters. An invalid declaration
 renders its line-numbered error and the trail grouped by session.
 """
@@ -140,8 +142,12 @@ def breakage_banner(conn):
     rows = [dict(zip(BREAKAGE_COLS, r)) for r in conn.execute(
         f"SELECT {', '.join(BREAKAGE_COLS)} FROM breakage WHERE acknowledged_at IS NULL"
         " ORDER BY id")]
+    # the tier as a filled badge (ADR-0030 §9): problem on the problem fill,
+    # informational on the ok fill — red pairs with blue
     return "".join(
-        f'<div class="breakage {r["tier"]}"><b>transcript shape changed · {r["tier"]}</b> '
+        f'<div class="breakage {r["tier"]}"><span class="o-badge'
+        f' o-{"problem" if r["tier"] == "problem" else "ok"}">{r["tier"]}</span>'
+        f" <b>transcript shape changed</b> "
         f"{html.escape(breakage_text(r))} · ingest continued; rows since may be"
         f'{" thin" if r["tier"] == "problem" else " unaffected"}. '
         f"<code>analyze.py acknowledge-breakage {r['id']}</code> to close</div>"
@@ -626,7 +632,7 @@ def _aside(d):
     tally = (f'<p class="note">{len(d["sessions"])} sessions · {len(d["trail"])} trail events'
              f" · {len({local_day(e['at']) for e in d['trail']})} active days</p>")
     if dec["state"] == "invalid":
-        return (f'<div class="warn"><b>Declaration invalid — ignored whole.</b>'
+        return (f'<div class="warn"><b>{_icon("alert-triangle")}Declaration invalid — ignored whole.</b>'
                 f"<br>{html.escape(dec['error'])}<br><code>.claude/my-process.md</code></div>"
                 + tally)
     out = ["<h2>Stated process</h2>"]
@@ -693,75 +699,91 @@ def _blob(obj):
     return json.dumps(obj).replace("</", "<\\/")
 
 
+def _icon(name):
+    """A glyph placeholder (ADR-0030 §2): icons.js fills it with inline SVG."""
+    return f'<span data-icon="{name}" aria-hidden="true"></span>'
+
+
+NAV_GLYPH = {"what": "list", "where": "chart-pie", "how": "route"}
+# the header visual's card per view: glyph and title (ADR-0029 §1)
+VISUAL = {"what": ("calendar", "Sessions per day"), "where": ("chart-bar", "Tokens per day")}
+
+
 def _nav(view):
-    """Header nav with the current view marked."""
-    return " ".join(f'<a href="/{v}"{" aria-current=page" if v == view else ""}>{v}</a>'
-                    for v in VIEWS)
+    """The nav row, current view marked. Hrefs stay exactly /what /where /how
+    inside <header> (ADR-0030 §1): chrome.js finds the how link by
+    `header nav a[href^="/how"]`."""
+    return "".join(f'<a href="/{v}"{" aria-current=page" if v == view else ""}>'
+                   f"{_icon(NAV_GLYPH[v])}{v}</a>" for v in VIEWS)
 
 
 def render(view, conn, query="", projects_dir=DEFAULT_PROJECTS_DIR):
-    tokens = TOKENS_CSS.read_text()
+    """One shell for every view (ADR-0029 §1, #52): top bar, nav row, page
+    header (pretitle, title, description, actions slot), then the page body
+    — banners, the chip row, and on what/where the header visual card."""
+    head_js, view_css, tail = _asset("icons.js"), _asset(f"{view}.css"), ""
     if view == "how":
         project = parse_qs(query).get("p", [""])[0]
         synced = conn.execute("SELECT MAX(date) FROM sessions").fetchone()[0]
-        return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>hindsight · how</title>
-<link rel="icon" href="data:,">
-<script>{_asset("theme.js")}{_asset("how.js")}</script>
-<style>{tokens}{_asset("chrome.css")}{_asset("how.css")}</style></head><body>
-<header>
-<button id="theme"></button>
-<h1>hindsight</h1><nav>{_nav(view)}</nav>
-<p class="cov">synced through {synced or "never"} · the process actually followed,
-per project: a status over phase runs beside the stated process — no order rules,
-no verdicts (ADR-0010)</p>
-</header>{breakage_banner(conn)}<main>{how_html(conn, project, projects_dir)}</main></body></html>"""
-    data = header_data(conn)
-    if view == "what":
-        main = _asset("what.html")
-        view_css, view_js = _asset("what.css"), f"const WHAT = {_blob(what_data(conn))};{_asset('what.js')}"
+        pretitle = f"synced through {synced or 'never'}"
+        desc = ("the process actually followed, per project: a status over phase runs"
+                " beside the stated process — no order rules, no verdicts (ADR-0010)")
+        actions = '<div class="o-actions"></div>'
+        # how_html opens with the project selector: the page body's chip row
+        body = how_html(conn, project, projects_dir)
+        head_js += _asset("how.js")
     else:
-        main = _asset("where.html")
-        view_css, view_js = _asset("where.css"), f"const WHERE = {_blob(where_data(conn))};{_asset('where.js')}"
-    hidden = set(data["hidden"])
-    chips = "".join(
-        f'<button data-p="{html.escape(p)}"'
-        f'{" data-hidden" if p in hidden else ""}>{html.escape(p)}</button>'
-        for p in data["chips"])
-    hidden_note = (f' · {len(hidden)} hidden — workspace folder gone at the last'
-                   f' analysis run (ADR-0009): <button id="reveal"'
-                   f' aria-pressed="false">show hidden ({len(hidden)})</button>'
-                   if hidden else "")
-    nav = _nav(view)
-    blob = _blob(data)
+        data = header_data(conn)
+        pretitle = f'synced through {data["synced"] or "never"} · {data["sessions"]} sessions'
+        desc = ("token usage from the transcript scan — days without data render as gaps;"
+                " pruned transcripts read unknown, never zero")
+        actions = ('<div class="o-actions" id="ctl">window:'
+                   + "".join(f' <button data-w="{w}">{w}</button>'
+                             for w in ("7", "14", "28", "90", "all"))
+                   + ' <button id="tclear">clear</button>'
+                   ' <label><input type="checkbox" id="hidecr"> hide cache reads</label></div>')
+        hidden = set(data["hidden"])
+        chips = "".join(
+            f'<button data-p="{html.escape(p)}"'
+            f'{" data-hidden" if p in hidden else ""}>{html.escape(p)}</button>'
+            for p in data["chips"])
+        hidden_note = (f' · {len(hidden)} hidden — workspace folder gone at the last'
+                       f' analysis run (ADR-0009): <button id="reveal"'
+                       f' aria-pressed="false">show hidden ({len(hidden)})</button>'
+                       if hidden else "")
+        glyph, title = VISUAL[view]
+        # where's coverage line stays visible after the chips (ADR-0030 §4)
+        wcov = '<p class="note" id="wcov"></p>' if view == "where" else ""
+        blob = what_data(conn) if view == "what" else where_data(conn)
+        body = (f'<div id="chips">{chips}</div>'
+                f'<p class="note">{data["tail"]} projects have no chip (scratch dirs, probes,'
+                f" low volume) — their data is still counted; chips filter, never switch."
+                f"{hidden_note}</p>{wcov}"
+                f'<div class="o-card"><div class="o-card-head"><div>'
+                f'<h2 class="o-card-title">{_icon(glyph)}{title}</h2>'
+                '<p class="o-card-sub">click a day to filter to it, more days to add them,'
+                " shift-click for a range, a selected day again to remove it — a preset or"
+                " clear empties the selection</p></div></div>"
+                '<div class="o-card-body"><div id="chart"></div></div></div>'
+                + _asset(f"{view}.html"))
+        tail = (f"<script>const DATA = {_blob(data)};{_asset('chrome.js')}"
+                f"const {view.upper()} = {_blob(blob)};{_asset(f'{view}.js')}</script>")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>hindsight · {view}</title>
 <link rel="icon" href="data:,">
-<script>{_asset("theme.js")}</script>
-<style>{tokens}{_asset("chrome.css")}{view_css}</style></head><body>
+<script>{_asset("theme.js")}{head_js}</script>
+<style>{TOKENS_CSS.read_text()}{_asset("chrome.css")}{view_css}</style></head><body>
 <header>
-<button id="theme"></button>
-<h1>hindsight</h1><nav>{nav}</nav>
-<p class="cov">synced through {data["synced"] or "never"} · {data["sessions"]} sessions ·
-token usage from the transcript scan — days without data render as gaps;
-pruned transcripts read unknown, never zero</p>
-<div id="chips">{chips}</div>
-<p class="note">{data["tail"]} projects have no chip (scratch dirs, probes, low volume)
-— their data is still counted; chips filter, never switch.{hidden_note}</p>
-<div id="ctl">window:
-{"".join(f'<button data-w="{w}">{w}</button>' for w in ("7", "14", "28", "90", "all"))}
-<button id="tclear">clear</button>
-<label><input type="checkbox" id="hidecr"> hide cache reads</label>
-<span class="hint">click a day to filter to it, more days to add them,
-shift-click for a range, a selected day again to remove it — a preset or clear
-empties the selection</span></div>
-<div id="chart"></div>
-</header>{breakage_banner(conn)}
-<main>{main}</main>
-<script>const DATA = {blob};{_asset("chrome.js")}{view_js}</script>
-</body></html>"""
+<div class="o-topbar"><div class="o-container"><b class="o-brand">hindsight</b><button id="theme"></button></div></div>
+<nav class="o-navrow"><div class="o-container">{_nav(view)}</div></nav>
+</header>
+<div class="o-page-head"><div class="o-container"><div>
+<div class="o-pretitle">{pretitle}</div>
+<h1 class="o-page-title">{view.capitalize()}</h1>
+<p class="o-page-desc">{desc}</p></div>{actions}</div></div>
+<main class="o-page-body"><div class="o-container">{breakage_banner(conn)}{body}</div></main>
+{tail}</body></html>"""
 
 
 def make_server(port, db_path, projects_dir=DEFAULT_PROJECTS_DIR):

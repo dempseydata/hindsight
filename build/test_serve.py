@@ -380,11 +380,11 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn("const DATA", body)       # no filter data blob (#83:
         # the theme pin script is shared chrome and does render here)
 
-    def test_former_name_in_how_header_and_nowhere_else(self):
-        """Ticket #6 / ADR-0018: the how-view header says "formerly old-big"
-        for the renamed project; the write under the old root is a trail
-        event named relative to the root, so the former name appears in
-        the header line only. A never-renamed project has no such line,
+    def test_former_name_on_how_page_body_and_nowhere_else(self):
+        """Ticket #6 / ADR-0018: the how-view's page body says "formerly
+        old-big" under the selector for the renamed project; the write under
+        the old root is a trail event named relative to the root, so the
+        former name appears in that note line only. A never-renamed project has no such line,
         and the ledger, chips and where-view render no former name."""
         _, body = self.get("/how?p=big")
         self.assertIn("formerly old-big", body)
@@ -659,8 +659,7 @@ class ServerTest(unittest.TestCase):
             db = Path(tmp) / "h.db"
             fixture_db(db)
             conn = sqlite3.connect(db)
-            conn.execute(sql)
-            conn.commit()
+            conn.executescript(sql)
             conn.close()
             server = serve.make_server(0, db, tmp)
             port = server.server_address[1]
@@ -751,6 +750,136 @@ class ServerTest(unittest.TestCase):
             writer.rollback()
             writer.close()
 
+    def test_one_shell_on_every_view(self):
+        """#52 (ADR-0029 §1, ADR-0030 §1, §3): what, where and how render
+        through one shell — a top bar (brand, theme toggle), a nav row with a
+        glyph per view and the current one marked, a page header (pretitle,
+        title, description, actions slot), then the page body."""
+        titles = {"what": "What", "where": "Where", "how": "How"}
+        pretitle = {"what": "synced through 2026-08-05 · 9 sessions",
+                    "where": "synced through 2026-08-05 · 9 sessions",
+                    "how": "synced through 2026-08-05"}
+        for view in VIEW_NAMES:
+            with self.subTest(view=view):
+                _, body = self.get(f"/{view}")
+                marks = ['<header>', '<div class="o-topbar">', '<b class="o-brand">hindsight</b>',
+                         '<button id="theme"></button>', '<nav class="o-navrow">',
+                         '<div class="o-page-head">',
+                         f'<div class="o-pretitle">{pretitle[view]}</div>',
+                         f'<h1 class="o-page-title">{titles[view]}</h1>',
+                         '<p class="o-page-desc">', '<div class="o-actions"',
+                         '<main class="o-page-body">']
+                at = [body.index(m) for m in marks]
+                self.assertEqual(at, sorted(at))
+                self.assertLess(body.index("</nav>"), body.index("</header>"))
+                # the nav: hrefs exactly /what /where /how, each with its
+                # glyph — the how link stays relative, or the control sync's
+                # `header nav a[href^="/how"]` lookup finds nothing (#45)
+                nav = body[body.index('<nav class="o-navrow">'):body.index("</nav>")]
+                for v, glyph in VIEW_NAMES.items():
+                    self.assertRegex(nav, rf'<a href="/{v}"[^>]*><span data-icon="{glyph}"'
+                                          rf' aria-hidden="true"></span>{v}</a>')
+                self.assertIn(f'<a href="/{view}" aria-current=page>', nav)
+                self.assertEqual(nav.count("aria-current"), 1)
+                self.assertNotIn("//", nav)
+        self.assertIn("the process actually followed", self.get("/how")[1])
+
+    def test_actions_slot_holds_the_window_controls_except_on_how(self):
+        """#52: presets, clear and hide cache reads sit in the page header's
+        actions slot on what and where; on how the slot is empty."""
+        for view in ("what", "where"):
+            _, body = self.get(f"/{view}")
+            head = body[body.index('<div class="o-page-head">'):body.index("<main")]
+            self.assertIn('<div class="o-actions" id="ctl">', head)
+            for w in ("7", "14", "28", "90", "all"):
+                self.assertIn(f'<button data-w="{w}">{w}</button>', head)
+            self.assertIn('<button id="tclear">clear</button>', head)
+            self.assertIn('id="hidecr"> hide cache reads', head)
+        _, body = self.get("/how")
+        self.assertIn('<div class="o-actions"></div>', body)
+        self.assertNotIn('id="ctl"', body)
+
+    def test_page_body_order(self):
+        """#52 (ADR-0029 §1, ADR-0030 §4): banners, then the project chips
+        with their note, then — on what and where — the header visual as the
+        first card, titled with its glyph and the hint as subtitle, holding
+        the chart mount; the view's own sections follow. Where's coverage
+        line sits after the chips. On how the selector is the chip row."""
+        cards = {"what": ("calendar", "Sessions per day", 'id="wtiles"'),
+                 "where": ("chart-bar", "Tokens per day", 'id="tiles"')}
+        for view, (glyph, title, content) in cards.items():
+            with self.subTest(view=view):
+                _, body = self.get(f"/{view}")
+                page = body[body.index('<main class="o-page-body">'):]
+                card = (f'<div class="o-card"><div class="o-card-head"><div>'
+                        f'<h2 class="o-card-title"><span data-icon="{glyph}"'
+                        f' aria-hidden="true"></span>{title}</h2>'
+                        f'<p class="o-card-sub">click a day to filter to it')
+                order = ['class="breakage problem"', '<div id="chips">',
+                         "projects have no chip", card, "shift-click for a range",
+                         '<div class="o-card-body"><div id="chart"></div></div></div>',
+                         content]
+                at = [page.index(m) for m in order]
+                self.assertEqual(at, sorted(at))
+                self.assertNotIn("o-card", page[:page.index(card)])   # the first card
+        _, where = self.get("/where")
+        self.assertLess(where.index('<div id="chips">'), where.index('id="wcov"'))
+        self.assertLess(where.index('id="wcov"'), where.index("Tokens per day"))
+        _, how = self.get("/how")
+        page = how[how.index('<main class="o-page-body">'):]
+        self.assertLess(page.index('class="breakage problem"'), page.index('<div id="hsel">'))
+        self.assertNotIn('id="chips"', how)
+
+    def test_card_chassis_in_shared_chrome(self):
+        """#52 (ADR-0029 §2, §4): the card chassis rides the shared chrome on
+        every view — the card radius and elevation tokens, the 65px ruled
+        header, 20px body — inside the 1320px container."""
+        for view in VIEW_NAMES:
+            _, body = self.get(f"/{view}")
+            css = body[body.index("<style>"):body.index("</style>")]
+            for rule in ("border-radius: var(--o-radius-card)", "box-shadow: var(--o-elev)",
+                         "min-height: 65px", "max-width: 1320px"):
+                self.assertIn(rule, css, view)
+
+    def test_breakage_tier_is_a_filled_badge(self):
+        """#52 (ADR-0030 §9): the tier is a filled badge on its banner —
+        problem on the problem fill, informational on the ok fill."""
+        for view in VIEW_NAMES:
+            _, body = self.get(f"/{view}")
+            self.assertIn('<div class="breakage problem"><span class="o-badge o-problem">'
+                          "problem</span>", body)
+            css = body[body.index("<style>"):body.index("</style>")]
+            self.assertRegex(css, r"\.o-badge \{[^}]*border-radius: var\(--o-radius\);")
+            for role in ("ok", "problem"):
+                self.assertRegex(css, rf"\.o-badge\.o-{role} \{{ background: var\(--o-{role}-fill\);"
+                                      rf" color: var\(--o-{role}-on\); \}}")
+        body = self.serve_once("UPDATE breakage SET acknowledged_at = NULL;"
+                               " DELETE FROM project_presence")
+        self.assertIn('<div class="breakage informational"><span class="o-badge o-ok">'
+                      "informational</span>", body)
+
+    def test_icons_asset_inlined_with_its_tabler_notice(self):
+        """#52 (ADR-0029 §7, ADR-0030 §2): every glyph of #47's table, keyed
+        by its Tabler name, in one inlined asset whose header credits Tabler
+        Icons; placeholders are filled as 16px stroke-2 inline SVG."""
+        for view in VIEW_NAMES:
+            _, body = self.get(f"/{view}")
+            notice = one_line(body[:body.index("const ICONS = {")][-600:])
+            for part in ("3.48.0", "Paweł Kuna", "MIT", "derived from Tabler Icons"):
+                self.assertIn(part, notice, view)
+            self.assertIn("const ICONS = {", body)
+            for name, path in GLYPHS.items():
+                self.assertIn(f'"{name}": "{path}"', body, name)
+            self.assertIn('viewBox="0 0 24 24" width="16" height="16" fill="none"'
+                          ' stroke="currentColor" stroke-width="2"'
+                          ' stroke-linecap="round" stroke-linejoin="round"', body)
+            self.assertIn("[data-icon]", body)
+            # own glyphs only: an inherited key (toString, __proto__) keeps the fallback
+            self.assertIn("Object.hasOwn(ICONS, el.dataset.icon) && ICONS[el.dataset.icon]", body)
+        _, how = self.get("/how?p=small")
+        self.assertIn('<span data-icon="alert-triangle" aria-hidden="true"></span>'
+                      "Declaration invalid", how)
+
     def test_breakage_banner_on_every_view_open_rows_only(self):
         """Issue #15: the open breakage row is a tier-coloured banner on
         what, where and how; the acknowledged one is gone."""
@@ -763,6 +892,30 @@ class ServerTest(unittest.TestCase):
             self.assertIn("acknowledge-breakage 1", body, view)
             self.assertNotIn("user.effort", body, view)
 
+
+VIEW_NAMES = {"what": "list", "where": "chart-pie", "how": "route"}   # view → nav glyph
+# #47's glyph table, verbatim (spec #50), keyed by Tabler name (ADR-0030 §2)
+GLYPHS = {
+    "list": "M9 6h11M9 12h11M9 18h11M5 6v.01M5 12v.01M5 18v.01",
+    "chart-pie": "M10 3.2a9 9 0 1 0 10.8 10.8a1 1 0 0 0-1-1h-6.8a2 2 0 0 1-2-2v-7a.9 .9 0 0 0-1-.8M15 3.5a9 9 0 0 1 5.5 5.5h-4.5a1 1 0 0 1-1-1v-4.5",
+    "route": "M3 19a2 2 0 1 0 4 0a2 2 0 0 0-4 0M19 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4M11 19h5.5a3.5 3.5 0 0 0 0-7h-8a3.5 3.5 0 0 1 0-7h4.5",
+    "calendar": "M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2zM16 3v4M8 3v4M4 11h16",
+    "chart-bar": "M3 13h6v7h-6zM15 8h6v12h-6zM9 4h6v16h-6z",
+    "trophy": "M8 21h8M12 17v4M7 4h10M17 4v8a5 5 0 0 1-10 0v-8M3 9a2 2 0 1 0 4 0a2 2 0 1 0-4 0M17 9a2 2 0 1 0 4 0a2 2 0 1 0-4 0",
+    "cpu": "M5 5h14v14h-14zM9 9h6v6h-6zM3 10h2M3 14h2M10 3v2M14 3v2M21 10h-2M21 14h-2M14 21v-2M10 21v-2",
+    "plug": "M9.8 6l8.2 8.2l-2 2a5.8 5.8 0 1 1-8.2-8.2zM4 20l3.5-3.5M15 4l-3.5 3.5M20 9l-3.5 3.5",
+    "terminal": "M5 7l5 5l-5 5M12 19h7",
+    "hourglass": "M6.5 7h11M6 20v-2a6 6 0 1 1 12 0v2a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1zM6 4v2a6 6 0 1 0 12 0v-2a1 1 0 0 0-1-1h-10a1 1 0 0 0-1 1z",
+    "activity": "M3 12h4l3 8l4-16l3 8h4",
+    "bolt": "M13 3v7h6l-8 11v-7h-6l8-11",
+    "clock": "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 8v4l3 3",
+    "list-check": "M3.5 5.5l1.5 1.5l2.5-2.5M3.5 11.5l1.5 1.5l2.5-2.5M3.5 17.5l1.5 1.5l2.5-2.5M11 6h9M11 12h9M11 18h9",
+    "route-slash": "M3 19a2 2 0 1 0 4 0a2 2 0 0 0-4 0M19 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4M11 19h5.5a3.5 3.5 0 0 0 0-7h-8a3.5 3.5 0 0 1 0-7h4.5M3 3l18 18",
+    "alert-triangle": "M12 9v4M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636-2.87l-8.106-13.536a1.914 1.914 0 0 0-3.274 0zM12 16h.01",
+    "help-circle": "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 17v.01M12 13.5a1.5 1.5 0 0 1 1-1.5a2.6 2.6 0 1 0-3-4",
+    "arrow-up": "M12 5v14M18 11l-6-6M6 11l6-6",
+    "arrow-down": "M12 5v14M18 13l-6 6M6 13l6 6",
+}
 
 CONTRACT_BLOCKS = {                      # selector → theme (tokens.css)
     ":root {": "dark",

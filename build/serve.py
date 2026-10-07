@@ -173,16 +173,22 @@ def header_data(conn):
     # totals never see it — a hidden project's data behaves like a chipless
     # tail project's (ADR-0009).
     hidden = hidden_projects(conn)
-    last_synced = conn.execute("SELECT MAX(date) FROM sessions").fetchone()[0]
-    # Range end covers usage days too: sessions.date is the *start* day, so a
-    # session crossing midnight puts usage rows past it — the chart and the
-    # window presets must still reach them (ticket #50).
-    last_day = max((r["d"] for r in days), default=None)
-    end = max((d for d in (last_synced, last_day) if d), default=None)
+    end = synced_through(conn)
     first_day = min((r["d"] for r in days), default=end)
     return {"days": days, "range": [first_day, end], "chips": chips,
             "hidden": [p for p in chips if p in hidden], "tail": tail,
-            "sessions": sum(s for _, s, _ in projects), "synced": last_synced}
+            "sessions": sum(s for _, s, _ in projects), "synced": end}
+
+
+def synced_through(conn):
+    """Latest local day with data: a session's start day or a usage row's.
+    sessions.date is the *start* day, so a session crossing midnight (ticket
+    #50) or resumed days later puts usage past it — the label, the chart and
+    the window presets must still reach that work."""
+    return conn.execute(f"""
+        SELECT MAX(d) FROM (SELECT MAX(date) AS d FROM sessions
+                            UNION ALL SELECT MAX({day_sql("at")}) FROM usage)
+        """).fetchone()[0]
 
 
 _SECTION_RE = {
@@ -746,7 +752,7 @@ def render(view, conn, query="", projects_dir=DEFAULT_PROJECTS_DIR):
     head_js, view_css, tail = _asset("icons.js"), _asset(f"{view}.css"), ""
     if view == "how":
         project = parse_qs(query).get("p", [""])[0]
-        synced = conn.execute("SELECT MAX(date) FROM sessions").fetchone()[0]
+        synced = synced_through(conn)
         pretitle = f"synced through {synced or 'never'}"
         desc = ("the process actually followed, per project: a status over phase runs"
                 " beside the stated process — no order rules, no verdicts (ADR-0010)")

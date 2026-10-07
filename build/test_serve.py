@@ -345,7 +345,7 @@ class ServerTest(unittest.TestCase):
             self.assertIn('data-p="big"', body)      # chip
             self.assertIn('data-p="pruned"', body)   # session-leg chip
             self.assertNotIn("-private-tmp-scratch</button>", body)
-            self.assertIn("synced through 2026-08-05", body)
+            self.assertIn("synced through 2026-08-06", body)
 
     def test_theme_toggle_in_shared_chrome(self):
         """#83 (ADR-0017): three-state theme pin — the toggle button and the
@@ -775,10 +775,10 @@ class ServerTest(unittest.TestCase):
         conn = serve.open_db(self.db)
         data = serve.header_data(conn)
         conn.close()
-        # range end reaches s2's midnight-crossing usage day (2026-08-06),
-        # past MAX(sessions.date) = 2026-08-05 (ticket #50)
+        # range end and label reach s2's midnight-crossing usage day
+        # (2026-08-06), past MAX(sessions.date) = 2026-08-05 (ticket #50)
         self.assertEqual(data["range"], ["2026-08-01", "2026-08-06"])
-        self.assertEqual(data["synced"], "2026-08-05")
+        self.assertEqual(data["synced"], "2026-08-06")
         # ticket #74: s3's 2026-08-03T01:00Z row is the operator's 08-02,
         # so "small" occupies one local day, not two UTC ones
         self.assertEqual({r["d"] for r in data["days"] if r["p"] == "small"},
@@ -925,9 +925,9 @@ class ServerTest(unittest.TestCase):
         glyph per view and the current one marked, a page header (pretitle,
         title, description, actions slot), then the page body."""
         titles = {"what": "What", "where": "Where", "how": "How"}
-        pretitle = {"what": "synced through 2026-08-05 · 9 sessions",
-                    "where": "synced through 2026-08-05 · 9 sessions",
-                    "how": "synced through 2026-08-05"}
+        pretitle = {"what": "synced through 2026-08-06 · 9 sessions",
+                    "where": "synced through 2026-08-06 · 9 sessions",
+                    "how": "synced through 2026-08-06"}
         for view in VIEW_NAMES:
             with self.subTest(view=view):
                 _, body = self.get(f"/{view}")

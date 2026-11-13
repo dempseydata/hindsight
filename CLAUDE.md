@@ -59,4 +59,4 @@ The five canonical defaults, label strings equal to role names. See `docs/agents
 Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 ## Design skills
-Direction is settled (ADR-0007, ADR-0008) — a new surface still runs the design flow in `my-process.md`, with the settled direction as an input. Pick ONE taste-skill style variant per candidate (`taste-skill:high-end-visual-design`, `taste-skill:minimalist-ui`, or `taste-skill:industrial-brutalist-ui` — from the `taste-skill@taste-skill` plugin, user scope, nothing copied into the repo); `impeccable` fine-tunes only after a direction is chosen.
+Direction is settled (ADR-0007, ADR-0008) — a new surface still runs the design flow in `my-process.md`, with the settled direction as an input. `taste-skill:design-taste-frontend` (the `taste-skill@taste-skill` plugin, user scope, nothing copied into the repo) is the taste-skill fallback for a new surface — it draws candidate directions from its own internal library, not a named-variant pick; `impeccable` fine-tunes only after a direction is chosen.

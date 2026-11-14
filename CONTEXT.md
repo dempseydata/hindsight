@@ -19,6 +19,13 @@ One local application over Claude Code data, two views in v1: **where** (where d
 - **Greedy extract pass** — the step of the analysis run, ahead of the model loop, that either marks a quiet `pending`/`partial` session `lost` or caches its extract, with no model call. Once the extract is on disk, pruning the transcript loses nothing — this is what closes the retention race that created the backlog.
 - **Limit exhaustion** — subscription usage limits hit mid-run. A designed pause, not a failure: sessions stay pending, the next run resumes (ADR-0003).
 
+## Raw store (v2, ADR-0031)
+
+- **Raw record** — one transcript line, stored verbatim as captured and never parsed at capture. Identified by its **record key**: its session, its agent (none for the parent transcript) and its byte offset in that transcript — its position, never its `uuid`, which a third of records lack. Every record type is captured.
+- **High-water** — the offset up to which a transcript has been captured, or a key up to which a deriver has derived. Capture appends from it and nothing else; a transcript whose captured prefix no longer matches has been rewritten, a breakage.
+- **Deriver** — a versioned, pure function from raw records to one derived table. Bumping its version rebuilds that table alone. The records index (each record's type, uuid and timestamp) is the first deriver.
+- **Provenance** — a derived row's origin: `raw` (re-derivable from the raw store) or `v1` (derived before the raw store existed, frozen, never rebuilt).
+
 ## Extraction (ADR-0002)
 
 - **Extract** — the role-prefixed conversational text of one session (user + assistant text blocks only; tool results excluded), ~2% of transcript size.

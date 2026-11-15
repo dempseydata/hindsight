@@ -29,7 +29,8 @@ One local application over Claude Code data, two views in v1: **where** (where d
 - **Side request** — an API request Claude Code makes beside the conversation (a prompt suggestion, a session title, a web fetch), visible in OTel and never written to the transcript.
 - **Cross-check** — the per-day comparison of input-side tokens between OTel (side requests excluded) and transcripts, over sessions both saw. A gap above 5% on a day with enough requests is a breakage. Output tokens are never cross-checked: the transcript undercounts them structurally.
 - **Health row** — collection's own state per source (listener, capture hook, analysis run): last success, last error, and its text. A source is stale when another source has seen activity it has not, never by a fixed age.
-- **Provenance** — a derived row's origin: `raw` (re-derivable from the raw store) or `v1` (derived before the raw store existed, frozen, never rebuilt).
+- **Provenance** — a derived row's origin: `raw` (re-derivable from the raw store), `v1` (derived before the raw store existed) or `compacted` (its session's raw records were removed at the raw limit). `v1` and `compacted` rows are frozen, never rebuilt.
+- **Raw limit** — how long a session's raw records are kept, counted from its newest record: 90 days unless `HINDSIGHT_RAW_DAYS` says otherwise, `0` meaning forever (ADR-0034). **Compaction** removes a whole session's raw records once it is past the limit and fully derived; its derived rows, records index and high-water stay.
 
 ## Extraction (ADR-0002)
 

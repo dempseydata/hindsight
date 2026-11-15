@@ -1,6 +1,6 @@
 # ADR-0005: Hook self-instrumentation — source, bounds, and what the numbers mean
 
-**Date:** 2026-08-17 · **Status:** accepted · **Decides:** the deferred hook-activity sourcing question from `definition/ingest-schema-verification.md`, plus the timing-semantics and boundedness findings in [#25](../../background/tickets/025-hook-py-unbounded-stdin-read-can-stall-a-session-despite-the.md)–[#27](../../background/tickets/027-hook-duration-ms-measures-the-instrument-not-the-session-s-c.md)
+**Date:** 2026-08-17 · **Status:** superseded by ADR-0033 (2026-11-15) · **Decides:** the deferred hook-activity sourcing question from `definition/ingest-schema-verification.md`, plus the timing-semantics and boundedness findings in [#25](../../background/tickets/025-hook-py-unbounded-stdin-read-can-stall-a-session-despite-the.md)–[#27](../../background/tickets/027-hook-duration-ms-measures-the-instrument-not-the-session-s-c.md)
 
 ## Context
 

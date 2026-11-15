@@ -22,8 +22,8 @@ One local application over Claude Code data, two views in v1: **where** (where d
 ## Raw store (v2, ADR-0031)
 
 - **Raw record** — one transcript line, stored verbatim as captured and never parsed at capture. Identified by its **record key**: its session, its agent (none for the parent transcript) and its byte offset in that transcript — its position, never its `uuid`, which a third of records lack. Every record type is captured.
-- **High-water** — the offset up to which a transcript has been captured, or a key up to which a deriver has derived. Capture appends from it and nothing else; a transcript whose captured prefix no longer matches has been rewritten, a breakage.
-- **Deriver** — a versioned, pure function from raw records to one derived table. Bumping its version rebuilds that table alone. The records index (each record's type, uuid and timestamp) is the first deriver.
+- **High-water** — the offset up to which a transcript has been captured. Capture appends from it and nothing else; a transcript whose captured prefix no longer matches has been rewritten, a breakage. Derivers have no high-water (issue #70).
+- **Deriver** — a versioned, pure function from raw records to one derived table. Bumping its version rebuilds that table alone. It works per session: a session with records newer than its last derivation is re-derived whole, never patched with carried state, in a batch step (the analysis run, the nightly), never in the capture hook. The records index (each record's type, uuid and timestamp) is the first deriver.
 - **Provenance** — a derived row's origin: `raw` (re-derivable from the raw store) or `v1` (derived before the raw store existed, frozen, never rebuilt).
 
 ## Extraction (ADR-0002)

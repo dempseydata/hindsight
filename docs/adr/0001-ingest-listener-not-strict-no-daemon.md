@@ -1,6 +1,6 @@
 # ADR-0001: One ingest-only listener; everything else stays on-demand
 
-**Date:** 2026-08-01 · **Status:** accepted · **Decides:** the tension raised in `definition/command-centre-review.md`
+**Date:** 2026-08-01 · **Status:** accepted, amended by ADR-0036 (plugin install, menu bar retired) · **Decides:** the tension raised in `definition/command-centre-review.md`
 
 ## Context
 

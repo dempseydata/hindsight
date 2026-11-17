@@ -1,6 +1,6 @@
 # ADR-0034: Raw records are compacted per session after a configurable limit, holding back anything not yet derived
 
-**Date:** 2026-11-15 · **Status:** accepted · **Amends:** ADR-0031 · **Decides:** issue #67 (map #59, v2 audit core)
+**Date:** 2026-11-15 · **Status:** accepted, amended by ADR-0038 (§8: compaction runs in the analysis run, on demand too) · **Amends:** ADR-0031 · **Decides:** issue #67 (map #59, v2 audit core)
 
 ## Context
 

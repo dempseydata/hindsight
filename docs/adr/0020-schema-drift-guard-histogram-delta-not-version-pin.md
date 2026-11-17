@@ -1,6 +1,6 @@
 # ADR-0020: The schema-drift guard is a histogram delta between record versions, not a version pin — and acknowledge is decoupled from rescan
 
-**Date:** 2026-09-11 · **Status:** accepted · **Decides:** issue #15 (spec #11, ingest fidelity)
+**Date:** 2026-09-11 · **Status:** accepted, amended by ADR-0037 · **Decides:** issue #15 (spec #11, ingest fidelity)
 
 ## Context
 

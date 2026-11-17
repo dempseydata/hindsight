@@ -33,6 +33,6 @@ The secrets case is narrower than the ticket put it. The database is local, owne
 ## Consequences
 
 - After a deriver version bump, the rebuilt table mixes `raw` rows at the new version with `compacted` and `v1` rows at older ones. The views say so.
-- The what-pass extract is derived output, so it survives. A changed what-pass prompt cannot re-run on a compacted session, because its conversation text is gone.
+- ~~The what-pass extract is derived output, so it survives.~~ A changed what-pass prompt cannot re-run on a compacted session, because its conversation text is gone. *Amended 2026-11-17 (issue #79):* the extract is a rebuildable cache, not derived output. It is deleted with the session's raw records, because an extract is verbatim conversation text and §7 makes the limit the only control on what that text holds. The audit entry is the lasting output. A prompt change applies forward, and compacted sessions keep their older-version rows (ADR-0004), as `what-v2` rows did under ADR-0016.
 - Error text in derived rows outlives the limit (ADR-0027).
 - Not verified: why transcripts here outlive Claude Code's documented 30-day default. The decision does not depend on it.

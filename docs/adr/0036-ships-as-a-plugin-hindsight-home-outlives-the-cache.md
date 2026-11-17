@@ -32,6 +32,8 @@ The hook behaviour below was checked against the Claude Code docs on 2026-11-16.
    - **Capture** is one `"async": true` entry on `SessionStart`, `Stop` and `SubagentStop`. It is ADR-0033's capture hook, and it never holds a turn.
    - **The health check** is a separate synchronous `SessionStart` entry.
    - Hooks call `${CLAUDE_PLUGIN_ROOT}/cli/…` by full path.
+
+   *Amended 2026-11-17 (issue #79):* the analysis work directory (extracts, piece maps, what-pass part outputs), v1's `local-data/analysis` under the repo, moves to the plugin data directory. Left in place it would sit in the versioned cache and be swept 14 days after an update. Within the raw limit everything in it is rebuildable, extracts from raw records and part outputs by a repeat call, so it belongs with the rebuildable caches, not in Hindsight home.
 6. **The health check:**
    - **Reads:** the health rows straight from SQLite (no HTTP), whether both launchd jobs are loaded, and whether `current` matches.
    - **When healthy:** it exits with empty output, because stdout would land in the model's context.

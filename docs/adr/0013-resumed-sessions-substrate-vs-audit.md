@@ -28,6 +28,8 @@ The threshold was chosen against the 17 sessions found on the day, not in the ab
 
 **A transcript that shrank is left alone.** The previous code compared with `==` and so rescanned a shrunk file; it now skips one. Pruning means *unknown*, never *less* — rescanning would overwrite what we still hold with a smaller truth, which is the honesty grammar inverted.
 
+*Amended 2026-11-17 (issue #79, v2):* the raw store changes how both checks are measured, not what they decide. A session is live while its newest raw record was captured within the last 5 minutes. The what-pass skips a live session even though derivation does not (ADR-0031 §6), because capture on every `Stop` delivers records turn by turn and an extract built mid-flight is a different input. The re-audit share is measured on the parent transcript's captured record bytes, never a subagent's (ADR-0019 §5), against `audited_size`.
+
 ## Consequences
 
 - Re-auditing rewrites ledger entries the operator may already have read. This is accepted: an entry describing 0.9% of its session is worse than one that changes.

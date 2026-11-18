@@ -703,7 +703,7 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 11)
+                conn.execute("PRAGMA user_version").fetchone()[0], 12)
         finally:
             conn.close()
         row = self.identity_row("sess-old")
@@ -774,8 +774,10 @@ class V10MigrationTest(DbHelpers, unittest.TestCase):
               "since": "2026-08-01", "source": None, "session_id": None}])
         conn = sqlite3.connect(self.db)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
             self.assertEqual(conn.execute("PRAGMA auto_vacuum").fetchone()[0], 2)
+            self.assertIsNone(conn.execute("SELECT 1 FROM sqlite_master"
+                                           " WHERE name='scan_runs'").fetchone())  # v12
             for table in ("raw_records", "transcripts", "records_index",
                           "deriver_state", "otel_histogram"):
                 with self.subTest(table=table):
@@ -1047,7 +1049,7 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 11)
+                conn.execute("PRAGMA user_version").fetchone()[0], 12)
             row = conn.execute("SELECT folder_identity, name, present"
                                " FROM project_presence").fetchone()
         finally:
@@ -1704,7 +1706,7 @@ class SweepDeriveTest(DbHelpers, unittest.TestCase):
         self.run_pipeline()
         conn = sqlite3.connect(self.db)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
             self.assertNotIn("date", {r[1] for r in conn.execute("PRAGMA table_info(audit)")})
         finally:
             conn.close()
@@ -1830,9 +1832,11 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.run_pipeline(notify=True)
         rows = self.open_rows()
         self.assertEqual([(r["tier"], r["condition"], r["old_version"],
-                           r["new_version"], r["key"], r["since"]) for r in rows],
+                           r["new_version"], r["key"], r["since"], r["derivers"])
+                          for r in rows],
                          [("problem", 1, "2.1.1", "2.1.2", "assistant.message.usage",
-                           "2026-08-01")])
+                           "2026-08-01", "usage")])
+        self.assertIn("usage rows may be thin", analyze.breakage_text(rows[0]))
         self.assertGreater(rows[0]["old_share"], 0.9)
         self.assertLess(rows[0]["new_share"], 0.5)
         # the run completed: both sessions analysed, statuses untouched by it
@@ -1842,6 +1846,60 @@ class DriftTest(DbHelpers, unittest.TestCase):
         # the next run, same shape: no duplicate row
         self.run_pipeline()
         self.assertEqual(len(self.open_rows()), 1)
+
+    def test_a_key_two_derivers_read_names_both(self):
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2", strip=("id",))
+        self.run_pipeline()
+        self.assertEqual([(r["key"], r["derivers"]) for r in self.open_rows()],
+                         [("assistant.message.id", "usage, tool_events")])
+
+    def test_resumed_session_dates_since_from_the_histogram(self):
+        """ADR-0037 §2: a session opened under 2.1.1 and resumed under 2.1.2
+        dates the breakage from its own first day, not from the sessions
+        whose head version is 2.1.2 (there are none)."""
+        self.corpus("old", "2.1.1")
+        recs = []
+        for i, (version, ts) in enumerate([("2.1.1", "2026-07-20T10:00:00Z")]
+                                          + [("2.1.2", "2026-08-03T10:00:00Z")] * 25):
+            a = {**rec("assistant", f"a{i}", ts, [{"type": "text", "text": "ok"}],
+                       model="m", id=f"m{i}"), "version": version}
+            recs += [{**rec("user", f"u{i}", ts, "go"), "version": version}, a]
+        write_records(self.root / "p" / "resumed.jsonl", recs)
+        self.run_pipeline()
+        self.assertEqual([(r["key"], r["since"]) for r in self.open_rows()],
+                         [("assistant.message.usage", "2026-07-20")])
+
+    def test_otel_thinned_attribute_is_a_problem_and_an_added_one_is_silent(self):
+        """ADR-0037 §4: per (service, version, event), condition 1 only."""
+        import listener
+        self.corpus("new", "2.1.1")  # gives the OTel session a day
+
+        def events(version, n, **attrs):
+            return {"resourceLogs": [{
+                "resource": {"attributes": [
+                    {"key": "service.name", "value": {"stringValue": "claude-code"}},
+                    {"key": "service.version", "value": {"stringValue": version}}]},
+                "scopeLogs": [{"logRecords": [{"attributes": [
+                    {"key": k, "value": {"stringValue": v}} for k, v in
+                    {"event.name": "api_request", "session.id": "new", **attrs}.items()]}
+                    for _ in range(n)]}]}]}
+
+        listener.init_db(self.db)
+        conn = sqlite3.connect(self.db)
+        with conn:
+            listener.ingest_logs(events("2.1.1", 25, model="m", duration_ms="5"), conn)
+            listener.ingest_logs(events("2.1.2", 25, model="m", speed="fast"), conn)
+        conn.close()
+        self.run_pipeline(notify=True)
+        rows = self.open_rows()
+        self.assertEqual([(r["tier"], r["condition"], r["source"], r["key"],
+                           r["old_version"], r["new_version"], r["since"])
+                          for r in rows],
+                         [("problem", 1, "otel", "api_request.duration_ms",
+                           "claude-code 2.1.1", "claude-code 2.1.2", "2026-08-01")])
+        self.assertTrue(rows[0]["derivers"])
+        self.assertEqual(len(self.notified), 1)
 
     def test_guard_skips_while_a_session_is_due_and_the_run_stays_ok(self):
         """ADR-0038 §3: a record captured after derivation (a hook firing

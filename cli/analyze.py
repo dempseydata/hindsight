@@ -309,12 +309,6 @@ CREATE TABLE IF NOT EXISTS field_histogram (
   key TEXT NOT NULL,       -- a key present under scope; '*' = units counted
   n INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS scan_runs (
-  -- one row per analysis run that scanned anything: condition 3's baseline
-  at TEXT PRIMARY KEY,
-  records INTEGER NOT NULL,
-  skipped INTEGER NOT NULL
-);
 CREATE TABLE IF NOT EXISTS breakage (
   -- a run-level observation that the transcript shape moved (issue #15):
   -- ingest continued, the rows since may be thin; cleared by the operator
@@ -392,7 +386,7 @@ ADDED = 0.5             # condition 2: absent before, >50% after
 SPIKE = 3               # condition 3 (retired, ADR-0037 §6): its rows' text only
 # The breakage row as the guard writes it and the banner reads it (serve.py).
 BREAKAGE_COLS = ("id", "at", "tier", "condition", "old_version", "new_version",
-                 "key", "old_share", "new_share", "since", "session_id")
+                 "key", "old_share", "new_share", "since", "session_id", "derivers")
 
 
 class LimitExhausted(Exception):
@@ -535,6 +529,11 @@ def init_db(db_path):
         if "date" in {r[1] for r in conn.execute("PRAGMA table_info(audit)")}:
             conn.execute("ALTER TABLE audit DROP COLUMN date")
         conn.execute("PRAGMA user_version = 11")
+        conn.commit()
+    if v < 12:
+        # Ticket #88 (ADR-0039 §1): condition 3's baseline goes with it.
+        conn.execute("DROP TABLE IF EXISTS scan_runs")
+        conn.execute("PRAGMA user_version = 12")
         conn.commit()
     # Message-lens join indexes — after the gate, so a pre-#42 db grows the
     # columns before they're indexed.
@@ -1029,10 +1028,64 @@ def derivers():
 
 # The field contract (issue #15, ADR-0037 §3): the union of what every
 # reader of the raw records declares it requires present — the derivers
-# and the what-pass's extract. The drift guard checks exactly these keys.
-FIELD_CONTRACT = tuple(dict.fromkeys(
-    RECORDS_INDEX_REQUIRES + USAGE_REQUIRES + TOOL_EVENTS_REQUIRES
-    + COMMAND_GRAINS_REQUIRES + FIELD_HISTOGRAM_REQUIRES + extract.REQUIRES))
+# and the what-pass's extract. The drift guard checks exactly these keys,
+# and a thinned key's row names the readers that declared it.
+DECLARED = {"records_index": RECORDS_INDEX_REQUIRES, "usage": USAGE_REQUIRES,
+            "tool_events": TOOL_EVENTS_REQUIRES,
+            "command_grains": COMMAND_GRAINS_REQUIRES,
+            "field_histogram": FIELD_HISTOGRAM_REQUIRES, "extract": extract.REQUIRES}
+FIELD_CONTRACT = tuple(dict.fromkeys(k for keys in DECLARED.values() for k in keys))
+
+# The OTel histogram (ADR-0037 §4): per session.id, attribute-key counts per
+# (service.name, service.version, event name) from otel_events. Never on the
+# raw store or compacted, so it has no provenance; a version bump rebuilds
+# every session. Each reader of otel_events declares the (event, attribute)
+# pairs it requires present, as the raw-store readers do above.
+OTEL_HISTOGRAM_VERSION = 1
+OTEL_DECLARED = {
+    # serve.py's latency panel (where view)
+    "latency": (("api_request", "model"), ("api_request", "duration_ms")),
+    # serve.py's reliability panel (where view)
+    "reliability": (("api_error", "model"), ("api_retries_exhausted", "model"),
+                    ("api_retries_exhausted", "total_retry_duration_ms"),
+                    ("mcp_server_connection", "server_name"),
+                    ("mcp_server_connection", "status"),
+                    ("mcp_server_connection", "duration_ms")),
+}
+
+
+def derive_otel_histogram(conn):
+    """The OTel histogram deriver: a session is due when its newest
+    otel_events id exceeds the one stored at its last derivation (deriver
+    state `otel_histogram@<version>`, the id in raw_rowid). Events with no
+    session are outside it."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='otel_events'").fetchone():
+        return  # the listener never ran against this store
+    key = f"otel_histogram@{OTEL_HISTOGRAM_VERSION}"
+    if conn.execute("DELETE FROM deriver_state WHERE deriver GLOB 'otel_histogram@*'"
+                    " AND deriver != ?", (key,)).rowcount:
+        conn.execute("DELETE FROM otel_histogram")  # a bump rebuilds every session
+    done = dict(conn.execute("SELECT session_id, raw_rowid FROM deriver_state"
+                             " WHERE deriver=?", (key,)))
+    for sid, top in conn.execute("SELECT session_id, MAX(id) FROM otel_events"
+                                 " WHERE session_id IS NOT NULL GROUP BY 1").fetchall():
+        if top <= done.get(sid, 0):
+            continue
+        counts = {}
+        for name, attrs in conn.execute("SELECT event_name, attributes FROM otel_events"
+                                        " WHERE session_id=? AND id <= ?", (sid, top)):
+            a = json.loads(attrs)
+            c = counts.setdefault((a.get("service.name") or "",
+                                   a.get("service.version") or "", name or ""), {})
+            for k in ("*", *a):
+                c[k] = c.get(k, 0) + 1
+        conn.execute("DELETE FROM otel_histogram WHERE session_id=?", (sid,))
+        conn.executemany("INSERT INTO otel_histogram (session_id, service_name,"
+                         " service_version, event_name, key, n) VALUES (?, ?, ?, ?, ?, ?)",
+                         [(sid, *g, k, n) for g, c in counts.items() for k, n in c.items()])
+        conn.execute("INSERT OR REPLACE INTO deriver_state (deriver, session_id,"
+                     " raw_rowid) VALUES (?, ?, ?)", (key, sid, top))
+        conn.commit()
 
 
 def any_due(conn):
@@ -1064,6 +1117,38 @@ def version_histogram(conn):
     return h
 
 
+def _pair(h, baseline, count):
+    """The comparison (ADR-0020 §2): the newest version of `h` with
+    MIN_RECORDS units against the nearest earlier one, none below the
+    acknowledged baseline. Returns (old, new, share); new is None when
+    there is nothing to compare."""
+    versions = sorted((v for v in h if count(h[v]) >= MIN_RECORDS
+                       and _vkey(v) >= _vkey(baseline)), key=_vkey)
+    if len(versions) < 2:
+        return None, None, None
+    old, new = versions[-2:]
+
+    def share(v, scope, key):
+        s = h[v].get(scope, {})
+        return s.get(key, 0) / s["*"] if s.get("*", 0) >= MIN_RECORDS else None
+    return old, new, share
+
+
+def _thinned(share, old, new, declared):
+    """Condition 1 over every declared (scope, key): (scope.key, old share,
+    new share, the readers that declared it)."""
+    readers = {}
+    for name, keys in declared.items():
+        for k in keys:
+            readers.setdefault(k, []).append(name)
+    out = []
+    for (scope, key), names in readers.items():
+        a, b = share(old, scope, key), share(new, scope, key)
+        if a is not None and b is not None and a > THINNED_BEFORE and b < THINNED_AFTER:
+            out.append((f"{scope}.{key}", a, b, ", ".join(names)))
+    return out
+
+
 def check_drift(conn, at, notify=False):
     """The schema-drift guard (issue #15, ADR-0020): a histogram delta
     between record versions, never a version pin. The newest version with
@@ -1081,6 +1166,12 @@ def check_drift(conn, at, notify=False):
     Condition 3, the run's skipped share, is retired (ADR-0037 §6): the
     scan it measured is gone. Its rows stay as history.
 
+    The OTel histogram is compared the same way per service, against
+    OTEL_DECLARED, under condition 1 only (ADR-0037 §4); its rows carry
+    source 'otel' and the service in each version. A thinned key's row
+    names the readers that declared it; *since* is the earliest day of any
+    session whose histogram holds the new version.
+
     One breakage row per trip — except that the keys added under one version
     pair are one row (issue #30), its key the sorted list and its share the
     lowest — deduplicated against the open rows, carrying the two versions,
@@ -1092,27 +1183,18 @@ def check_drift(conn, at, notify=False):
     h = version_histogram(conn)
     baseline = max((v for (v,) in conn.execute(
         "SELECT new_version FROM breakage WHERE acknowledged_at IS NOT NULL"
-        " AND new_version IS NOT NULL")), key=_vkey, default="")
-    versions = sorted((v for v in h if record_count(h[v]) >= MIN_RECORDS
-                       and _vkey(v) >= _vkey(baseline)), key=_vkey)
+        " AND new_version IS NOT NULL AND ifnull(source, '') != 'otel'")),
+        key=_vkey, default="")
     trips = []
-    if len(versions) >= 2:
-        old, new = versions[-2:]
-        # ponytail: `since` reads sessions.cli_version, the head-scan version
-        # — a session opened under the old CLI and resumed under the new one
-        # is missed, so the day can run late (or read '?'). Query the
-        # histogram by session for the exact day if that ever matters.
-        since = conn.execute(f"SELECT MIN({session_day()}) FROM sessions"
-                             " WHERE cli_version=?", (new,)).fetchone()[0]
-
-        def share(v, scope, key):
-            s = h[v].get(scope, {})
-            return s.get(key, 0) / s["*"] if s.get("*", 0) >= MIN_RECORDS else None
-
-        for scope, key in FIELD_CONTRACT:
-            a, b = share(old, scope, key), share(new, scope, key)
-            if a is not None and b is not None and a > THINNED_BEFORE and b < THINNED_AFTER:
-                trips.append(("problem", 1, old, new, f"{scope}.{key}", a, b, since))
+    old, new, share = _pair(h, baseline, record_count)
+    if new:
+        # ADR-0037 §2: the earliest day of any session whose histogram holds
+        # the new version — a session resumed under it included
+        since = conn.execute(f"SELECT MIN({session_day()}) FROM sessions WHERE id IN"
+                             " (SELECT session_id FROM field_histogram WHERE version=?)",
+                             (new,)).fetchone()[0]
+        trips += [("problem", 1, old, new, k, a, b, since, None, d)
+                  for k, a, b, d in _thinned(share, old, new, DECLARED)]
         added = {}
         for scope in h[new]:
             if "." in scope:
@@ -1123,9 +1205,30 @@ def check_drift(conn, at, notify=False):
                     added[f"{scope}.{key}"] = b
         if added:  # issue #30: a release adds several keys at once — one row
             trips.append(("informational", 2, old, new, ", ".join(sorted(added)),
-                          0.0, min(added.values()), since))
+                          0.0, min(added.values()), since, None, None))
+    # The OTel histogram, per service (each has its own version series),
+    # condition 1 only: an added attribute on a documented interface is noise.
+    acked = [v for (v,) in conn.execute(
+        "SELECT new_version FROM breakage WHERE acknowledged_at IS NOT NULL"
+        " AND source='otel'")]
+    for (svc,) in conn.execute("SELECT DISTINCT service_name FROM otel_histogram").fetchall():
+        oh = {}
+        for v, e, k, n in conn.execute("SELECT service_version, event_name, key, SUM(n)"
+                                       " FROM otel_histogram WHERE service_name=?"
+                                       " GROUP BY 1, 2, 3", (svc,)):
+            oh.setdefault(v, {}).setdefault(e, {})[k] = n
+        base = max((v.removeprefix(f"{svc} ") for v in acked if v.startswith(f"{svc} ")),
+                   key=_vkey, default="")
+        old, new, share = _pair(oh, base, lambda es: sum(e.get("*", 0) for e in es.values()))
+        if new:
+            since = conn.execute(f"SELECT MIN({session_day()}) FROM sessions WHERE id IN"
+                                 " (SELECT session_id FROM otel_histogram"
+                                 " WHERE service_name=? AND service_version=?)",
+                                 (svc, new)).fetchone()[0]
+            trips += [("problem", 1, f"{svc} {old}", f"{svc} {new}", k, a, b, since,
+                       "otel", d) for k, a, b, d in _thinned(share, old, new, OTEL_DECLARED)]
     written = []
-    for tier, cond, old, new, key, a, b, since in trips:
+    for tier, cond, old, new, key, a, b, since, source, derivers in trips:
         # Condition 2 dedups on the version pair: a key first seen on a later
         # run joins nothing, the open row is the operator's one judgement.
         if conn.execute("SELECT 1 FROM breakage WHERE acknowledged_at IS NULL"
@@ -1134,10 +1237,11 @@ def check_drift(conn, at, notify=False):
             continue
         cur = conn.execute(
             "INSERT INTO breakage (at, tier, condition, old_version, new_version,"
-            " key, old_share, new_share, since) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (at, tier, cond, old, new, key, a, b, since))
+            " key, old_share, new_share, since, source, derivers)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (at, tier, cond, old, new, key, a, b, since, source, derivers))
         written.append(dict(zip(BREAKAGE_COLS, (cur.lastrowid, at, tier, cond, old,
-                                                new, key, a, b, since, None))))
+                                                new, key, a, b, since, None, derivers))))
     conn.commit()
     loud = [r for r in written if r["condition"] == 1]
     if notify and loud:
@@ -1158,9 +1262,10 @@ def breakage_text(r):
                 f" the recent median {r['old_share']:.0%} — run {r['at'][:10]}")
     since = f"sessions since {r['since'] or '?'}"
     if r["condition"] == 1:
+        thin = f"; {r['derivers']} rows may be thin" if r.get("derivers") else ""
         return (f"{r['key']} present in {r['old_share']:.0%} of records under"
                 f" {r['old_version']}, {r['new_share']:.0%} under {r['new_version']}"
-                f" — {since}")
+                f" — {since}{thin}")
     keys = r["key"].split(", ")
     if len(keys) == 1:
         return (f"{r['key']} is new under {r['new_version']} ({r['new_share']:.0%} of"
@@ -1752,6 +1857,11 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
                 derive(conn, name, version, fn)
             except Exception as e:
                 errors.append(str(e))
+        try:
+            derive_otel_histogram(conn)
+        except Exception as e:
+            conn.rollback()
+            errors.append(f"otel_histogram: {type(e).__name__}: {e}")
         if errors:
             raise RuntimeError("; ".join(errors))
 

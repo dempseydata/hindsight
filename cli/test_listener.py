@@ -132,6 +132,35 @@ class ListenerTest(unittest.TestCase):
         self.assertEqual(row[2], "2026-08-01T14:30:16.543Z")
         self.assertEqual(json.loads(row[3])["decision"], "accept")
 
+    def resource_payload(self, sid, resource_attrs, **record_attrs):
+        body = logs_payload(*[log_record("api_request", sid, **record_attrs)] * 3)
+        body["resourceLogs"][0]["resource"]["attributes"] = resource_attrs
+        return body
+
+    def stored_attrs(self, sid):
+        db = sqlite3.connect(self.db)
+        try:
+            return [json.loads(a) for (a,) in db.execute(
+                "SELECT attributes FROM otel_events WHERE session_id=?", (sid,))]
+        finally:
+            db.close()
+
+    def test_malformed_resource_attribute_keeps_the_records(self):
+        self.post("/v1/logs", self.resource_payload(
+            "sess-badres", [{"value": {"stringValue": "no key"}}]))
+        self.assertEqual(len(self.stored_attrs("sess-badres")), 3)
+
+    def test_service_name_and_version_stamped_record_attributes_win(self):
+        self.post("/v1/logs", self.resource_payload("sess-res", [
+            {"key": "service.name", "value": {"stringValue": "claude-code"}},
+            {"key": "service.version", "value": {"stringValue": "2.1.2"}},
+            {"key": "host.arch", "value": {"stringValue": "arm64"}}],
+            **{"service.name": "from-record"}))
+        a = self.stored_attrs("sess-res")[0]
+        self.assertEqual((a["service.name"], a["service.version"]),
+                         ("from-record", "2.1.2"))
+        self.assertNotIn("host.arch", a)
+
     def test_metrics_payload_persists(self):
         status, body = self.post("/v1/metrics", METRICS_PAYLOAD, chunked=True)
         self.assertEqual(status, 200)

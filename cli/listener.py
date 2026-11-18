@@ -87,10 +87,18 @@ def _items(container, key):
 def ingest_logs(payload, conn):
     ok = bad = 0
     for rl in _items(payload, "resourceLogs"):
+        # the OTel histogram's version key (ADR-0037 §4) is a resource
+        # attribute; a malformed resource must not cost its records
+        try:
+            res = attr_dict(_items(rl.get("resource"), "attributes"))
+            res = {k: res[k] for k in ("service.name", "service.version") if k in res}
+        except Exception:
+            res = {}
         for sl in _items(rl, "scopeLogs"):
             for rec in _items(sl, "logRecords"):
                 try:
-                    attrs = attr_dict(rec.get("attributes"))
+                    # the record's own attributes win on a clash
+                    attrs = res | attr_dict(rec.get("attributes"))
                     name = attrs.get("event.name") or (
                         str((rec.get("body") or {}).get("stringValue", ""))
                         .removeprefix("claude_code.") or None)

@@ -12,7 +12,8 @@ Contracts: ADR-0039.
 | #85 | closed | 52ceaf5 | 0 | 266 tests, 48 s | |
 | #86 | closed | fdfc635 | 2 | 274 tests, 55 s | suite at 1.8× baseline |
 | #91 | built, open for human run | 29ff02f | 0 | 277 tests, 54 s | real-data equivalence: `eval/extract_equivalence.py` |
-| #87 | closed | (this commit) | 1+3 | 283 tests, 52 s | blocked once; v1 rows replaced per captured agent (ADR-0039 §9) |
+| #87 | closed | 3fe14c1 | 1+3 | 283 tests, 52 s | blocked once; v1 rows replaced per captured agent (ADR-0039 §9) |
+| #88 | closed | (this commit) | 1 | 288 tests, 56 s | v12 drops `scan_runs` |
 
 ## Owed
 
@@ -45,6 +46,10 @@ Contracts: ADR-0039.
 - #87: v3/v8/v9 rescan migrations no longer rescan; the derivers do — ADR? no
 - #87: subagent counts read the transcript registry plus the frozen `subagent_transcripts` table — ADR? no
 - #87: the 300 s live guard on derivation is retired (ADR-0031 §6, spec "Derivation has no guard") — ADR? no
+- #88: the listener stores `service.name` and `service.version` on each OTel event (record attributes win a clash; older events fall in the '' version) — a running listener needs a restart — ADR? yes (changes what the listener stores; ADR-0037 §4 implies it)
+- #88: OTel breakage rows: `source='otel'`, versions "<service> <version>", key "<event>.<attr>", baseline per service — ADR? yes (row format persists, the baseline parses it)
+- #88: `OTEL_DECLARED` holds the latency and reliability panels' pairs; #89/#90 add theirs — ADR? no
+- #88: OTel arrivals do not hold the guard; an OTel histogram version bump rebuilds every session — ADR? no
 
 ## Blocked
 
@@ -67,3 +72,5 @@ Contracts: ADR-0039.
 - #87: a DriftTest monkeypatches `analyze.derive` (no fixture path to a mid-run capture).
 - #87: the drift guard's skip is silent (spec story 36 gives no form).
 - #87: `docs/` still describes `fill_substrate` and `_reset_scanned`.
+- #88: a sharp shift in status mix (an optional OTel attribute 95% → 40%) trips a problem row; transcript keys share the exposure.
+- #88: sessions excluded from analysis still feed the OTel histogram.

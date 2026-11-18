@@ -1,4 +1,4 @@
-"""Seam tests for the sunk-cost scan (ticket #24 — build/sunk_cost.py),
+"""Seam tests for the sunk-cost scan (ticket #24 — cli/sunk_cost.py),
 driven through the analysis-run entrypoint: CLAUDE.md chain / skills / MCP
 itemised per project, plugin registry keyed by install path, idempotent
 rescan.

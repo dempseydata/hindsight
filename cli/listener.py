@@ -8,29 +8,27 @@ handled explicitly, every attribute optional-by-default kept as JSON, per-row
 count-and-skip, always return 200 once a body is accepted. Two guards run
 before the body is read (#34): Content-Type must be application/json (415)
 and the declared, chunked or inflated body must fit MAX_BODY (413 / dropped).
-The one GET, /health, answers the menu bar plugin (#37) and touches nothing.
+The one GET, /health, is a liveness probe (#37) and touches nothing.
 Stdlib only.
 
 Usage:
-  listener.py [--port N] [--db PATH]   run in the foreground (default :4318)
-  listener.py install                  write launchd plist + start the agent
-  listener.py uninstall                stop the agent + remove the plist
+  listener.py [--port N] [--db PATH] [--log]   run in the foreground (default :4318);
+                                               --log appends to <Hindsight home>/logs
+The launchd agent (`com.hindsight.ingest`) is written by `/hindsight:ops install`.
 """
 import json
-import os
 import sqlite3
-import subprocess
 import sys
 import zlib
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-DEFAULT_DB = REPO / "local-data" / "hindsight.db"
+from home import home, log_to
+
+DEFAULT_DB = home() / "hindsight.db"
 DEFAULT_PORT = 4318
 MAX_BODY = 8 * 1024 * 1024   # #34: declared, chunked and inflated body ceiling
-LAUNCHD_LABEL = "com.hindsight.ingest"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS otel_events (
@@ -202,7 +200,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(resp)
 
     def do_GET(self):
-        # #37: the menu bar plugin's liveness probe. The one GET, no DB touch.
+        # #37: the liveness probe. The one GET, no DB touch.
         ok = self.path == "/health"
         body = b'{"ok": true}' if ok else b""
         self.send_response(200 if ok else 404)
@@ -222,55 +220,7 @@ def make_server(port=DEFAULT_PORT, db_path=DEFAULT_DB):
     return server
 
 
-PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
-LOG_DIR = Path.home() / "Library" / "Logs" / "hindsight"
-PLIST = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>{label}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>{python}</string>
-    <string>{script}</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>{log}</string>
-  <key>StandardErrorPath</key><string>{log}</string>
-</dict>
-</plist>
-"""
-
-
-def install():
-    # launchd opens the log itself, and TCC refuses it a fresh file under
-    # ~/Documents (EX_CONFIG 78, job never spawns) — so logs live in ~/Library/Logs.
-    log = LOG_DIR / "listener.log"
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PLIST_PATH.write_text(PLIST.format(
-        label=LAUNCHD_LABEL, python=sys.executable,
-        script=str(Path(__file__).resolve()), log=log))
-    domain = f"gui/{os.getuid()}"
-    subprocess.run(["launchctl", "bootout", domain, str(PLIST_PATH)],
-                   capture_output=True)
-    subprocess.run(["launchctl", "bootstrap", domain, str(PLIST_PATH)], check=True)
-    print(f"installed {PLIST_PATH}, listening on :{DEFAULT_PORT}")
-
-
-def uninstall():
-    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(PLIST_PATH)],
-                   capture_output=True)
-    PLIST_PATH.unlink(missing_ok=True)
-    print(f"removed {PLIST_PATH}")
-
-
 def main(argv):
-    if argv[:1] == ["install"]:
-        return install()
-    if argv[:1] == ["uninstall"]:
-        return uninstall()
     port, db = DEFAULT_PORT, DEFAULT_DB
     args = iter(argv)
     for a in args:
@@ -278,6 +228,8 @@ def main(argv):
             port = int(next(args))
         elif a == "--db":
             db = Path(next(args))
+        elif a == "--log":
+            log_to("listener.log")
         else:
             sys.exit(__doc__)
     server = make_server(port, db)

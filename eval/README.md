@@ -25,12 +25,12 @@ by #67). Snapshots are cut at dates so **Now** moves:
 | thisisme@2026-08-25 | 5 declared | 4 | Plan since Aug 16 | two Reversed facts from titles alone |
 | content@2026-09-09 | 5 declared | 7 | off-script since Sep 8 | added 2026-09-11 (issue #17): two off-script runs, the current one included; three title-less runs — invention bait |
 
-Fixtures were cut from `local-data/hindsight.db` via `build/how.py`'s trail with
+Fixtures were cut from `local-data/hindsight.db` via `cli/how.py`'s trail with
 the greybox's event-run grain (≥3 fold, majority titling, ticket #64). They are
 frozen JSON — the real ledger builder lands with the narrative pass (#68) and
 the fixtures do not depend on it.
 
-The real ledger builder (`build/how.py` `run_ledger`, ticket #68) reproduces all
+The real ledger builder (`cli/how.py` `run_ledger`, ticket #68) reproduces all
 five frozen ledgers byte-for-byte when the live trail is cut at each `as_of`.
 
 **Output contract** the narrative pass must emit — the scorer reads exactly this:
@@ -101,7 +101,7 @@ iterations; record the failing run's tag when doing so.
 
 ```sh
 python3 eval/score.py --selfcheck                 # scorer sanity
-python3 eval/run.py build/prompts/status-v1.txt <tag>   # 5 haiku calls, ~1 min
+python3 eval/run.py cli/prompts/status-v1.txt <tag>   # 5 haiku calls, ~1 min
 python3 eval/score.py eval/cases.json <case> <out.json>  # re-score one output
 ```
 
@@ -173,7 +173,7 @@ The scorer is the production gate itself (`analyze.valid_entry`) — no judge, n
 anchors: the defect is a *shape* failure, and shape is mechanical.
 
 ```sh
-python3 eval/what_run.py build/prompts/what-v2.txt <tag>   # 20 haiku calls, ~1 min
+python3 eval/what_run.py cli/prompts/what-v2.txt <tag>   # 20 haiku calls, ~1 min
 ```
 
 Outputs in `local-data/eval/what/runs/<tag>/`.

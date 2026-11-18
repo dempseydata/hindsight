@@ -66,8 +66,8 @@ from urllib.parse import parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-# build/ is sys.path[0] when run as a script, and importers of this module
-# already resolve build/ — no path insert needed (the #50 shadowing lesson).
+# cli/ is sys.path[0] when run as a script, and importers of this module
+# already resolve cli/ — no path insert needed (the #50 shadowing lesson).
 import how
 from analyze import (DEFAULT_PROJECTS_DIR, DEFAULT_DB, LOST, REPO,  # noqa: E402 — one authority on paths
                      BREAKAGE_COLS, SECTIONS, audit_title, breakage_text, day_sql,
@@ -78,7 +78,7 @@ TOKENS_CSS = REPO / "design" / "tokens.css"
 # View CSS/JS/HTML, one file per extracted constant (ticket #80). The CSS is
 # tokens only — every colour via var(--o-*), chart ink on the ink palette,
 # selection on the compare hue (floor rules, tokens.css).
-ASSETS = REPO / "build" / "assets"
+ASSETS = REPO / "cli" / "assets"
 DEFAULT_PORT = 8321
 
 # Chip policy (judged on real data, resolution of ticket #44): a project
@@ -702,7 +702,7 @@ VIEWS = ("what", "where", "how")
 
 
 def _asset(name):
-    """Read a build/assets file per request — the tokens.css seam (ticket #80)."""
+    """Read a cli/assets file per request — the tokens.css seam (ticket #80)."""
     return (ASSETS / name).read_text()
 
 

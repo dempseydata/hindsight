@@ -260,7 +260,7 @@ class ListenerTest(unittest.TestCase):
         self.assertIn("chunked body over", err.getvalue())
 
     def test_health_get_200_other_gets_404(self):
-        # #37: the menu bar plugin's probe; the only GET the listener answers.
+        # #37: the liveness probe; the only GET the listener answers.
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
             conn.request("GET", "/health")

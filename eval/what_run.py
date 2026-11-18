@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "build"))
+sys.path.insert(0, str(REPO / "cli"))
 import analyze  # noqa: E402
 
 CASES = json.loads((REPO / "eval" / "what_cases.json").read_text())

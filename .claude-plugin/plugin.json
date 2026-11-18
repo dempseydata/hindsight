@@ -1,0 +1,15 @@
+{
+  "name": "hindsight",
+  "version": "2.0.0",
+  "description": "Local observability over Claude Code history: where tokens went, what was done, how the process ran.",
+  "author": {
+    "name": "Andrew Dempsey",
+    "url": "https://github.com/dempseydata"
+  },
+  "repository": "https://github.com/dempseydata/hindsight",
+  "license": "MIT",
+  "keywords": ["observability", "audit", "claude-code"],
+  "skills": [
+    "./skills/ops"
+  ]
+}

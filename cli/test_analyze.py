@@ -1343,34 +1343,6 @@ class AttributeTest(IdentityFixture, unittest.TestCase):
                                               "s-prehook": (None, None)})
 
 
-class NightlyTest(unittest.TestCase):
-    """The launchd nightly is a scheduled *invocation* of the on-demand
-    command, not a background process (ADR-0001 amendment)."""
-
-    def test_nightly_plist_is_a_calendar_job_invoking_this_script(self):
-        import plistlib
-        d = plistlib.loads(analyze.nightly_plist().encode())
-        self.assertEqual(d["Label"], "com.hindsight.nightly")
-        self.assertEqual(d["StartCalendarInterval"], {"Hour": 3, "Minute": 0})
-        self.assertTrue(d["ProgramArguments"][-1].endswith("analyze.py"))
-        self.assertNotIn("KeepAlive", d)  # scheduled invocation, not a daemon
-        # the installing shell's PATH is baked in so `claude` resolves under launchd
-        self.assertEqual(d["EnvironmentVariables"]["PATH"], os.environ["PATH"])
-
-    def test_nightly_plist_carries_hindsight_tz_only_when_set(self):
-        """Issue #1: launchd bakes the installing shell's environment, so a
-        pinned zone must be written into the plist or the nightly buckets
-        under the host zone while the operator's shell does not."""
-        import plistlib
-        os.environ.pop("HINDSIGHT_TZ", None)
-        env = plistlib.loads(analyze.nightly_plist().encode())["EnvironmentVariables"]
-        self.assertNotIn("HINDSIGHT_TZ", env)
-        os.environ["HINDSIGHT_TZ"] = "Asia/Tokyo"
-        self.addCleanup(os.environ.pop, "HINDSIGHT_TZ", None)
-        env = plistlib.loads(analyze.nightly_plist().encode())["EnvironmentVariables"]
-        self.assertEqual(env["HINDSIGHT_TZ"], "Asia/Tokyo")
-
-
 class ZoneTest(DbHelpers, unittest.TestCase):
     """Issue #1: `HINDSIGHT_TZ` pins the day-bucket zone; unset is the host
     zone (ADR-0014 as amended). Both bucket paths go through libc, so the
@@ -1658,12 +1630,12 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.corpus("new", "2.1.2", strip=("usage",))
         self.run_pipeline()
         bid = self.open_rows()[0]["id"]
-        r = subprocess.run([sys.executable, str(analyze.REPO / "build" / "analyze.py"),
+        r = subprocess.run([sys.executable, str(analyze.REPO / "cli" / "analyze.py"),
                             "acknowledge-breakage", str(bid), "--db", str(self.db)],
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.open_rows(), [])
-        r = subprocess.run([sys.executable, str(analyze.REPO / "build" / "analyze.py"),
+        r = subprocess.run([sys.executable, str(analyze.REPO / "cli" / "analyze.py"),
                             "acknowledge-breakage", "99", "--db", str(self.db)],
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 1)

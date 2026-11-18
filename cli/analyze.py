@@ -4,7 +4,7 @@
 On-demand, end to end: syncs new sessions from a transcript archive into
 `sessions` (hindsight's own `claude -p` analysis sessions excluded by prompt
 signature, ADR-0003), extracts per ADR-0002 (indexed pieces, sidecar uuid
-map, 180K chunk cap — build/extract.py), then per session runs the frozen
+map, 180K chunk cap — cli/extract.py), then per session runs the frozen
 what-pass over the extract (-> `audit`; multi-part sessions get the merge
 call). The why-pass and its findings/evidence/runs tables were removed
 wholesale per ADR-0006 (ticket #43) — v1 is two views, what and where.
@@ -25,7 +25,7 @@ audit row at assemble time — "ADRs touched", never model-derived; NULL, not
 a false zero, when a session was never scanned.
 
 After the session loop the status-narrative pass runs (ADR-0012, ticket
-#68): per declaring project, the how-view run ledger (build/how.py) is
+#68): per declaring project, the how-view run ledger (cli/how.py) is
 hashed, and when it, the prompt version or the model changed, one model
 call writes a Built/Reversed/Now fact list into `status_narrative` —
 write-time gated by the eval's floors (eval/score.py), never on page load.
@@ -64,9 +64,7 @@ with the nearest earlier one against substrate.FIELD_CONTRACT. A trip is a
 thin — and the run carries on; `acknowledge-breakage` closes it. The CLI's
 own version is a log line per run, never a trigger.
 
-Usage: analyze.py [--root DIR] [--db PATH] [--work-dir DIR]
-       analyze.py install       write + start the nightly launchd calendar job
-       analyze.py uninstall     stop the job + remove the plist
+Usage: analyze.py [--root DIR] [--db PATH] [--work-dir DIR] [--log]
        analyze.py attribute <synced-name> <folder> [--before ISO-8601]
                             [--db PATH] [--projects-dir DIR]
                                 stamp a folder's identity onto pre-hook sessions
@@ -78,12 +76,12 @@ Usage: analyze.py [--root DIR] [--db PATH] [--work-dir DIR]
 The nightly is a scheduled *invocation* of this on-demand command, not a
 background process (ADR-0001 amendment 2026-08-24). launchd calendar jobs
 run on wake if the Mac was asleep at 03:00, and are skipped if powered off.
+`/hindsight:ops install` writes it (hindsight.py); it runs with `--log`.
 """
 import argparse
 import hashlib
 import json
 import os
-import plistlib
 import re
 import sqlite3
 import statistics
@@ -98,10 +96,14 @@ REPO = Path(__file__).resolve().parent.parent
 from substrate import (FIELD_CONTRACT, _is_live, adr_count,  # noqa: E402
                        fill_substrate, record_count, subagent_transcripts)
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
+from home import home, log_to  # noqa: E402
 
 DEFAULT_TRANSCRIPTS = Path.home() / ".claude" / "projects"
-DEFAULT_DB = REPO / "local-data" / "hindsight.db"
-DEFAULT_WORK_DIR = REPO / "local-data" / "analysis"
+DEFAULT_DB = home() / "hindsight.db"
+# Rebuildable caches live in the plugin data directory (ADR-0036, amended for
+# #79); the nightly plist carries CLAUDE_PLUGIN_DATA. Unset — a run from a
+# working copy — keeps them in the gitignored local-data/.
+DEFAULT_WORK_DIR = Path(os.environ.get("CLAUDE_PLUGIN_DATA") or REPO / "local-data") / "analysis"
 DEFAULT_CLAUDE_DIR = Path.home() / ".claude"
 # The workspace layout (each dir one project repo) — CLI-overridable.
 DEFAULT_PROJECTS_DIR = Path.home() / "Documents" / "Claude"
@@ -184,7 +186,7 @@ STATUS_VERSION = "status-v1"  # the how-view status narrative (ADR-0012, #68)
 # The ADR-0002 model pin. Was single-sourced from eval/corpus.json; the eval
 # harness retired with the why-pass (ADR-0006), so the pin lives here now.
 MODEL = "claude-haiku-4-5-20251001"
-PROMPTS_DIR = REPO / "build" / "prompts"
+PROMPTS_DIR = REPO / "cli" / "prompts"
 WHAT_PROMPT = (PROMPTS_DIR / f"{PROMPT_VERSION}.txt").read_text()
 MERGE_PROMPT = (PROMPTS_DIR / "merge-v1.txt").read_text()
 STATUS_PROMPT = (PROMPTS_DIR / f"{STATUS_VERSION}.txt").read_text()
@@ -401,7 +403,7 @@ class LimitExhausted(Exception):
 
 
 class ExtractionFailed(Exception):
-    """build/extract.py exited non-zero — retryable, per-session, next run."""
+    """cli/extract.py exited non-zero — retryable, per-session, next run."""
 
 
 def init_db(db_path):
@@ -1050,13 +1052,13 @@ def part_files(extracts_dir, session_id):
 
 def extract_session(work_dir, session_id, transcript_path):
     """Indexed extract + sidecar map (ADR-0002), via the frozen
-    build/extract.py. Raises ExtractionFailed (retryable) if the subprocess
+    cli/extract.py. Raises ExtractionFailed (retryable) if the subprocess
     exits non-zero."""
     extracts_dir = Path(work_dir) / "extracts"
     prefix = extracts_dir / session_id
     if not Path(f"{prefix}.map.json").exists():
         extracts_dir.mkdir(parents=True, exist_ok=True)
-        r = subprocess.run([sys.executable, str(REPO / "build" / "extract.py"),
+        r = subprocess.run([sys.executable, str(REPO / "cli" / "extract.py"),
                             str(transcript_path), str(prefix)],
                             capture_output=True, text=True)
         if r.returncode != 0:
@@ -1581,49 +1583,6 @@ def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
         conn.close()
 
 
-NIGHTLY_LABEL = "com.hindsight.nightly"
-NIGHTLY_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{NIGHTLY_LABEL}.plist"
-NIGHTLY_HOUR = 3
-# launchd opens the log itself, and TCC refuses it a fresh file under
-# ~/Documents (EX_CONFIG 78, job never spawns) — so logs live in ~/Library/Logs.
-LOG_DIR = Path.home() / "Library" / "Logs" / "hindsight"
-
-
-def nightly_plist():
-    log = str(LOG_DIR / "analyze.log")
-    return plistlib.dumps({
-        "Label": NIGHTLY_LABEL,
-        "ProgramArguments": [sys.executable, str(Path(__file__).resolve())],
-        "StartCalendarInterval": {"Hour": NIGHTLY_HOUR, "Minute": 0},
-        # launchd's default PATH lacks `claude` (and the CLI-kind probes);
-        # bake the installing shell's PATH, where both are known to resolve
-        # — and the pinned zone, or the nightly buckets under the host's.
-        "EnvironmentVariables": {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                                 **({"HINDSIGHT_TZ": tz} if (tz := os.environ.get("HINDSIGHT_TZ")) else {})},
-        "StandardOutPath": log,
-        "StandardErrorPath": log,
-    }).decode()
-
-
-def install_nightly():
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    NIGHTLY_PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    NIGHTLY_PLIST_PATH.write_text(nightly_plist())
-    domain = f"gui/{os.getuid()}"
-    subprocess.run(["launchctl", "bootout", domain, str(NIGHTLY_PLIST_PATH)],
-                   capture_output=True)
-    subprocess.run(["launchctl", "bootstrap", domain, str(NIGHTLY_PLIST_PATH)],
-                   check=True)
-    print(f"installed {NIGHTLY_PLIST_PATH}, runs daily at {NIGHTLY_HOUR:02d}:00")
-
-
-def uninstall_nightly():
-    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}",
-                    str(NIGHTLY_PLIST_PATH)], capture_output=True)
-    NIGHTLY_PLIST_PATH.unlink(missing_ok=True)
-    print(f"removed {NIGHTLY_PLIST_PATH}")
-
-
 def attribute_main(argv):
     ap = argparse.ArgumentParser(
         prog="analyze.py attribute",
@@ -1691,10 +1650,6 @@ def cli_version_line():
 
 
 def main(argv):
-    if argv[:1] == ["install"]:
-        return install_nightly()
-    if argv[:1] == ["uninstall"]:
-        return uninstall_nightly()
     if argv[:1] == ["attribute"]:
         return attribute_main(argv[1:])
     if argv[:1] == ["acknowledge-breakage"]:
@@ -1706,7 +1661,11 @@ def main(argv):
     ap.add_argument("--work-dir", type=Path, default=DEFAULT_WORK_DIR)
     ap.add_argument("--claude-dir", type=Path, default=DEFAULT_CLAUDE_DIR)
     ap.add_argument("--projects-dir", type=Path, default=DEFAULT_PROJECTS_DIR)
+    ap.add_argument("--log", action="store_true",
+                    help="append output to <Hindsight home>/logs/analyze.log (the nightly)")
     args = ap.parse_args(argv)
+    if args.log:
+        log_to("analyze.log")
     cli_version_line()
     run_analysis(args.root, args.db, args.work_dir,
                  claude_dir=args.claude_dir, projects_dir=args.projects_dir,

@@ -191,8 +191,8 @@ components:
 ---
 
 <!--
-DERIVED DOCUMENTATION — generated from the shipped artifact (build/serve.py,
-build/assets/, design/tokens.css) for Impeccable's tooling. design/tokens.css
+DERIVED DOCUMENTATION — generated from the shipped artifact (cli/serve.py,
+cli/assets/, design/tokens.css) for Impeccable's tooling. design/tokens.css
 remains the sole authoritative direction contract; the server inlines it into
 every page at render time. On any conflict between this file and tokens.css,
 tokens.css wins. Re-derive this file whenever tokens.css or the UI's visual
@@ -207,7 +207,7 @@ post-shift change that puts record badges on the ok role.
 
 **Creative North Star: "The Indigo Deck"**
 
-Hindsight is an observability workhorse in the Grafana/Honeycomb lineage. Since ADR-0029 it is a mix, chosen strand by strand on real data: **Tabler's layout and card grammar, on the Indigo deck's palette**. Tabler is a reference, not a dependency — nothing is vendored; its shell, cards, card-tables, stat cards, filled badges, help popovers and icon set were ported by hand into `design/tokens.css` and `build/assets/`. The palette, type, and honesty grammar are the incumbent deck's (ADR-0007): near-black indigo ground, elevated panels, one periwinkle voice, system faces, bar sparks on a shared 30-day axis. Two themes ship from one token contract (ADR-0017): the dark deck is the `:root` base; the light "C · Ledger" derivation keeps every hue and role on a white ground with recessed panels and borders over elevation. The surface is server-rendered HTML with inline SVG charts and inline SVG glyphs — no dependencies, no imagery, no webfont, no runtime font fetches.
+Hindsight is an observability workhorse in the Grafana/Honeycomb lineage. Since ADR-0029 it is a mix, chosen strand by strand on real data: **Tabler's layout and card grammar, on the Indigo deck's palette**. Tabler is a reference, not a dependency — nothing is vendored; its shell, cards, card-tables, stat cards, filled badges, help popovers and icon set were ported by hand into `design/tokens.css` and `cli/assets/`. The palette, type, and honesty grammar are the incumbent deck's (ADR-0007): near-black indigo ground, elevated panels, one periwinkle voice, system faces, bar sparks on a shared 30-day axis. Two themes ship from one token contract (ADR-0017): the dark deck is the `:root` base; the light "C · Ledger" derivation keeps every hue and role on a white ground with recessed panels and borders over elevation. The surface is server-rendered HTML with inline SVG charts and inline SVG glyphs — no dependencies, no imagery, no webfont, no runtime font fetches.
 
 Two chassis carry everything, on purpose (ADR-0029 §4): the **card** (8px) holds data; the **stage panel** (6px, 3px stage-hue left rule) marks stage identity. The radius is the only structural difference between them. No density trim was taken — Tabler's 20px card padding and 65px card headers were measured against the old deck and kept, knowing the pages grow.
 
@@ -359,7 +359,7 @@ Three radii, strictly assigned and theme-invariant: 8px (`--o-radius-card`) for 
 - **Style:** inside an open league row's `--o-bg` detail, one nested `<details>` per exact error line — 12px mono `--o-text` summary with the count `N ×` in 600 `--o-problem-text`; each occurrence an 11px mono `--o-dim` line (session link · day) over a wrapping 11px/1.5 `pre`. Uncaptured errors close the list as a stated count, never dropped.
 
 ### Icons
-- **Set:** 19 glyphs derived from Tabler Icons 3.48.0 (MIT, credited in `LICENSES/tabler-icons.txt`), paths in `build/assets/icons.js`. Markup carries `data-icon="<name>"` placeholders; the script fills each with a 16px inline SVG, stroke 2, `currentColor`, round caps and joins. One glyph per nav item, card title, help trigger and delta arrow, plus How's clock (Status) and alert-triangle (warning). No webfont, nothing vendored.
+- **Set:** 19 glyphs derived from Tabler Icons 3.48.0 (MIT, credited in `LICENSES/tabler-icons.txt`), paths in `cli/assets/icons.js`. Markup carries `data-icon="<name>"` placeholders; the script fills each with a 16px inline SVG, stroke 2, `currentColor`, round caps and joins. One glyph per nav item, card title, help trigger and delta arrow, plus How's clock (Status) and alert-triangle (warning). No webfont, nothing vendored.
 
 ### Bar Sparks (signature component)
 - **Grammar:** per-day bars on table rows over the shared 30-calendar-day axis ending at the last synced day: 3px bars, 1px gaps, 14px tall, own peak, minimum bar 1px. A missing day is a gap, never a zero-height bar. An error series, when present, is a 6px `--o-problem` band 2px beneath, on its own peak. OTEL-fed sparks shade the pre-coverage region in `--o-gapline` at `--o-wash-precov`.

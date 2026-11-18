@@ -18,18 +18,9 @@ stdin (ADR-0018). A missing or unreadable cwd stores nothing for that
 attribute; the sync step later reads it from otel_events to attribute
 the session to its folder rather than its (renamable) directory name.
 
-Installation is config, not code. Add to ~/.claude/settings.json (any
-hook events you want timed; the script reads the event name from the
-JSON Claude Code passes on stdin):
-
-  "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command":
-      "python3 /path/to/hindsight/build/hook.py"}]}],
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command":
-      "python3 /path/to/hindsight/build/hook.py"}]}],
-    "Stop": [{"hooks": [{"type": "command", "command":
-      "python3 /path/to/hindsight/build/hook.py"}]}]
-  }
+Registered by the plugin's hooks/hooks.json on SessionStart only, for the
+folder identity, until the capture hook replaces it (ADR-0036). v1's
+hand-wired settings.json entries go: `/hindsight:ops install` lists them.
 
 Pass --port N if the listener is not on the default :4318.
 """

@@ -1,4 +1,4 @@
-"""Shared fixtures for the build/ seam tests (ticket #82): transcript
+"""Shared fixtures for the cli/ seam tests (ticket #82): transcript
 builders, canned model outputs, the replay stub and store-query helpers.
 
 Imported by test_analyze, test_substrate, test_sunk_cost and

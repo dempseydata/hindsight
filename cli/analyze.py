@@ -54,7 +54,9 @@ is gone before it was ever extracted is `lost` — terminal, never retried
 
 Every day bucket is the operator's local day off the stored UTC instant
 (ADR-0014); `HINDSIGHT_TZ=<IANA name>` pins that zone, unset is the host's
-(issue #1). `sessions.date`, the one stored bucket, re-derives each run.
+(issue #1). A session's day is read through `session_day` alone: a `v1`
+session's stored day, else the local day of its earliest records-index
+timestamp (ADR-0031 §5, ticket #86).
 
 The schema-drift guard (issue #15, ADR-0020) runs after the substrate
 fill: the scan counts every key it sees per record `version` into
@@ -89,6 +91,7 @@ import statistics
 import subprocess
 import sys
 import time
+import zlib
 import zoneinfo
 from datetime import datetime, timezone
 from pathlib import Path
@@ -98,7 +101,7 @@ from substrate import (FIELD_CONTRACT, _is_live, adr_count,  # noqa: E402
                        fill_substrate, record_count, subagent_transcripts)
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 from home import home, log_to  # noqa: E402
-from capture import write_health  # noqa: E402
+from capture import capture, now as stamp, transcript_key, write_health  # noqa: E402
 
 DEFAULT_TRANSCRIPTS = Path.home() / ".claude" / "projects"
 DEFAULT_DB = home() / "hindsight.db"
@@ -235,7 +238,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS audit (
   session_id TEXT PRIMARY KEY REFERENCES sessions(id),
   project TEXT,
-  date TEXT,
   skip INTEGER NOT NULL,
   markdown TEXT,
   prompt_version TEXT NOT NULL,
@@ -480,8 +482,8 @@ def init_db(db_path):
         conn.execute("PRAGMA user_version = 4")
         conn.commit()
     if v < 5:
-        # Ticket #74 / ADR-0014: day buckets became the operator's local day.
-        redate_sessions(conn)
+        # Ticket #74 / ADR-0014 redated stored days here; the redate went
+        # with ticket #86 (ADR-0031 §5): a v1 day is frozen as stored.
         conn.execute("PRAGMA user_version = 5")
         conn.commit()
     if v < 7:  # v6 was the identity columns, now added above the gate
@@ -537,6 +539,13 @@ def init_db(db_path):
         fill_substrate(conn)
     if v < 10:
         _migrate_v10(conn)
+    if v < 11:
+        # Ticket #86 (ADR-0039 §1): the audit row's copy of the day goes;
+        # every view reads the day through session_day.
+        if "date" in {r[1] for r in conn.execute("PRAGMA table_info(audit)")}:
+            conn.execute("ALTER TABLE audit DROP COLUMN date")
+        conn.execute("PRAGMA user_version = 11")
+        conn.commit()
     # Message-lens join indexes — after the gate, so a pre-#42 db grows the
     # columns before they're indexed.
     conn.executescript(
@@ -730,95 +739,102 @@ def project_name(dirname):
     return dirname[len(prefix):] if dirname.startswith(prefix) else dirname
 
 
-def head_scan(path):
+def head_scan(lines):
     """(first user text, first record timestamp, cli version) from a
-    transcript's head — what self-exclusion, inventory metadata and the
-    attribute command's --before bound read, without a full parse."""
+    transcript's head lines — what self-exclusion, inventory metadata and
+    the attribute command's --before bound read, without a full parse."""
     text, first_ts, version = "", "", None
-    with path.open() as f:
-        for i, line in enumerate(f):
-            if i > 50 or (text and first_ts and version):
-                break
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not first_ts and e.get("timestamp"):
-                first_ts = e["timestamp"]
-            if version is None and e.get("version"):
-                version = e["version"]
-            if not text and e.get("type") == "user" and not e.get("isMeta"):
-                c = (e.get("message") or {}).get("content")
-                if isinstance(c, str):
-                    text = c
-                elif isinstance(c, list):
-                    text = next((x.get("text", "") for x in c
-                                 if isinstance(x, dict) and x.get("type") == "text"), "")
+    for i, line in enumerate(lines):
+        if i > 50 or (text and first_ts and version):
+            break
+        try:
+            e = json.loads(line)
+        except ValueError:  # bytes from the raw store may not even decode
+            continue
+        if not isinstance(e, dict):
+            continue
+        if not first_ts and e.get("timestamp"):
+            first_ts = e["timestamp"]
+        if version is None and e.get("version"):
+            version = e["version"]
+        if not text and e.get("type") == "user" and not e.get("isMeta"):
+            c = (e.get("message") or {}).get("content")
+            if isinstance(c, str):
+                text = c
+            elif isinstance(c, list):
+                text = next((x.get("text", "") for x in c
+                             if isinstance(x, dict) and x.get("type") == "text"), "")
     return text, first_ts, version
 
 
-def hook_folder_identity(conn, sid):
-    """The folder identity the capture hook recorded at this session's
-    SessionStart (ADR-0018, ADR-0033 §1), or None — pre-hook history or an
-    unreadable working directory. The first firing that carried one wins;
-    v1's `hindsight.hook` rows stay in otel_events, unread (ADR-0033 §7)."""
-    row = conn.execute("SELECT folder_identity FROM transcripts"
-                       " WHERE session_id=? AND agent_id IS NULL", (sid,)).fetchone()
-    return row[0] if row else None
+def session_day(s="sessions"):
+    """The one day expression every view reads (ADR-0031 §5, ticket #86),
+    as SQL over the sessions table aliased `s`: a `v1` session's stored
+    day, else the local day of the earliest records-index timestamp across
+    its parent and subagents. A `raw` session stores no day."""
+    return (f"coalesce({s}.date, (SELECT {day_sql('MIN(timestamp)')}"
+            f" FROM records_index WHERE session_id = {s}.id))")
 
 
-def redate_sessions(conn):
-    """Every other day bucket converts at read time, but `sessions.date` is
-    a *stored* bucket that has already lost the clock time it would need —
-    so it re-derives from the transcript head under the effective zone
-    (ADR-0014). Ran once as migration 5; runs every analysis since issue #1,
-    because a changed `HINDSIGHT_TZ` would otherwise leave every older
-    session a day off its own usage bars. A vanished transcript keeps the
-    date it has: a guess is not a re-derivation."""
-    # ponytail: head-scans every surviving transcript each run (~0.6 s per
-    # 300 sessions). Store the start *instant* and bucket at read time if
-    # this ever shows in the run's wall-clock.
-    redated = []
-    for sid, path in conn.execute("SELECT id, transcript_path FROM sessions"):
-        if Path(path).exists():
-            date = local_day(head_scan(Path(path))[1])
-            if date:
-                redated.append((date, sid))
-    conn.executemany("UPDATE sessions SET date=? WHERE id=?", redated)
-    conn.executemany("UPDATE audit SET date=? WHERE session_id=?", redated)
+def sweep(conn, root):
+    """The catch-up for a missed firing (ADR-0033 §1, ticket #86): the
+    capture hook's own function over every transcript under `root` — parent
+    and subagent — past its registry high-water or with no registry row.
+    Returns the count of lines stored."""
+    known = {(sid, aid): hw for sid, aid, hw in conn.execute(
+        "SELECT session_id, agent_id, high_water FROM transcripts")}
+    stored, failed = 0, []
+    for path in sorted([*Path(root).glob("*/*.jsonl"),
+                        *Path(root).glob("*/*/subagents/agent-*.jsonl")]):
+        if not path.is_file():
+            continue  # a directory named *.jsonl is not a transcript
+        try:
+            if path.stat().st_size > known.get(transcript_key(path), -1):
+                stored += capture(conn, path)
+        except FileNotFoundError:
+            pass  # gone between the listing and the read: nothing to catch up
+        except OSError as e:
+            conn.rollback()
+            failed.append(f"{path}: {type(e).__name__}: {e}")
+    if failed:
+        raise RuntimeError(f"sweep failed on {len(failed)} transcript(s): "
+                           + "; ".join(failed))
+    return stored
 
 
-def sync_sessions(conn, root):
-    """Insert newly seen transcripts into `sessions`; self-excluded sessions
-    never enter it. Excluded ids are remembered in `excluded_sessions` so each
-    transcript is head-scanned once, not on every run — analysis runs mint
-    fresh `claude -p` transcripts of their own, so the excluded set otherwise
-    grows the rescan cost forever. All file I/O happens before the write
-    transaction opens (the ingest listener shares this db and its busy
-    timeout is finite). A new session's folder identity and attribution
-    source ('hook') are filled from the capture hook's SessionStart identity when one
-    exists (ADR-0018); a session with none is synced name-only, exactly as
-    before. Returns the count inserted."""
-    seen = {r[0] for r in conn.execute("SELECT id FROM sessions")}
-    seen |= {r[0] for r in conn.execute("SELECT id FROM excluded_sessions")}
+def sync_sessions(conn):
+    """Project bookkeeping's session rows, from the transcript registry
+    (ticket #86), replacing the v1 directory scan: every parent transcript
+    with captured records and no `sessions` row gets one, named from its
+    transcript directory, with no stored day (session_day dates it).
+    Self-excluded sessions (ADR-0003, read from the stored head) never
+    enter it, and are remembered in `excluded_sessions`. A new session's
+    folder identity and attribution source ('hook') are filled from the
+    capture hook's SessionStart identity when one exists (ADR-0018); one
+    with none is synced name-only. Returns the count inserted."""
     rows, excluded = [], []
-    for jsonl in sorted(Path(root).glob("*/*.jsonl")):
-        sid = jsonl.stem
-        if sid in seen:
-            continue
-        seen.add(sid)
-        head, first_ts, version = head_scan(jsonl)
+    for sid, path, hw, fid in conn.execute(
+            "SELECT session_id, path, high_water, folder_identity FROM transcripts"
+            " WHERE agent_id IS NULL AND high_water > 0"
+            " AND session_id NOT IN (SELECT id FROM sessions)"
+            " AND session_id NOT IN (SELECT id FROM excluded_sessions)"
+            " ORDER BY session_id").fetchall():
+        head, _, version = head_scan(zlib.decompress(line) for (line,) in conn.execute(
+            "SELECT line FROM raw_records WHERE session_id=? AND agent_id IS NULL"
+            " ORDER BY byte_offset LIMIT 52", (sid,)))
         if any(sig in head[:3000] for sig in ANALYSIS_SIGS):
             excluded.append((sid,))
             continue
-        fid = hook_folder_identity(conn, sid)
-        rows.append((sid, project_name(jsonl.parent.name), str(jsonl),
-                     local_day(first_ts), version, jsonl.stat().st_size, fid,
-                     "hook" if fid is not None else None))
+        try:
+            size = Path(path).stat().st_size
+        except OSError:
+            size = hw  # the file is gone; the store holds this much of it
+        rows.append((sid, project_name(Path(path).parent.name), path, version,
+                     size, fid, "hook" if fid is not None else None))
     conn.executemany(
-        "INSERT INTO sessions (id, project, transcript_path, date, cli_version,"
+        "INSERT INTO sessions (id, project, transcript_path, cli_version,"
         " size, status, folder_identity, attribution_source)"
-        " VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)", rows)
+        " VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)", rows)
     conn.executemany("INSERT INTO excluded_sessions (id) VALUES (?)", excluded)
     conn.commit()
     return len(rows)
@@ -876,7 +892,7 @@ def attribute_sessions(conn, name, folder, before=None,
         before = parse_ts(before)
         if before is None:
             raise ValueError("--before is not an ISO-8601 instant")
-    rows = conn.execute("SELECT id, transcript_path, date FROM sessions"
+    rows = conn.execute(f"SELECT id, transcript_path, {session_day()} FROM sessions"
                         " WHERE project = ? AND folder_identity IS NULL",
                         (name,)).fetchall()
     if before is not None:
@@ -884,7 +900,8 @@ def attribute_sessions(conn, name, folder, before=None,
 
         def precedes(path, date):
             if Path(path).exists():
-                ts = parse_ts(head_scan(Path(path))[1])
+                with open(path, "rb") as f:
+                    ts = parse_ts(head_scan(f)[1])
                 return ts is not None and ts < before
             # ponytail: the bucket is the local day (ADR-0014) except for a
             # transcript already gone at the v5 migration, which kept its
@@ -979,6 +996,82 @@ def _subagents_grew(conn, sid, path):
                for aid, p in subagent_transcripts(path))
 
 
+# The records index (ADR-0031 §3, ticket #86), the first deriver: each
+# record's type, uuid and timestamp. Bump the version to rebuild its `raw`
+# rows from the raw store.
+RECORDS_INDEX_VERSION = 1
+UNPARSEABLE = 5  # breakage condition: a stored record that is not a JSON object
+
+
+def index_records(conn, sid, records):
+    """Records-index rows for one session from its raw records, given as
+    [(agent_id, byte_offset, line bytes)]. A line that is not a JSON object
+    is indexed nowhere and writes one open condition-5 breakage for the
+    session (ADR-0037 §6): capture stores complete lines only, so any such
+    line is a breakage, with no floor."""
+    bad = False
+    for aid, offset, line in records:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            r = None
+        if not isinstance(r, dict):
+            bad = True
+            continue
+        vals = [v if isinstance(v, str) else None
+                for v in (r.get("type"), r.get("uuid"), r.get("timestamp"))]
+        conn.execute("INSERT INTO records_index (session_id, agent_id, byte_offset,"
+                     " type, uuid, timestamp, provenance) VALUES (?, ?, ?, ?, ?, ?, 'raw')",
+                     (sid, aid, offset, *vals))
+    if bad and not conn.execute("SELECT 1 FROM breakage WHERE acknowledged_at IS NULL"
+                                " AND condition=? AND session_id=?",
+                                (UNPARSEABLE, sid)).fetchone():
+        conn.execute("INSERT INTO breakage (at, tier, condition, source, session_id,"
+                     " derivers) VALUES (?, 'problem', ?, 'derivation', ?, 'records_index')",
+                     (stamp(), UNPARSEABLE, sid))
+
+
+def derive(conn, name, version, fn):
+    """The deriver loop (ADR-0031 §6, ticket #86) for the deriver `fn`,
+    whose table is `name`. A session is due when its newest raw rowid
+    exceeds the one stored at its last derivation; its `raw` rows are
+    deleted and re-derived from all its raw records, parent and subagents
+    together, in one transaction. A failure rolls back that session alone
+    and leaves it due; the loop carries on, then raises naming each failed
+    session, so the run stays errored while one does (ADR-0038 §4). State
+    is keyed `name@version`: a bump finds no state, clears the old, and so
+    rebuilds every session through this same loop, `v1` and `compacted`
+    rows untouched."""
+    key = f"{name}@{version}"
+    conn.execute("DELETE FROM deriver_state WHERE deriver GLOB ? AND deriver != ?",
+                 (f"{name}@*", key))
+    conn.commit()
+    done = dict(conn.execute("SELECT session_id, raw_rowid FROM deriver_state"
+                             " WHERE deriver=?", (key,)))
+    failed = []
+    for sid, top in conn.execute("SELECT session_id, MAX(rowid) FROM raw_records"
+                                 " GROUP BY session_id").fetchall():
+        if top <= done.get(sid, 0):
+            continue
+        try:
+            conn.execute(f"DELETE FROM {name} WHERE session_id=? AND provenance='raw'",
+                         (sid,))
+            fn(conn, sid, [(aid, off, zlib.decompress(line)) for aid, off, line in
+                           conn.execute("SELECT agent_id, byte_offset, line FROM raw_records"
+                                        " WHERE session_id=? AND rowid <= ?"
+                                        " ORDER BY ifnull(agent_id, ''), byte_offset",
+                                        (sid, top)).fetchall()])
+            conn.execute("INSERT OR REPLACE INTO deriver_state (deriver, session_id,"
+                         " raw_rowid) VALUES (?, ?, ?)", (key, sid, top))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            failed.append(f"{sid}: {type(e).__name__}: {e}")
+    if failed:
+        raise RuntimeError(f"{name} failed on {len(failed)} session(s): "
+                           + "; ".join(failed))
+
+
 def _vkey(v):
     """Record-version order: numeric dotted, so 2.1.91 < 2.1.233. '' (records
     carrying no version) sorts oldest."""
@@ -1033,8 +1126,8 @@ def check_drift(conn, at, records, skipped, notify=False):
         # — a session opened under the old CLI and resumed under the new one
         # is missed, so the day can run late (or read '?'). Query the
         # histogram by session for the exact day if that ever matters.
-        since = conn.execute("SELECT MIN(date) FROM sessions WHERE cli_version=?",
-                             (new,)).fetchone()[0]
+        since = conn.execute(f"SELECT MIN({session_day()}) FROM sessions"
+                             " WHERE cli_version=?", (new,)).fetchone()[0]
 
         def share(v, scope, key):
             s = h[v].get(scope, {})
@@ -1093,6 +1186,9 @@ def check_drift(conn, at, records, skipped, notify=False):
 
 def breakage_text(r):
     """One breakage row as one line — the banner's and the notification's."""
+    if r["condition"] == UNPARSEABLE:  # written by the records index (#86)
+        return (f"session {r['session_id']} holds a stored record that is not JSON;"
+                f" the rows derived from it may be thin — seen {r['at'][:10]}")
     if r["condition"] == 6:  # written by the capture hook (#84)
         return (f"session {r['session_id']}'s transcript no longer matches what"
                 f" was captured; capture of it stopped — seen {r['at'][:10]}")
@@ -1243,9 +1339,9 @@ def insert_results(conn, session, skip, md, what_version, model):
     (the import path; fill_substrate stamps it on the next run)."""
     conn.execute(
         "INSERT OR REPLACE INTO audit"
-        " (session_id, project, date, skip, markdown, prompt_version, model, adr_count)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (session["id"], session["project"], session["date"], skip,
+        " (session_id, project, skip, markdown, prompt_version, model, adr_count)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (session["id"], session["project"], skip,
          None if skip else md, what_version, model, adr_count(conn, session["id"])))
 
 
@@ -1650,35 +1746,45 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
             failed[name] = f"{type(e).__name__}: {e}"
             print(f"{name} failed: {e!r}", file=sys.stderr)
 
-    def sweep():
-        sync_sessions(conn, root)
-        redate_sessions(conn)
-        conn.commit()
-
     def bookkeeping():
-        # Identity fill, presence, then canonicalisation, ahead of everything
-        # that reads sessions.project — the model loop and narrative writer
-        # must see a rename already applied (ADR-0018).
+        # Sessions from the registry, identity fill, presence, then
+        # canonicalisation, ahead of everything that reads sessions.project
+        # — the model loop and narrative writer must see a rename already
+        # applied (ADR-0018).
+        sync_sessions(conn)
         fill_hook_identity(conn)
         observe_presence(conn, projects_dir)
         canonicalize_projects(conn)
 
     def derivation():
         invalidate_grown(conn, work_dir)
-        return fill_substrate(conn)
+        # Both run whatever the other did; the index first, so a scan that
+        # raises mid-session leaves its uncommitted rows for job()'s rollback.
+        errors = []
+        try:
+            derive(conn, "records_index", RECORDS_INDEX_VERSION, index_records)
+        except Exception as e:
+            errors.append(str(e))
+        try:
+            scanned = fill_substrate(conn)
+        except Exception as e:
+            errors.append(f"substrate scan: {type(e).__name__}: {e}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        return scanned
 
     def what_pass():
         classify_and_extract(conn, work_dir)
         todo = conn.execute(
-            "SELECT id, project, transcript_path, date FROM sessions"
+            "SELECT id, project, transcript_path FROM sessions"
             f" WHERE status IN {SELECTABLE_SQL} ORDER BY id").fetchall()
         # ponytail: serial, one claude -p call at a time; parallelize if a
         # large run's wall-clock becomes the bottleneck — kept serial here
         # for a clean, testable limit-exhaustion pause boundary.
-        for sid, project, path, date in todo:
+        for sid, project, path in todo:
             if _is_live(path):
                 continue  # live session: stays pending for the next run
-            session = {"id": sid, "project": project, "transcript_path": path, "date": date}
+            session = {"id": sid, "project": project, "transcript_path": path}
             try:
                 process_session(conn, work_dir, session, model_runner)
             except LimitExhausted:
@@ -1692,7 +1798,7 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
             pass  # ledgers unchanged, so the next run retries
 
     try:
-        job("sweep", sweep)
+        job("sweep", lambda: sweep(conn, root))
         job("project bookkeeping", bookkeeping)
         scanned = job("derivation", derivation)
         if "derivation" not in failed:  # a half-derived store trips the guard falsely

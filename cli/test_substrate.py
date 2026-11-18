@@ -3,6 +3,8 @@ driven through the analysis-run entrypoint: tool_events/usage/command_grains
 filled at sync time, consumer classification, dedup, the mechanical ADR
 count, and the substrate-touching db migrations.
 """
+import contextlib
+import io
 import json
 import os
 import sqlite3
@@ -32,12 +34,12 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
 
     def sync_and_fill(self):
         """The sync stage alone — substrate fill needs no model passes."""
-        conn = analyze.init_db(self.db)
-        try:
-            analyze.sync_sessions(conn, self.root)
-            analyze.fill_substrate(conn)
-        finally:
-            conn.close()
+        with contextlib.redirect_stderr(io.StringIO()):
+            run_analysis(root=self.root, db_path=self.db,
+                         work_dir=Path(self.tmp.name) / "analysis",
+                         model_runner=StubRunner([analyze.LimitExhausted()]),
+                         claude_dir=Path(self.tmp.name) / "claude",
+                         projects_dir=Path(self.tmp.name) / "repos")
 
     def run_pipeline(self, model_runner):
         base = Path(self.tmp.name)
@@ -639,7 +641,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 10)
+                conn.execute("PRAGMA user_version").fetchone()[0], 11)
         finally:
             conn.close()
 
@@ -683,7 +685,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         self.assertEqual(len(self.rows("SELECT * FROM tool_events")), 2)
         conn = sqlite3.connect(self.db)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
         finally:
             conn.close()
         # the sniff runs once: a second init_db neither wipes nor refills
@@ -703,35 +705,6 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         self.assertEqual(analyze.local_day(None), "")
         self.assertEqual(analyze.local_day("not a timestamp"), "not a time")
 
-    def test_local_day_migration_redates_stored_session_days(self):
-        """Ticket #74: `sessions.date` is a stored bucket, so migration 5
-        re-derives it from the transcript head rather than converting a day
-        that has lost its clock time. A vanished transcript keeps its
-        UTC date — a guess is not a re-derivation."""
-        live = self.root / "proj-a" / "sess-eve.jsonl"
-        write_records(live, [rec("user", "u0", "2026-08-29T00:13:55.057Z", "hi")])
-        conn = analyze.init_db(self.db)
-        conn.execute("INSERT INTO sessions (id, project, transcript_path,"
-                     " date, status) VALUES ('sess-eve', 'proj-a', ?,"
-                     " '2026-08-29', 'done')", (str(live),))
-        conn.execute("INSERT INTO sessions (id, project, transcript_path,"
-                     " date, status) VALUES ('sess-gone', 'proj-a',"
-                     " '/nowhere/g.jsonl', '2026-08-29', 'done')")
-        conn.execute("INSERT INTO audit (session_id, date, skip,"
-                     " prompt_version, model) VALUES"
-                     " ('sess-eve', '2026-08-29', 1, 'what-v1', 'm')")
-        conn.execute("PRAGMA user_version = 4")  # pre-#74 db
-        conn.commit()
-        conn.close()
-
-        analyze.init_db(self.db).close()
-        dates = {r["id"]: r["date"] for r in self.rows(
-            "SELECT id, date FROM sessions")}
-        self.assertEqual(dates["sess-eve"], "2026-08-28")
-        self.assertEqual(dates["sess-gone"], "2026-08-29")
-        self.assertEqual(self.rows("SELECT date FROM audit")[0]["date"],
-                         "2026-08-28")
-
     def test_migration_sniffs_run_once_per_db(self):
         """Ticket #50: PRAGMA user_version gates the migration sniffs — a
         table named `runs` created after the first init_db survives later
@@ -744,7 +717,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 10)
+                conn.execute("PRAGMA user_version").fetchone()[0], 11)
             tables = {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("runs", tables)
@@ -779,7 +752,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 10)
+                conn.execute("PRAGMA user_version").fetchone()[0], 11)
         finally:
             conn.close()
 
@@ -867,12 +840,12 @@ class FieldHistogramTest(DbHelpers, unittest.TestCase):
         self.db = base / "hindsight.db"
 
     def sync_and_fill(self):
-        conn = analyze.init_db(self.db)
-        try:
-            analyze.sync_sessions(conn, self.root)
-            analyze.fill_substrate(conn)
-        finally:
-            conn.close()
+        with contextlib.redirect_stderr(io.StringIO()):
+            run_analysis(root=self.root, db_path=self.db,
+                         work_dir=Path(self.tmp.name) / "analysis",
+                         model_runner=StubRunner([analyze.LimitExhausted()]),
+                         claude_dir=Path(self.tmp.name) / "claude",
+                         projects_dir=Path(self.tmp.name) / "repos")
 
     def hist(self):
         conn = analyze.init_db(self.db)

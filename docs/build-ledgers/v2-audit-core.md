@@ -9,9 +9,11 @@ Contracts: ADR-0039.
 | Ticket | Status | Commit | Rounds | Suite | Notes |
 | --- | --- | --- | --- | --- | --- |
 | #84 | built, open for human check | 10206e1 | 1 | 261 tests, 31 s | `async` on Stop/SubagentStop needs a live session |
-| #85 | closed | (this commit) | 0 | 266 tests, 48 s | |
+| #85 | closed | 52ceaf5 | 0 | 266 tests, 48 s | |
+| #86 | closed | (this commit) | 2 | 274 tests, 55 s | suite at 1.8× baseline |
 
 ## Owed
+- #91: `size` should be the high-water offset always (ADR-0039 §7), not the file size — deferred from #86.
 - #87: the drift guard (ADR-0038 §3) must skip when no session is due, not only when the derivation job raises — deferred from #85.
 
 ## Decisions
@@ -26,6 +28,13 @@ Contracts: ADR-0039.
 - #85: a migration failure re-raises (exit 1, traceback) and writes no health row; staleness surfaces it — ADR? no
 - #85: v1 steps mapped to job slots: sync+redate = sweep; invalidate_grown+fill_substrate = derivation; extract+model loop = what-pass — ADR? no
 - #85: backstop and sunk-cost scan are two named jobs; error text `<job>: <ExcType>: <msg>` joined by `; ` — ADR? no
+- #86: deriver state keyed `<deriver>@<version>` (`records_index@1`); a version bump finds no state and rebuilds — ADR? no
+- #86: a line that parses but is not a JSON object is also condition 5 (`source='derivation'`, `derivers='records_index'`) — ADR? no
+- #86: session rows are created only for parent registry rows with high_water > 0; exclusion and cli_version read from the stored head; `size` is the file size, or the high-water if the file is gone — ADR? no
+- #86: registry sync moved into project bookkeeping (the sweep slot), amending #85's mapping — ADR? no
+- #86: the day expression is `analyze.session_day()`, read by both views, the drift guard's since, and `attribute` — ADR? no
+- #86: derivation runs the records index first, then the v1 substrate scan, each regardless of the other; the sweep fails per file (OSError) and skips non-files; v1 scan reads with `errors="replace"` — ADR? no
+- #86: fresh schema no longer creates `audit.date` — ADR? no
 
 ## Blocked
 
@@ -37,3 +46,6 @@ Contracts: ADR-0039.
 - #84: `docs/` (flows, architecture, cron, permissions, variables) still describes `hook.py` — re-run `/document-app` after the shift.
 - #85: the narrative still runs when the what-pass raises.
 - #85: `error_text` is kept after a success (only `failing_since` clears).
+- #86: excluded sessions are still captured and indexed (the spec allows it).
+- #86: condition-5 rows send no notification.
+- #86: `docs/flows.md` and `docs/automation.md` still describe `redate_sessions` and `audit.date`.

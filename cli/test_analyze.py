@@ -456,9 +456,8 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         retryable. The queue would otherwise never drain."""
         write_transcript(self.proj / "sess-vanish.jsonl",
                           [("user", "task"), ("assistant", "done")])
-        conn = analyze.init_db(self.db)
-        analyze.sync_sessions(conn, self.root)
-        conn.close()
+        os.utime(self.proj / "sess-vanish.jsonl")  # live: the run knows it, extracts nothing
+        self.run_pipeline(StubRunner([]))
         (self.proj / "sess-vanish.jsonl").unlink()  # gone before extraction runs
 
         self.run_pipeline(StubRunner([]))  # no model call
@@ -471,9 +470,8 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
     def test_pruned_session_with_cached_extract_proceeds_to_model_pass(self):
         write_transcript(self.proj / "sess-cached.jsonl",
                           [("user", "task"), ("assistant", "done")])
-        conn = analyze.init_db(self.db)
-        analyze.sync_sessions(conn, self.root)
-        conn.close()
+        os.utime(self.proj / "sess-cached.jsonl")  # live: the run knows it, extracts nothing
+        self.run_pipeline(StubRunner([]))
         analyze.extract_session(self.work, "sess-cached",
                                 self.proj / "sess-cached.jsonl")
         (self.proj / "sess-cached.jsonl").unlink()
@@ -488,9 +486,9 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         conn.execute("INSERT INTO sessions (id, project, transcript_path, date,"
                      " status) VALUES ('sess-re', 'p', '/gone', '2026-08-01', 'pending')")
-        conn.execute("INSERT INTO audit (session_id, project, date, skip, markdown,"
-                     " prompt_version, model) VALUES ('sess-re', 'p', '2026-08-01',"
-                     " 0, ?, 'v', 'm')", (ENTRY_A,))
+        conn.execute("INSERT INTO audit (session_id, project, skip, markdown,"
+                     " prompt_version, model) VALUES ('sess-re', 'p', 0, ?, 'v', 'm')",
+                     (ENTRY_A,))
         analyze.classify_and_extract(conn, self.work)
         self.assertEqual(dict(conn.execute("SELECT id, status FROM sessions")),
                          {"sess-re": "done"})
@@ -642,7 +640,7 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 10)
+                conn.execute("PRAGMA user_version").fetchone()[0], 11)
         finally:
             conn.close()
         row = self.identity_row("sess-old")
@@ -663,8 +661,9 @@ class V10MigrationTest(DbHelpers, unittest.TestCase):
 
     def test_v9_rows_survive_and_derived_rows_are_v1(self):
         conn = sqlite3.connect(self.db)
-        conn.executescript(analyze.SCHEMA)  # the v9 shape v10 starts from
+        conn.executescript(analyze.SCHEMA)  # the v9 shape, but for audit.date
         conn.executescript("""
+            ALTER TABLE audit ADD COLUMN date TEXT;  -- v9 had it; v11 drops it
             INSERT INTO sessions (id, project, transcript_path, date, status,
               skipped_records, audited_size)
               VALUES ('s-v1', 'p', '/gone/s-v1.jsonl', '2026-08-01', 'done', 0, 10);
@@ -700,6 +699,11 @@ class V10MigrationTest(DbHelpers, unittest.TestCase):
         self.assertEqual(self.rows("SELECT date, status, audited_size FROM sessions"),
                          [{"date": "2026-08-01", "status": "done", "audited_size": 10}])
         self.assertEqual(len(self.audit_rows()), 1)
+        conn = sqlite3.connect(self.db)
+        try:
+            self.assertNotIn("date", {r[1] for r in conn.execute("PRAGMA table_info(audit)")})
+        finally:
+            conn.close()
         self.assertEqual(self.rows(
             "SELECT condition, key, old_share, new_share, since, source, session_id"
             " FROM breakage"),
@@ -707,7 +711,7 @@ class V10MigrationTest(DbHelpers, unittest.TestCase):
               "since": "2026-08-01", "source": None, "session_id": None}])
         conn = sqlite3.connect(self.db)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
             self.assertEqual(conn.execute("PRAGMA auto_vacuum").fetchone()[0], 2)
             for table in ("raw_records", "transcripts", "records_index",
                           "deriver_state", "otel_histogram"):
@@ -980,7 +984,7 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 10)
+                conn.execute("PRAGMA user_version").fetchone()[0], 11)
             row = conn.execute("SELECT folder_identity, name, present"
                                " FROM project_presence").fetchone()
         finally:
@@ -1013,7 +1017,7 @@ class IdentityFixture(DbHelpers):
         """A session opened with cwd = repos/folder_name — the transcript
         directory Claude Code encodes it under and the hook's stamped
         identity are both the folder's *live* state at this instant, exactly
-        as sync_sessions/hook_folder_identity see it for real."""
+        as sync_sessions sees it for real."""
         t = self.root / folder_name / f"{sid}.jsonl"
         write_transcript(t, [("user", "do work"), ("assistant", "done")], date=date)
         session_start(self.db, t, self.repos / folder_name)
@@ -1416,24 +1420,230 @@ class ZoneTest(DbHelpers, unittest.TestCase):
         self.assertEqual(os.environ["TZ"], "America/New_York")  # untouched
         self.assertEqual(analyze.local_day(self.EVE), "2026-08-28")
 
-    def test_run_redates_stored_session_days_under_the_effective_zone(self):
-        """`sessions.date` is the one stored bucket. A zone change would
-        leave it a day off its own usage bars forever, so every run
-        re-derives it from the transcript head; a vanished transcript keeps
-        the date it has (a guess is not a re-derivation)."""
-        write_transcript(self.root / "p" / "sess-eve.jsonl",
-                          [("user", "hi"), ("assistant", "yo")], date=self.EVE)
+    def test_raw_session_dates_from_its_earliest_record_v1_keeps_its_day(self):
+        """Ticket #86 (ADR-0031 §5): a `raw` session stores no day; every
+        view reads the stored day, else the local day of the earliest
+        records-index timestamp, parent and subagents together, bucketed
+        at read under HINDSIGHT_TZ. A `v1` session keeps its stored day."""
         base = Path(self.tmp.name)
-        run = lambda: run_analysis(  # noqa: E731
-            root=self.root, db_path=self.db, work_dir=base / "analysis",
-            model_runner=StubRunner([SKIP_MD, SKIP_MD]),
-            claude_dir=base / "claude", projects_dir=base / "repos")
-        run()
-        self.assertEqual(self.rows("SELECT date FROM sessions")[0]["date"], "2026-08-28")
+        parent = self.root / "p" / "sess-eve.jsonl"
+        write_records(parent, [rec("user", "u0", "2026-08-29T05:00:00Z", "hi")])
+        write_records(parent.with_suffix("") / "subagents" / "agent-x.jsonl",
+                      [rec("user", "x0", self.EVE, "sub")])
+        write_records(self.root / "p" / "sess-old.jsonl",
+                      [rec("user", "o0", self.EVE, "old")])
+        conn = analyze.init_db(self.db)
+        conn.execute("INSERT INTO sessions (id, project, transcript_path, date, status)"
+                     " VALUES ('sess-old', 'p', 'x', '2026-08-01', 'done')")
+        conn.commit()
+        conn.close()
+        run_analysis(root=self.root, db_path=self.db, work_dir=base / "analysis",
+                     model_runner=StubRunner([SKIP_MD]),
+                     claude_dir=base / "claude", projects_dir=base / "repos")
+        self.assertIsNone(self.rows("SELECT date FROM sessions WHERE id='sess-eve'")[0]["date"])
+        day = lambda: {r["id"]: r["d"] for r in self.rows(  # noqa: E731
+            f"SELECT s.id, {analyze.session_day('s')} AS d FROM sessions s")}
+        self.assertEqual(day(), {"sess-eve": "2026-08-28", "sess-old": "2026-08-01"})
         self.pin("Asia/Tokyo")
-        run()
-        self.assertEqual(self.rows("SELECT date FROM sessions")[0]["date"], "2026-08-29")
-        self.assertEqual(self.rows("SELECT date FROM audit")[0]["date"], "2026-08-29")
+        self.assertEqual(day(), {"sess-eve": "2026-08-29", "sess-old": "2026-08-01"})
+
+
+class SweepDeriveTest(DbHelpers, unittest.TestCase):
+    """Ticket #86 (ADR-0031 §5-6, ADR-0033 §1, ADR-0037 §6): the sweep
+    catches up what no firing captured, sessions are known from the
+    registry, and the deriver loop builds the records index from the raw
+    store, driven through the analysis run."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.db = base / "hindsight.db"
+        self.proj = self.root / "test-project"
+
+    def run_pipeline(self, model_runner=None):
+        base = Path(self.tmp.name)
+        with contextlib.redirect_stderr(io.StringIO()):
+            run_analysis(root=self.root, db_path=self.db, work_dir=base / "analysis",
+                         model_runner=model_runner or StubRunner([SKIP_MD] * 10),
+                         claude_dir=base / "claude", projects_dir=base / "repos")
+
+    def patch(self, name, value):
+        orig = getattr(analyze, name)
+        setattr(analyze, name, value)
+        self.addCleanup(setattr, analyze, name, orig)
+
+    def write(self, sid, n, start=0):
+        write_records(self.proj / f"{sid}.jsonl",
+                      [rec("user", f"{sid}-{i}", f"2026-08-01T10:00:{i:02}Z", f"turn {i}")
+                       for i in range(start, start + n)])
+
+    def append(self, path, *lines):
+        with open(path, "a") as f:
+            f.writelines(line + "\n" for line in lines)
+        _backdate(path)
+
+    def stored(self, sid, agent=None):
+        import zlib
+        return b"".join(zlib.decompress(r["line"]) for r in self.rows(
+            "SELECT line FROM raw_records WHERE session_id=? AND agent_id IS ?"
+            " ORDER BY byte_offset", (sid, agent)))
+
+    def index(self, sid):
+        return self.rows("SELECT agent_id, byte_offset, type, uuid, timestamp, provenance"
+                         " FROM records_index WHERE session_id=? ORDER BY byte_offset",
+                         (sid,))
+
+    def test_transcript_with_no_firing_is_captured_by_the_sweep(self):
+        self.write("sess-a", 2)
+        sub = self.proj / "sess-a" / "subagents" / "agent-x1.jsonl"
+        write_records(sub, [rec("user", "x-0", "2026-08-01T10:00:05Z", "sub")])
+        hooked = self.proj / "sess-h.jsonl"
+        write_records(hooked, [rec("user", "h-0", "2026-08-01T11:00:00Z", "hi")])
+        fire_capture(self.db, {"hook_event_name": "Stop", "transcript_path": str(hooked)})
+        self.append(hooked, json.dumps(rec("user", "h-1", "2026-08-01T11:00:01Z", "more")))
+
+        self.run_pipeline()
+
+        for sid, agent, path in (("sess-a", None, self.proj / "sess-a.jsonl"),
+                                 ("sess-a", "x1", sub), ("sess-h", None, hooked)):
+            with self.subTest(sid=sid, agent=agent):
+                self.assertEqual(self.stored(sid, agent), path.read_bytes())
+                self.assertEqual(self.rows(
+                    "SELECT high_water FROM transcripts WHERE session_id=?"
+                    " AND agent_id IS ?", (sid, agent)), [{"high_water": path.stat().st_size}])
+        self.assertEqual(self.rows("SELECT id, project FROM sessions ORDER BY id"),
+                         [{"id": "sess-a", "project": "test-project"},
+                          {"id": "sess-h", "project": "test-project"}])
+        self.assertEqual(sorted(r["uuid"] for r in self.index("sess-a")),
+                         ["sess-a-0", "sess-a-1", "x-0"])
+
+    def test_grown_session_is_rederived_whole_and_an_unchanged_one_is_not_touched(self):
+        self.write("sess-a", 2)
+        self.write("sess-b", 2)
+        self.run_pipeline()
+        conn = sqlite3.connect(self.db)
+        conn.execute("UPDATE records_index SET type='tampered'")
+        conn.commit()
+        conn.close()
+        self.append(self.proj / "sess-a.jsonl",
+                    json.dumps(rec("assistant", "sess-a-2", "2026-08-01T10:01:00Z", "x")))
+
+        self.run_pipeline()
+
+        self.assertEqual([(r["type"], r["uuid"], r["provenance"]) for r in self.index("sess-a")],
+                         [("user", "sess-a-0", "raw"), ("user", "sess-a-1", "raw"),
+                          ("assistant", "sess-a-2", "raw")])
+        self.assertEqual({r["type"] for r in self.index("sess-b")}, {"tampered"})
+
+    def test_a_deriver_raising_on_one_session_leaves_it_due_and_derives_the_others(self):
+        self.write("sess-a", 2)
+        self.write("sess-b", 2)
+        real = analyze.index_records
+
+        def poisoned(conn, sid, records):
+            if sid == "sess-a":
+                raise ValueError("poison")
+            return real(conn, sid, records)
+
+        self.patch("index_records", poisoned)
+        self.run_pipeline()
+        self.assertEqual(self.index("sess-a"), [])
+        self.assertEqual(len(self.index("sess-b")), 2)
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertIn("derivation", health["error_text"])
+        self.assertIn("sess-a", health["error_text"])
+
+        analyze.index_records = real
+        self.run_pipeline()
+        self.assertEqual(len(self.index("sess-a")), 2)
+
+    def test_records_index_version_bump_rebuilds_raw_rows_only(self):
+        self.write("sess-a", 2)
+        self.run_pipeline()
+        conn = sqlite3.connect(self.db)
+        conn.execute("DELETE FROM records_index WHERE byte_offset=0")
+        conn.executemany("INSERT INTO records_index (session_id, byte_offset, type,"
+                         " provenance) VALUES (?, ?, 'old', ?)",
+                         [("sess-a", 99999, "v1"), ("sess-gone", 0, "compacted")])
+        conn.commit()
+        conn.close()
+        self.run_pipeline()
+        self.assertEqual(len(self.index("sess-a")), 2, "an unchanged session was re-derived")
+
+        self.patch("RECORDS_INDEX_VERSION", analyze.RECORDS_INDEX_VERSION + 1)
+        self.run_pipeline()
+
+        self.assertEqual([(r["byte_offset"] == 0, r["provenance"]) for r in self.index("sess-a")],
+                         [(True, "raw"), (False, "raw"), (False, "v1")])
+        self.assertEqual([(r["type"], r["provenance"]) for r in self.index("sess-gone")],
+                         [("old", "compacted")])
+
+    def test_an_unparseable_stored_line_writes_one_condition_5_breakage(self):
+        path = self.proj / "sess-bad.jsonl"
+        write_records(path, [rec("user", "u0", "2026-08-01T10:00:00Z", "hi"),
+                             "{not json", "[1, 2]"])
+        self.run_pipeline()
+        self.append(path, "also not json")
+        self.run_pipeline()
+
+        rows = self.rows("SELECT tier, session_id, acknowledged_at FROM breakage"
+                         " WHERE condition=5")
+        self.assertEqual(rows, [{"tier": "problem", "session_id": "sess-bad",
+                                 "acknowledged_at": None}])
+        self.assertEqual([r["uuid"] for r in self.index("sess-bad")], ["u0"])
+        [row] = self.rows(f"SELECT {', '.join(analyze.BREAKAGE_COLS)} FROM breakage")
+        self.assertIn("sess-bad", analyze.breakage_text(row))
+
+    def test_a_non_utf8_line_still_gets_its_condition_5_row_and_others_derive(self):
+        self.write("sess-bad", 1)
+        with open(self.proj / "sess-bad.jsonl", "ab") as f:
+            f.write(b"\xff\xfe not utf-8\n")
+        _backdate(self.proj / "sess-bad.jsonl")
+        self.write("sess-ok", 2)
+
+        self.run_pipeline()
+
+        self.assertEqual(self.rows("SELECT session_id FROM breakage WHERE condition=5"),
+                         [{"session_id": "sess-bad"}])
+        self.assertEqual([r["uuid"] for r in self.index("sess-bad")], ["sess-bad-0"])
+        self.assertEqual(len(self.index("sess-ok")), 2)
+        self.assertEqual(self.rows("SELECT id FROM sessions WHERE skipped_records IS NULL"), [])
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertNotIn("derivation", health["error_text"] or "")
+
+    def test_a_directory_named_like_a_transcript_is_not_swept(self):
+        (self.proj / "s1.jsonl").mkdir(parents=True)
+        self.write("sess-ok", 2)
+
+        self.run_pipeline()
+
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertNotIn("sweep", health["error_text"] or "")
+
+    @unittest.skipIf(os.geteuid() == 0, "chmod(0) does not stop root reading")
+    def test_an_unreadable_transcript_path_fails_the_sweep_alone(self):
+        self.write("s1", 1)
+        (self.proj / "s1.jsonl").chmod(0)
+        self.addCleanup((self.proj / "s1.jsonl").chmod, 0o644)
+        self.write("sess-ok", 2)
+
+        self.run_pipeline()
+
+        self.assertEqual(self.stored("sess-ok"), (self.proj / "sess-ok.jsonl").read_bytes())
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertIn("sweep", health["error_text"])
+        self.assertIn("s1.jsonl", health["error_text"])
+
+    def test_v11_drops_the_audit_date(self):
+        self.run_pipeline()
+        conn = sqlite3.connect(self.db)
+        try:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
+            self.assertNotIn("date", {r[1] for r in conn.execute("PRAGMA table_info(audit)")})
+        finally:
+            conn.close()
 
 
 class NarrativeTest(DbHelpers, unittest.TestCase):
@@ -1453,7 +1663,7 @@ class NarrativeTest(DbHelpers, unittest.TestCase):
         self.conn = analyze.init_db(self.db)
         self.conn.execute("INSERT INTO sessions (id, project, transcript_path, date, status)"
                           " VALUES ('s1', 'p', '/x', '2026-08-16', 'done')")
-        self.conn.execute("INSERT INTO audit VALUES ('s1', 'p', '2026-08-16', 0,"
+        self.conn.execute("INSERT INTO audit VALUES ('s1', 'p', 0,"
                           " '### Ship OTLP listener and wire telemetry', 'what-v2', 'm', 0)")
         for i in range(3):
             self.conn.execute("INSERT INTO tool_events (session_id, name, at, consumer_type,"

@@ -160,8 +160,8 @@ def fixture_db(path):
         ("s5", "pruned", "2026-08-04", 1, None, None),
         ("s6", "-private-tmp-scratch", "2026-08-04", 1, None, None),
     ]
-    conn.executemany("""INSERT INTO audit VALUES (?, ?, ?, ?, ?, 'what-v1',
-        'test-model', ?)""", audit)
+    conn.executemany("""INSERT INTO audit VALUES (?, ?, ?, ?, 'what-v1',
+        'test-model', ?)""", [(a[0], a[1], *a[3:]) for a in audit])  # no audit.date (#86)
     # how-view (ticket #65): "big" declares and has a stored narrative whose
     # hash will not match the live ledger (stale); "small" declares an
     # invalid fence; "pruned" declares nothing and must not be selectable

@@ -194,7 +194,7 @@ def scan_transcript(path):
     fatal."""
     events, results, usage, commands, skipped, seen_ids = [], {}, {}, [], 0, set()
     hist = Counter()
-    with Path(path).open() as f:
+    with Path(path).open(errors="replace") as f:  # a non-UTF-8 line parses as skipped
         for line in f:
             try:
                 e = json.loads(line)

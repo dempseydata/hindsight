@@ -40,7 +40,7 @@ from collections import Counter
 from pathlib import Path
 
 from analyze import (DEFAULT_PROJECTS_DIR, MODEL, SKILL, STATUS_VERSION,
-                     audit_title, local_day)
+                     audit_title, local_day, session_day)
 from extract import FILE_TOOLS
 from substrate import former_names
 
@@ -369,7 +369,7 @@ def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR):
     bounds = Counter(e["name"] for e in loose if is_boundary(e))
     sessions = {}
     for sid, date, md in conn.execute(
-            "SELECT s.id, s.date, a.markdown FROM sessions s"
+            f"SELECT s.id, {session_day('s')}, a.markdown FROM sessions s"
             " LEFT JOIN audit a ON a.session_id = s.id AND a.skip = 0"
             " WHERE s.project = ?", (project,)):
         sessions[sid] = {"date": date, "title": audit_title(md)}

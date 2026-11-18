@@ -148,10 +148,10 @@ def fixture(root):
                      " status) VALUES (?, ?, 'x', ?, 'done')",
                      [("s1", "proj", "2026-08-01"), ("s2", "proj", "2026-08-03"),
                       ("s3", "other", "2026-08-02")])
-    conn.executemany("INSERT INTO audit (session_id, project, date, skip, markdown,"
-                     " prompt_version, model) VALUES (?, 'proj', ?, ?, ?, 'v', 'm')",
-                     [("s1", "2026-08-01", 0, "### Grilled the plan\n- **Did:** x"),
-                      ("s2", "2026-08-03", 1, None)])
+    conn.executemany("INSERT INTO audit (session_id, project, skip, markdown,"
+                     " prompt_version, model) VALUES (?, 'proj', ?, ?, 'v', 'm')",
+                     [("s1", 0, "### Grilled the plan\n- **Did:** x"),
+                      ("s2", 1, None)])
     conn.executemany("INSERT INTO command_grains (session_id, command, at) VALUES (?,?,?)",
                      [("s1", "/mattpocock-skills:wayfinder", "2026-08-01T10:00:00Z"),
                       ("s1", "/clear", "2026-08-01T09:00:00Z"),

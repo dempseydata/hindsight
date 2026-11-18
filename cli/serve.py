@@ -71,7 +71,7 @@ from pathlib import Path
 import how
 from analyze import (DEFAULT_PROJECTS_DIR, DEFAULT_DB, LOST, REPO,  # noqa: E402 — one authority on paths
                      BREAKAGE_COLS, SECTIONS, audit_title, breakage_text, day_sql,
-                     local_day)
+                     local_day, session_day)
 from score import BOUNDS  # noqa: E402 — narrative group names; eval/ on sys.path via analyze
 
 TOKENS_CSS = REPO / "design" / "tokens.css"
@@ -185,11 +185,11 @@ def header_data(conn):
 
 def synced_through(conn):
     """Latest local day with data: a session's start day or a usage row's.
-    sessions.date is the *start* day, so a session crossing midnight (ticket
+    A session's day is its *start* day, so a session crossing midnight (ticket
     #50) or resumed days later puts usage past it — the label, the chart and
     the window presets must still reach that work."""
     return conn.execute(f"""
-        SELECT MAX(d) FROM (SELECT MAX(date) AS d FROM sessions
+        SELECT MAX(d) FROM (SELECT MAX({session_day()}) AS d FROM sessions
                             UNION ALL SELECT MAX({day_sql("at")}) FROM usage)
         """).fetchone()[0]
 
@@ -265,11 +265,11 @@ def what_data(conn):
             GROUP BY session_id""")}
     subs = subagent_counts(conn)
     rows = []
-    for sid, project, date, skip, md, adr, pend, status in conn.execute("""
-            SELECT s.id, s.project, s.date, a.skip, a.markdown, a.adr_count,
+    for sid, project, date, skip, md, adr, pend, status in conn.execute(f"""
+            SELECT s.id, s.project, {session_day('s')}, a.skip, a.markdown, a.adr_count,
                    a.session_id IS NULL, s.status
             FROM sessions s LEFT JOIN audit a ON a.session_id = s.id
-            ORDER BY s.date DESC, s.rowid DESC"""):
+            ORDER BY 3 DESC, s.rowid DESC"""):
         r = {"id": sid, "p": project, "d": date, "skip": skip, "adr": adr}
         if sid in subs:
             r["sub"] = subs[sid]

@@ -18,7 +18,7 @@ Contracts: ADR-0039.
 | #90 | closed | 16701b1 | 1 | 298 tests, 55 s | where-view wording: optional human look |
 | #92 | closed | de496fa | 2 | 305 tests, 61 s | suite at 2× baseline — next implementer moves tests to cheaper seams |
 | #93 | built, open for human run | 6336548 | 1 | 320 tests, 39 s | tests moved to cheaper seams (61 → 39 s); live install, launchd, ~100 ms budget need a human |
-| #94 | built, open for review | (this commit) | 1 | 326 tests, 36 s | draft `local-process.md` for review; house master frontmatter edit is the operator's |
+| #94 | built, open for review | 09924f0 | 1 | 326 tests, 36 s | draft `local-process.md` for review; house master frontmatter edit is the operator's |
 
 ## Owed
 

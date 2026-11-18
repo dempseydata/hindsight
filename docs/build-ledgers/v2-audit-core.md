@@ -8,7 +8,7 @@ Contracts: ADR-0039.
 
 | Ticket | Status | Commit | Rounds | Suite | Notes |
 | --- | --- | --- | --- | --- | --- |
-| #84 | built, open for human check | (this commit) | 1 | 261 tests, 31 s | `async` on Stop/SubagentStop needs a live session |
+| #84 | built, open for human check | 10206e1 | 1 | 261 tests, 31 s | `async` on Stop/SubagentStop needs a live session |
 
 ## Owed
 

@@ -97,6 +97,7 @@ import subprocess
 import sys
 import time
 import zlib
+import tempfile
 import zoneinfo
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1615,10 +1616,18 @@ def refresh_narratives(conn, projects_dir, model_runner):
         conn.commit()
 
 
+# The prompt carries transcript text, so the child gets no tools and no MCP,
+# and runs from an empty folder rather than the repo (no project settings,
+# permissions or CLAUDE.md). Fixed, not per call: each cwd is a projects folder.
+MODEL_CWD = Path(tempfile.gettempdir()) / "hindsight-model-cwd"
+MODEL_ARGS = ["claude", "-p", "--model", MODEL, "--tools", "", "--strict-mcp-config"]
+
+
 def default_model_runner(prompt):
+    MODEL_CWD.mkdir(exist_ok=True)
     try:
-        r = subprocess.run(["claude", "-p", "--model", MODEL], input=prompt,
-                            capture_output=True, text=True, timeout=CALL_TIMEOUT, cwd=REPO)
+        r = subprocess.run(MODEL_ARGS, input=prompt, capture_output=True, text=True,
+                           timeout=CALL_TIMEOUT, cwd=MODEL_CWD)
     except subprocess.TimeoutExpired:
         return None
     except FileNotFoundError:

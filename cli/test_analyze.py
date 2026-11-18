@@ -599,6 +599,21 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         finally:
             analyze.subprocess.run = orig
 
+    def test_default_model_runner_has_no_tools_and_no_repo_cwd(self):
+        # Transcript text in the prompt must not be able to drive tools or
+        # inherit the repo's project permissions (security-preflight).
+        fake = subprocess.CompletedProcess([], 0, stdout="ok", stderr="")
+        with unittest.mock.patch.object(analyze.subprocess, "run", return_value=fake) as run:
+            self.assertEqual(analyze.default_model_runner("prompt"), "ok")
+        args, kw = run.call_args
+        cmd = args[0]
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "")
+        self.assertIn("--strict-mcp-config", cmd)
+        cwd = Path(kw["cwd"])
+        self.assertTrue(cwd.is_dir())
+        self.assertNotEqual(cwd.resolve(), analyze.REPO.resolve())
+        self.assertNotIn(analyze.REPO.resolve(), cwd.resolve().parents)
+
     def test_default_model_runner_missing_binary_pauses(self):
         # Ticket #84: no `claude` on PATH must pause the run like limit
         # exhaustion, not crash it with a FileNotFoundError traceback.

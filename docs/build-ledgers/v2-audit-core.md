@@ -73,6 +73,7 @@ Contracts: ADR-0039.
 - #93: no analysis-staleness rule (no source names a threshold; ADR-0033 rejects a fixed age), so a migration failure (no health row, #85) is not surfaced at SessionStart — ADR? yes (operator decision: is a stale analysis row worth a line?)
 - #94: hindsight's `local-process.md` sits at the repo root (tracked); Build paths `build/, cli/, skills/, eval/` so pre-plugin work still buckets — ADR? no
 - #94: a relative pointer is read from the CLAUDE.md's folder; the `## Process` section ends at the next `#`/`##` heading; `source` is `local-process.md` or `house master <path>`; the selector lists every project not `absent` — ADR? no
+- handover security fix: the what-pass `claude -p` runs with `--tools "" --strict-mcp-config` from a fixed empty temp folder, not the repo; drops the project CLAUDE.md from the model's context; what-eval not re-run — ADR? no
 
 ## Blocked
 

@@ -9,9 +9,9 @@ what-pass over the extract (-> `audit`; multi-part sessions get the merge
 call). The why-pass and its findings/evidence/runs tables were removed
 wholesale per ADR-0006 (ticket #43) — v1 is two views, what and where.
 
-Sync also fills the where-view measurement substrate (tickets #22, #42):
-every newly seen (and any not-yet-scanned, e.g. backfill-imported) session's
-transcript is parsed once into `tool_events` (tool_use/tool_result paired by
+Derivation fills the where-view measurement substrate (tickets #22, #42)
+from the raw store, one versioned deriver per table (ticket #87): every
+session with newly captured records is parsed whole into `tool_events` (tool_use/tool_result paired by
 id, deduped across streamed records, each call carrying its consumer
 classification, error flag, and emitting message id — the message-lens join
 to usage), `usage` (per-API-response token counts by model, deduped by
@@ -58,10 +58,11 @@ Every day bucket is the operator's local day off the stored UTC instant
 session's stored day, else the local day of its earliest records-index
 timestamp (ADR-0031 §5, ticket #86).
 
-The schema-drift guard (issue #15, ADR-0020) runs after the substrate
-fill: the scan counts every key it sees per record `version` into
-`field_histogram`, and check_drift compares the newest version's shape
-with the nearest earlier one against substrate.FIELD_CONTRACT. A trip is a
+The schema-drift guard (issue #15, ADR-0020) runs once derivation has left
+no session due (ADR-0038 §3): the histogram deriver counts every key it sees
+per record `version` into `field_histogram`, and check_drift compares the
+newest version's shape with the nearest earlier one against FIELD_CONTRACT,
+the union of the derivers' declarations (ADR-0037 §3). A trip is a
 `breakage` row — banner on every view, notification when the rows may be
 thin — and the run carries on; `acknowledge-breakage` closes it. The CLI's
 own version is a log line per run, never a trigger.
@@ -87,7 +88,6 @@ import json
 import os
 import re
 import sqlite3
-import statistics
 import subprocess
 import sys
 import time
@@ -97,8 +97,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-from substrate import (FIELD_CONTRACT, LIVE_WINDOW_S, _is_live,  # noqa: E402
-                       adr_count, fill_substrate, record_count, subagent_transcripts)
+from substrate import (  # noqa: E402
+    COMMAND_GRAINS_REQUIRES, COMMAND_GRAINS_VERSION, FIELD_HISTOGRAM_REQUIRES,
+    FIELD_HISTOGRAM_VERSION, LIVE_WINDOW_S, TOOL_EVENTS_REQUIRES, TOOL_EVENTS_VERSION,
+    USAGE_REQUIRES, USAGE_VERSION, _is_live, adr_count, derive_command_grains,
+    derive_field_histogram, derive_tool_events, derive_usage, NotSynced, record_count)
+import extract  # noqa: E402
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 from home import home, log_to  # noqa: E402
 from capture import capture, now as stamp, transcript_key, write_health  # noqa: E402
@@ -380,21 +384,12 @@ SKILL = "skill"  # the member the how-trail selects by name — never by index
 # reshapes them is a format change and goes through that ADR.
 SECTIONS = ("Did", "Decided", "Setup changes")
 
-# The per-session substrate tables the scan fills — every wipe-for-rescan
-# site (growth invalidation, migration resets) must clear all of them, or a
-# rescan silently duplicates the forgotten table's rows.
-SUBSTRATE_TABLES = ("tool_events", "usage", "command_grains", "subagent_transcripts",
-                    "field_histogram")
-
 # The schema-drift guard (issue #15). A version needs this many units in a
-# scope before its shares mean anything; a run needs this many records
-# before its skipped share can trip condition 3.
+# scope before its shares mean anything.
 MIN_RECORDS = 20
-MIN_RUN_RECORDS = 1000
 THINNED_BEFORE, THINNED_AFTER = 0.9, 0.5  # condition 1: >90% before, <50% after
 ADDED = 0.5             # condition 2: absent before, >50% after
-SPIKE = 3               # condition 3: this run's skipped share vs the median
-SPIKE_WINDOW = 7        # ... of the last N runs
+SPIKE = 3               # condition 3 (retired, ADR-0037 §6): its rows' text only
 # The breakage row as the guard writes it and the banner reads it (serve.py).
 BREAKAGE_COLS = ("id", "at", "tier", "condition", "old_version", "new_version",
                  "key", "old_share", "new_share", "since", "session_id")
@@ -462,12 +457,11 @@ def init_db(db_path):
         # Ticket #61: command grains are new — rescan every scanned session
         # whose transcript survives so existing sessions gain their grains
         # (the forced rescan also heals the two prefix-truncated event tails
-        # found by #59). Wipe and refill in one call, per the #50 rule: no
-        # caller-dependent window. A vanished transcript keeps its old rows.
-        _reset_scanned(conn)
+        # found by #59). Since ticket #87 the derivers do it: a surviving
+        # transcript is captured by the sweep and its `v1` rows re-derived
+        # in one transaction. A vanished transcript keeps its old rows.
         conn.execute("PRAGMA user_version = 3")
         conn.commit()
-        fill_substrate(conn)
     if v < 4:
         # Ticket #73: resumed sessions were never rescanned, so their tails
         # never reached the db. The re-audit gate needs its own watermark —
@@ -522,21 +516,17 @@ def init_db(db_path):
     if v < 8:
         # Issue #15: the field histogram is new — rescan every scanned
         # session whose transcript survives so the drift baseline covers
-        # the whole corpus (after #13's subagent fix, per ADR-0019). Same
-        # wipe-and-refill as v3; a vanished transcript keeps its old rows.
-        _reset_scanned(conn)
+        # the whole corpus (after #13's subagent fix, per ADR-0019). The
+        # derivers do it, as for v3; a vanished transcript keeps its old rows.
         conn.execute("PRAGMA user_version = 8")
         conn.commit()
-        fill_substrate(conn)
     if v < 9:
         # ADR-0027 / ticket #32: error text is new — rescan every scanned
         # session whose transcript survives so its failed calls carry their
-        # text. Same wipe-and-refill as v3/v8; a vanished transcript keeps
-        # its old rows with error_text NULL: counted, not captured.
-        _reset_scanned(conn)
+        # text. The derivers do it, as for v3/v8; a vanished transcript
+        # keeps its old rows with error_text NULL: counted, not captured.
         conn.execute("PRAGMA user_version = 9")
         conn.commit()
-        fill_substrate(conn)
     if v < 10:
         _migrate_v10(conn)
     if v < 11:
@@ -674,19 +664,6 @@ def _migrate_v10(conn):
     conn.execute("VACUUM")
 
 
-def _reset_scanned(conn):
-    """The schema-bump rescan: drop the substrate of every scanned session
-    whose transcript survives and clear its scanned marker, so the caller's
-    fill_substrate refills them in one place (the #50 rule). A vanished
-    transcript keeps its old rows — unknown, never less."""
-    stale = [(sid,) for sid, path in conn.execute(
-        "SELECT id, transcript_path FROM sessions"
-        " WHERE skipped_records IS NOT NULL") if Path(path).exists()]
-    for table in SUBSTRATE_TABLES:
-        conn.executemany(f"DELETE FROM {table} WHERE session_id=?", stale)
-    conn.executemany("UPDATE sessions SET skipped_records=NULL WHERE id=?", stale)
-
-
 def _migrate(conn):
     """One-shot migrations for dbs predating tickets #22/#42/#43 — every
     step is a no-op on a db created fresh from SCHEMA."""
@@ -695,19 +672,15 @@ def _migrate(conn):
     for table, col in (("sessions", "skipped_records"), ("audit", "adr_count")):
         if col not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER")
-    # Ticket-#42 grains on a pre-#42 db: add the columns, then reset the
-    # scanned marker (dropping the stale substrate rows) wherever the
-    # transcript survives, and rescan immediately — wipe and refill in one
-    # place, so no caller (the backfill import included) can leave a window
-    # where a pruned transcript loses its substrate for good (ticket #50).
-    # A session whose transcript vanished keeps its old rows — grain columns
+    # Ticket-#42 grains on a pre-#42 db: add the columns; the derivers
+    # re-derive every session whose transcript survives (ticket #87). A
+    # session whose transcript vanished keeps its old rows — grain columns
     # NULL, unknown rather than a false zero.
     if "consumer_type" not in {r[1] for r in conn.execute("PRAGMA table_info(tool_events)")}:
         for col in ("message_id TEXT", "consumer_type TEXT", "consumer TEXT",
                     "mcp_tool TEXT", "is_error INTEGER"):
             conn.execute(f"ALTER TABLE tool_events ADD COLUMN {col}")
-        _reset_scanned(conn)
-        # The surviving old rows were scanned before dedup existed — the
+        # The old rows were scanned before dedup existed — the
         # records streaming one response repeated its tool_use blocks. One
         # row per call, in place, since their transcripts can't be rescanned.
         # ponytail: NULL-id rows stay undeduped — no key to pair them on.
@@ -715,7 +688,6 @@ def _migrate(conn):
             "DELETE FROM tool_events WHERE tool_use_id IS NOT NULL AND id NOT IN"
             " (SELECT MIN(id) FROM tool_events GROUP BY session_id, tool_use_id)")
         conn.commit()
-        fill_substrate(conn)
     # Ticket-#43 why-pass removal (ADR-0006) on a pre-cut db: drop the
     # findings/evidence/runs tables and their rows (the raw model outputs
     # stay cached on disk under local-data/), and the change_events link
@@ -926,63 +898,37 @@ REAUDIT_SHARE = 0.25
 
 def invalidate_grown(conn, work_dir):
     """Ticket #29's straddle case, widened to resumed sessions by #73: a
-    transcript that grew since sync still carries caches and substrate from
-    the smaller prefix.
+    transcript that grew since sync still carries caches from the smaller
+    prefix. The derived tables need nothing here since ticket #87: a grown
+    session is due for every deriver and re-derived whole.
 
-    Substrate and audit are split, because prefix semantics only ever
-    applied to one of them. `usage`/`tool_events`/`command_grains` are
-    mechanical facts carrying their own timestamps, so they are **always**
-    topped up, whatever the session's status — before #73 a `done` session
-    was skipped outright and every resumed session's tail was lost for good
-    (26.2M tokens across 17 sessions when it was found). The audit entry
-    stays prefix-semantic (CONTEXT.md): a model-written summary is fairly
-    "as of" its run, and it is rewritten only once REAUDIT_SHARE of the
-    current transcript is unseen.
+    The audit entry stays prefix-semantic (CONTEXT.md): a model-written
+    summary is fairly "as of" its run, and it is rewritten only once
+    REAUDIT_SHARE of the current transcript is unseen. That share is
+    measured against `audited_size`, not `size`: `size` moves to the high-water
+    on every growth, so measuring against it would reset the gap on every
+    run and a session resumed in small increments would drift forever
+    without ever tripping the threshold. The extract reads the parent
+    alone, so a subagent appearing or growing never rewrites the audit.
 
-    That share is measured against `audited_size`, not `size`: topping up
-    substrate moves `size` to the disk, so measuring against it would reset
-    the gap on every run and a session resumed in small increments would
-    drift forever without ever tripping the threshold.
-
-    A transcript that *shrank* is left alone — pruning means unknown, and
-    rescanning would overwrite what we still hold with less.
-
-    A *live* transcript is left alone too (ticket #76). The wipe is only
-    half a top-up: `fill_substrate` skips a live session (ticket #29), so
-    wiping one would end the run with zero substrate rows for it. Waiting
-    a run costs nothing — the tail is still on disk.
-
-    A session with a subagent transcript unseen or grown since its scan is a
-    session that grew (issue #13) — the same path backfills subagents of
-    sessions synced before they were ingested. Only the substrate follows:
-    the re-audit share is measured on the parent transcript alone, so a
-    subagent appearing or growing never rewrites the audit.
+    A transcript that *shrank* is left alone — pruning means unknown. So is
+    a *live* one: the what-pass would not take it this run anyway.
 
     v2 (issue #79, ADR-0039 §7): growth and the share are measured on the
     parent's captured bytes, the registry high-water, which `size` now
     holds. A transcript pruned after capture can still be re-audited from
-    its records; only the substrate wipe needs the file, which the v1 scan
-    refills from."""
+    its records."""
     rows = conn.execute("SELECT s.id, s.transcript_path, s.size, s.status,"
-                        " s.audited_size, s.skipped_records, t.high_water"
+                        " s.audited_size, t.high_water"
                         " FROM sessions s JOIN transcripts t ON t.session_id = s.id"
                         " AND t.agent_id IS NULL").fetchall()
-    for sid, path, size, status, audited, scanned, now in rows:
-        on_disk = Path(path).exists()
-        if size is None or (on_disk and _is_live(path)):
+    for sid, path, size, status, audited, now in rows:
+        if size is None or now <= size or (Path(path).exists() and _is_live(path)):
             continue
-        if now <= size and not (on_disk and scanned is not None
-                                and _subagents_grew(conn, sid, path)):
-            continue
-        if on_disk:
-            for table in SUBSTRATE_TABLES:
-                conn.execute(f"DELETE FROM {table} WHERE session_id=?", (sid,))
-            conn.execute("UPDATE sessions SET skipped_records=NULL WHERE id=?", (sid,))
         conn.execute("UPDATE sessions SET size=? WHERE id=?", (now, sid))
         reaudit = (status == "done" and audited is not None and now > audited
                    and (now - audited) / now >= REAUDIT_SHARE)
-        # the extract reads the parent alone: subagent-only growth leaves it
-        if (status != "done" and now > size) or reaudit:
+        if status != "done" or reaudit:
             for f in [*(Path(work_dir) / "extracts").glob(f"{sid}.*"),
                       *(Path(work_dir) / PROMPT_VERSION).glob(f"{sid}.*")]:
                 f.unlink()
@@ -991,20 +937,12 @@ def invalidate_grown(conn, work_dir):
     conn.commit()
 
 
-def _subagents_grew(conn, sid, path):
-    """Any subagent transcript on disk that the scan has not recorded, or
-    that is larger than recorded. One that shrank or vanished is left alone
-    — pruning means unknown, never less (ADR-0013)."""
-    known = dict(conn.execute("SELECT agent_id, size FROM subagent_transcripts"
-                              " WHERE session_id=?", (sid,)))
-    return any(aid not in known or p.stat().st_size > known[aid]
-               for aid, p in subagent_transcripts(path))
-
-
 # The records index (ADR-0031 §3, ticket #86), the first deriver: each
 # record's type, uuid and timestamp. Bump the version to rebuild its `raw`
 # rows from the raw store.
 RECORDS_INDEX_VERSION = 1
+RECORDS_INDEX_REQUIRES = tuple((t, k) for t in ("user", "assistant")
+                               for k in ("type", "uuid", "timestamp"))
 UNPARSEABLE = 5  # breakage condition: a stored record that is not a JSON object
 
 
@@ -1069,12 +1007,45 @@ def derive(conn, name, version, fn):
             conn.execute("INSERT OR REPLACE INTO deriver_state (deriver, session_id,"
                          " raw_rowid) VALUES (?, ?, ?)", (key, sid, top))
             conn.commit()
+        except NotSynced:
+            conn.rollback()  # no sessions row yet: stays due, derives next run
         except Exception as e:
             conn.rollback()
             failed.append(f"{sid}: {type(e).__name__}: {e}")
     if failed:
         raise RuntimeError(f"{name} failed on {len(failed)} session(s): "
                            + "; ".join(failed))
+
+
+def derivers():
+    """Every deriver over the raw store as (table, version, fn), the records
+    index first. Read at call time, so a version bump takes effect at once."""
+    return [("records_index", RECORDS_INDEX_VERSION, index_records),
+            ("usage", USAGE_VERSION, derive_usage),
+            ("tool_events", TOOL_EVENTS_VERSION, derive_tool_events),
+            ("command_grains", COMMAND_GRAINS_VERSION, derive_command_grains),
+            ("field_histogram", FIELD_HISTOGRAM_VERSION, derive_field_histogram)]
+
+
+# The field contract (issue #15, ADR-0037 §3): the union of what every
+# reader of the raw records declares it requires present — the derivers
+# and the what-pass's extract. The drift guard checks exactly these keys.
+FIELD_CONTRACT = tuple(dict.fromkeys(
+    RECORDS_INDEX_REQUIRES + USAGE_REQUIRES + TOOL_EVENTS_REQUIRES
+    + COMMAND_GRAINS_REQUIRES + FIELD_HISTOGRAM_REQUIRES + extract.REQUIRES))
+
+
+def any_due(conn):
+    """Whether any session is still due for any deriver — the drift guard's
+    gate (ADR-0038 §3): a half-derived store would trip it falsely."""
+    tops = conn.execute("SELECT session_id, MAX(rowid) FROM raw_records"
+                        " GROUP BY session_id").fetchall()
+    for name, version, _ in derivers():
+        done = dict(conn.execute("SELECT session_id, raw_rowid FROM deriver_state"
+                                 " WHERE deriver=?", (f"{name}@{version}",)))
+        if any(top > done.get(sid, 0) for sid, top in tops):
+            return True
+    return False
 
 
 def _vkey(v):
@@ -1093,7 +1064,7 @@ def version_histogram(conn):
     return h
 
 
-def check_drift(conn, at, records, skipped, notify=False):
+def check_drift(conn, at, notify=False):
     """The schema-drift guard (issue #15, ADR-0020): a histogram delta
     between record versions, never a version pin. The newest version with
     MIN_RECORDS records is compared with the nearest earlier one that has
@@ -1105,19 +1076,19 @@ def check_drift(conn, at, records, skipped, notify=False):
        since may be thin;
     2. a top-level key absent under the comparison version present in >50%
        of a record type's units under the newest — *informational*,
-       upstream added something, the rows cannot be wrong;
-    3. this run's skipped share exceeds SPIKE× the median of the last
-       SPIKE_WINDOW runs — *problem*; the one per-run condition, because a
-       parse failure is a run-time event. Runs under MIN_RUN_RECORDS
-       neither trip nor enter the baseline.
+       upstream added something, the rows cannot be wrong.
+
+    Condition 3, the run's skipped share, is retired (ADR-0037 §6): the
+    scan it measured is gone. Its rows stay as history.
 
     One breakage row per trip — except that the keys added under one version
     pair are one row (issue #30), its key the sorted list and its share the
     lowest — deduplicated against the open rows, carrying the two versions,
-    the key, the shares and the first session day under the newest version. Ingest never halts: this runs after the substrate
-    fill and the run carries on. A macOS notification for conditions 1 and
-    3 only, when `notify` — a notification always means a decision is
-    needed. Returns the rows written."""
+    the key, the shares and the first session day under the newest version.
+    Ingest never halts: this runs after derivation and the run carries on.
+    A macOS notification for condition 1 only, when `notify` — a
+    notification always means a decision is needed. Returns the rows
+    written."""
     h = version_histogram(conn)
     baseline = max((v for (v,) in conn.execute(
         "SELECT new_version FROM breakage WHERE acknowledged_at IS NOT NULL"
@@ -1153,21 +1124,6 @@ def check_drift(conn, at, records, skipped, notify=False):
         if added:  # issue #30: a release adds several keys at once — one row
             trips.append(("informational", 2, old, new, ", ".join(sorted(added)),
                           0.0, min(added.values()), since))
-    if records >= MIN_RUN_RECORDS:
-        prior = [s / r for r, s in conn.execute(
-            "SELECT records, skipped FROM scan_runs ORDER BY at DESC LIMIT ?",
-            (SPIKE_WINDOW,))]
-        mine = skipped / records
-        # ponytail: a median of zero makes any skipped record a spike — real
-        # corpora skip ~20% (attachment, mode, … records), so it never is.
-        # And a spiked run enters the window like any other, so a new
-        # normal stops tripping after ~4 runs; the open row stays until
-        # acknowledged, so the alarm is never silently lost.
-        if prior and mine > SPIKE * statistics.median(prior):
-            trips.append(("problem", 3, None, None, None,
-                          statistics.median(prior), mine, None))
-        conn.execute("INSERT OR REPLACE INTO scan_runs (at, records, skipped)"
-                     " VALUES (?, ?, ?)", (at, records, skipped))
     written = []
     for tier, cond, old, new, key, a, b, since in trips:
         # Condition 2 dedups on the version pair: a key first seen on a later
@@ -1183,7 +1139,7 @@ def check_drift(conn, at, records, skipped, notify=False):
         written.append(dict(zip(BREAKAGE_COLS, (cur.lastrowid, at, tier, cond, old,
                                                 new, key, a, b, since, None))))
     conn.commit()
-    loud = [r for r in written if r["condition"] in (1, 3)]
+    loud = [r for r in written if r["condition"] == 1]
     if notify and loud:
         _notify(f"{len(loud)} breakage(s) — {breakage_text(loud[0])}")
     return written
@@ -1367,7 +1323,7 @@ def insert_results(conn, session, skip, md, what_version, model):
     version and model are parameters, not the module constants. The
     mechanical adr_count (ADR-0004) is computed onto the audit row here,
     at assemble time — NULL if the session's substrate isn't scanned yet
-    (the import path; fill_substrate stamps it on the next run)."""
+    (the import path; the tool-events deriver stamps it once it is)."""
     conn.execute(
         "INSERT OR REPLACE INTO audit"
         " (session_id, project, skip, markdown, prompt_version, model, adr_count)"
@@ -1789,20 +1745,19 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
 
     def derivation():
         invalidate_grown(conn, work_dir)
-        # Both run whatever the other did; the index first, so a scan that
-        # raises mid-session leaves its uncommitted rows for job()'s rollback.
+        # Each deriver runs whatever the others did (ADR-0038 §3).
         errors = []
-        try:
-            derive(conn, "records_index", RECORDS_INDEX_VERSION, index_records)
-        except Exception as e:
-            errors.append(str(e))
-        try:
-            scanned = fill_substrate(conn)
-        except Exception as e:
-            errors.append(f"substrate scan: {type(e).__name__}: {e}")
+        for name, version, fn in derivers():
+            try:
+                derive(conn, name, version, fn)
+            except Exception as e:
+                errors.append(str(e))
         if errors:
             raise RuntimeError("; ".join(errors))
-        return scanned
+
+    def drift_guard():
+        if not any_due(conn):  # due sessions: a designed skip, never an error
+            check_drift(conn, datetime.now(timezone.utc).isoformat(), notify)
 
     def what_pass():
         classify_and_extract(conn, work_dir)
@@ -1831,10 +1786,9 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
     try:
         job("sweep", lambda: sweep(conn, root))
         job("project bookkeeping", bookkeeping)
-        scanned = job("derivation", derivation)
+        job("derivation", derivation)
         if "derivation" not in failed:  # a half-derived store trips the guard falsely
-            job("drift guard", lambda: check_drift(
-                conn, datetime.now(timezone.utc).isoformat(), *scanned, notify))
+            job("drift guard", drift_guard)
         paused = job("what-pass", what_pass)
         if not paused:  # the narrative would only hit the same limit
             job("how narrative", narrative)

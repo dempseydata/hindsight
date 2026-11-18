@@ -17,6 +17,14 @@ PER_MSG_CAP = 1500
 CHUNK_CAP = 180_000  # chars per output file, ~45k tokens
 
 FILE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# The keys msg_texts requires present (ADR-0037 §3): its share of the
+# drift guard's field contract, beside the derivers' declarations.
+REQUIRES = (
+    ("user", "message"), ("user.message", "content"),
+    ("user.message.content.text", "text"),
+    ("assistant", "message"), ("assistant.message", "content"),
+    ("assistant.message.content.text", "text"),
+)
 
 
 def msg_texts(entry):

@@ -11,11 +11,10 @@ Contracts: ADR-0039.
 | #84 | built, open for human check | 10206e1 | 1 | 261 tests, 31 s | `async` on Stop/SubagentStop needs a live session |
 | #85 | closed | 52ceaf5 | 0 | 266 tests, 48 s | |
 | #86 | closed | fdfc635 | 2 | 274 tests, 55 s | suite at 1.8× baseline |
-| #91 | built, open for human run | (this commit) | 0 | 277 tests, 54 s | real-data equivalence: `eval/extract_equivalence.py` |
-| #87 | unblocked, queued after #91 | wip: night-shift/v2-audit-core-wip-87 | 1 | 276 tests, 54 s | v1 rows replaced per captured agent (ADR-0039 §9) |
+| #91 | built, open for human run | 29ff02f | 0 | 277 tests, 54 s | real-data equivalence: `eval/extract_equivalence.py` |
+| #87 | closed | (this commit) | 1+3 | 283 tests, 52 s | blocked once; v1 rows replaced per captured agent (ADR-0039 §9) |
 
 ## Owed
-- #87: the drift guard (ADR-0038 §3) must skip when no session is due, not only when the derivation job raises — deferred from #85.
 
 ## Decisions
 - #84: raw store columns are `session_id`, `agent_id`, `byte_offset`, `high_water`, `last_hash`, `last_size`; each new table gets a unique index on `ifnull(agent_id,'')` — ADR? yes (permanent once v10 ships; fold into ADR-0039 §8)
@@ -41,6 +40,11 @@ Contracts: ADR-0039.
 - #91: the live guard reads all of a session's raw records, subagents included — ADR? no
 - #91: raw records reach the unchanged `extract.py` through `/dev/stdin` (macOS/Linux only) — ADR? no
 - #91: growth compares against the high-water; the substrate is wiped only when the file is on disk; sessions with no registry row are skipped — ADR? no
+- #87: condition 3 retired with the v1 scan; `scan_runs` left for #88's v12 to drop — ADR? no
+- #87: substrate derivers write nothing for sessions with no `sessions` row; a captured, unexcluded parent (high_water > 0) with no row yet raises `NotSynced` and the session stays due — ADR? no
+- #87: v3/v8/v9 rescan migrations no longer rescan; the derivers do — ADR? no
+- #87: subagent counts read the transcript registry plus the frozen `subagent_transcripts` table — ADR? no
+- #87: the 300 s live guard on derivation is retired (ADR-0031 §6, spec "Derivation has no guard") — ADR? no
 
 ## Blocked
 
@@ -57,3 +61,9 @@ Contracts: ADR-0039.
 - #86: `docs/flows.md` and `docs/automation.md` still describe `redate_sessions` and `audit.date`.
 - #91: `sessions.size` is not lowered to the high-water when a v1 row's size exceeds it (kept deliberately: lowering would trigger spurious re-audits as capture catches up).
 - #91: `held_live` treats an unparseable `captured_at` as not live.
+- #87: with the parent captured and a subagent not, the histogram keeps v1 rows and adds the parent's raw rows (the parent counts twice in the histogram); ADR-0039 §9 allows it, but its "avoids double counting" sentence overstates.
+- #87: `skipped_records` now counts only captured agents.
+- #87: each session is parsed once per deriver (four times).
+- #87: a DriftTest monkeypatches `analyze.derive` (no fixture path to a mid-run capture).
+- #87: the drift guard's skip is silent (spec story 36 gives no form).
+- #87: `docs/` still describes `fill_substrate` and `_reset_scanned`.

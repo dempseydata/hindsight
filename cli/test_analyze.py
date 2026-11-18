@@ -319,23 +319,16 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         self.assertEqual(self.session_statuses()["sess-resume"], "done")
         self.assertEqual(self.audit_rows()["sess-resume"]["markdown"], ENTRY_A)
 
-    def test_live_resumed_session_keeps_its_substrate(self):
-        """Ticket #76: a `done` session resumed and still being written must
-        not be wiped. `fill_substrate` skips a live transcript (ticket #29),
-        so the wipe would leave the session with zero substrate rows for the
-        rest of the run — it waits instead, and tops up once quiet."""
+    def test_live_resumed_session_is_topped_up_without_waiting(self):
+        """Ticket #76's wipe is gone (ticket #87): derivation has no live
+        guard and re-derives the captured records whole, so a session still
+        being written is topped up in the same run, never left empty."""
         path = self._resume("sess-hotresume", [
             rec("assistant", "a1", "2026-08-01T10:10:00Z",
                 [{"type": "text", "text": "a bit more"}],
                 usage=USAGE, model="test-model", id="msg-1")])
         now = time.time()
         os.utime(path, (now, now))  # still being written
-        self.run_pipeline(StubRunner([]))
-        self.assertEqual(len(self.rows(
-            "SELECT * FROM usage WHERE session_id='sess-hotresume'")), 1,
-            "live session's substrate wiped with nothing left to refill it")
-
-        _backdate(path)  # went quiet: the next run tops it up
         self.run_pipeline(StubRunner([]))
         self.assertEqual(len(self.rows(
             "SELECT * FROM usage WHERE session_id='sess-hotresume'")), 2)
@@ -394,12 +387,14 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
                          "the extract read a subagent transcript")
 
         # the subagent grows: topped up again, still no model call
-        write_records(sub, [
-            {**rec("assistant", f"s{i}", f"2026-08-01T10:0{i}:08Z",
-                   [{"type": "text", "text": big}],
-                   usage=USAGE, model="test-model", id=f"msg-s{i}"),
-             "sessionId": "sess-sub", "agentId": "a1", "isSidechain": True}
-            for i in range(3)])
+        with sub.open("a") as f:
+            for i in range(1, 3):
+                f.write(json.dumps(
+                    {**rec("assistant", f"s{i}", f"2026-08-01T10:0{i}:08Z",
+                           [{"type": "text", "text": big}],
+                           usage=USAGE, model="test-model", id=f"msg-s{i}"),
+                     "sessionId": "sess-sub", "agentId": "a1", "isSidechain": True}) + "\n")
+        _backdate(sub)
         self.run_pipeline(StubRunner([]))
         self.assertEqual(self.rows("SELECT COUNT(*) n FROM usage"
                                    " WHERE agent_id='a1'")[0]["n"], 3)
@@ -1848,6 +1843,33 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.run_pipeline()
         self.assertEqual(len(self.open_rows()), 1)
 
+    def test_guard_skips_while_a_session_is_due_and_the_run_stays_ok(self):
+        """ADR-0038 §3: a record captured after derivation (a hook firing
+        mid-run) leaves its session due; the guard skips as designed, the
+        health row stays ok, and the next run checks."""
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2", strip=("usage",))
+        late = self.root / "p" / "old.jsonl"
+        real = analyze.derive
+
+        def then_a_firing(conn, name, version, fn):
+            real(conn, name, version, fn)
+            if name == "field_histogram" and not getattr(then_a_firing, "fired", False):
+                then_a_firing.fired = True
+                with late.open("a") as f:
+                    f.write(json.dumps(rec("user", "late", "2026-08-01T11:00:00Z", "x")) + "\n")
+                analyze.capture(conn, late)
+
+        analyze.derive = then_a_firing
+        self.addCleanup(setattr, analyze, "derive", real)
+        self.run_pipeline()
+        self.assertEqual(self.open_rows(), [])
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertIsNone(health["error_text"])
+
+        self.run_pipeline()
+        self.assertEqual([r["condition"] for r in self.open_rows()], [1])
+
     def test_same_shape_under_a_new_version_is_quiet(self):
         self.corpus("old", "2.1.1")
         self.corpus("new", "2.1.2")
@@ -1876,25 +1898,6 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.corpus("new", "2.1.2", pairs=5, strip=("usage",))  # 10 < MIN_RECORDS
         self.run_pipeline()
         self.assertEqual(self.open_rows(), [])
-
-    def test_skipped_spike_trips_once_and_a_run_within_baseline_does_not(self):
-        n = analyze.MIN_RUN_RECORDS
-        self.corpus("r1", "2.1.1", pairs=n // 2, junk=n // 10)   # ~9% skipped
-        self.run_pipeline(notify=True)
-        self.assertEqual(self.open_rows(), [])          # no prior run: no baseline
-        self.corpus("r2", "2.1.1", pairs=n // 2, junk=n)          # 50% skipped
-        self.run_pipeline(notify=True)
-        rows = self.open_rows()
-        self.assertEqual([(r["tier"], r["condition"]) for r in rows], [("problem", 3)])
-        self.assertEqual(len(self.notified), 1)
-        self.corpus("r3", "2.1.1", pairs=n // 2, junk=n // 10)   # back in baseline
-        self.run_pipeline(notify=True)
-        self.assertEqual(len(self.open_rows()), 1)
-        self.assertEqual(len(self.notified), 1)
-        # a tiny run neither trips nor enters the baseline
-        self.corpus("r4", "2.1.1", pairs=5, junk=50)
-        self.run_pipeline()
-        self.assertEqual(len(self.rows("SELECT * FROM scan_runs")), 3)
 
     def test_acknowledge_closes_the_row_and_moves_the_baseline(self):
         self.corpus("old", "2.1.1")

@@ -234,9 +234,12 @@ def parse_entry(md):
 
 def subagent_counts(conn):
     """{session_id: subagent transcripts filed under it} (issue #13) — the
-    mechanical count both views' "N subagents" read; sessions with none absent."""
-    return dict(conn.execute("SELECT session_id, COUNT(*) FROM subagent_transcripts"
-                             " GROUP BY session_id"))
+    mechanical count both views' "N subagents" read; sessions with none absent.
+    The registry knows them since ticket #87; v1's table keeps the rest."""
+    return dict(conn.execute(
+        "SELECT session_id, COUNT(*) FROM (SELECT session_id, agent_id FROM transcripts"
+        " WHERE agent_id IS NOT NULL UNION SELECT session_id, agent_id"
+        " FROM subagent_transcripts) GROUP BY session_id"))
 
 
 def what_data(conn):

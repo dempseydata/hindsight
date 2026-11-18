@@ -15,7 +15,8 @@ Contracts: ADR-0039.
 | #87 | closed | 3fe14c1 | 1+3 | 283 tests, 52 s | blocked once; v1 rows replaced per captured agent (ADR-0039 §9) |
 | #88 | closed | 8112338 | 1 | 288 tests, 56 s | v12 drops `scan_runs` |
 | #89 | closed | dd5fb93 | 1 | 294 tests, 56 s | |
-| #90 | closed | (this commit) | 1 | 298 tests, 55 s | where-view wording: optional human look |
+| #90 | closed | 16701b1 | 1 | 298 tests, 55 s | where-view wording: optional human look |
+| #92 | closed | (this commit) | 2 | 305 tests, 61 s | suite at 2× baseline — next implementer moves tests to cheaper seams |
 
 ## Owed
 
@@ -58,6 +59,12 @@ Contracts: ADR-0039.
 - #89: breakage banner headings per condition: 4 "input-side tokens disagree", 6 "transcript rewritten", others "transcript shape changed" — ADR? no
 - #90: the token source is chosen at render time (no column): OTel `api_request` tokens for a session OTel saw (≥1 api_request), else transcript usage, labelled by usage provenance — ADR? no
 - #90: the message lens stays on transcript usage (OTel has no message_id); the measured median skips OTel side requests; OTel subagent tokens come from `agent_id` (CLI ≥ 2.1.310) — ADR? no
+- #92: limit env `HINDSIGHT_RAW_DAYS` (0 = never; tests pin 0); a limit overflowing the date maths means never — ADR? no
+- #92: health detail JSON `{"raw_days","held"}`; a bad value writes null to both — ADR? no
+- #92: newest record from records-index timestamps; a session with none is kept; only `raw` rows become `compacted`; v1 stays v1 — ADR? no
+- #92: held: every pending/partial session ("trivial excepted" has no mechanical state), and any session with an open condition-5 or condition-6 breakage — ADR? no
+- #92: a compacted session is never re-audited (its audit entry is the lasting output); a resumed tail derives as raw beside compacted rows — ADR? yes (ADR-0034 §5 covers re-capture only)
+- #92: compaction clears the session's raw-rowid deriver_state in the same transaction (raw_records rowids are reused after deletion) — ADR? yes (a standing invariant on ADR-0039 §2's rowid table)
 
 ## Blocked
 
@@ -87,3 +94,7 @@ Contracts: ADR-0039.
 - #90: the coverage line labels a session `raw` (`MIN(u.src)`) when its main-agent usage is v1 and a subagent's is raw (valid under ADR-0039 §9).
 - #90: hook rows show "?" for a missing event where the old code showed "unknown".
 - #90: a session OTel joined partway through reads low, with no warning.
+- #92: cache files deleted are `extracts/` and the current PROMPT_VERSION folder only; older-version part outputs stay.
+- #92: the ops and health readers never show `held`.
+- #92: an acknowledged condition-6 session stays held while the transcript still differs (each sweep files a new open row).
+- #92: a resumed tail is derived alone; a tool call whose result lands in the tail is split across the cut (not probed).

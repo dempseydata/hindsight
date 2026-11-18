@@ -155,11 +155,15 @@ def record_identity(conn, transcript_path, cwd):
     conn.commit()
 
 
-def write_health(conn, error=None, source="capture"):
+def write_health(conn, error=None, source="capture", detail=None):
     """A source's health row (ADR-0039 §5): failing_since is set by the
-    first error after a success and cleared by the next success."""
+    first error after a success and cleared by the next success. `detail`,
+    when given, replaces the row's JSON detail."""
     at = now()
     conn.execute("INSERT OR IGNORE INTO health (source) VALUES (?)", (source,))
+    if detail is not None:
+        conn.execute("UPDATE health SET detail=? WHERE source=?",
+                     (json.dumps(detail), source))
     if error is None:
         conn.execute("UPDATE health SET last_success=?, failing_since=NULL"
                      " WHERE source=?", (at, source))

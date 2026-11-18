@@ -58,6 +58,11 @@ Every day bucket is the operator's local day off the stored UTC instant
 session's stored day, else the local day of its earliest records-index
 timestamp (ADR-0031 §5, ticket #86).
 
+Compaction (ADR-0034, ticket #92) deletes a session's raw records once its
+newest record is `HINDSIGHT_RAW_DAYS` old (default 90, `0` never) and no
+deriver or the what-pass still holds it; a bad value compacts nothing and
+errors the run.
+
 The schema-drift guard (issue #15, ADR-0020) runs once derivation has left
 no session due (ADR-0038 §3): the histogram deriver counts every key it sees
 per record `version` into `field_histogram`, and check_drift compares the
@@ -93,7 +98,7 @@ import sys
 import time
 import zlib
 import zoneinfo
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -105,7 +110,8 @@ from substrate import (  # noqa: E402
 import extract  # noqa: E402
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 from home import home, log_to  # noqa: E402
-from capture import capture, now as stamp, transcript_key, write_health  # noqa: E402
+from capture import (REWRITTEN, capture, now as stamp, transcript_key,  # noqa: E402
+                     write_health)
 
 DEFAULT_TRANSCRIPTS = Path.home() / ".claude" / "projects"
 DEFAULT_DB = home() / "hindsight.db"
@@ -917,6 +923,10 @@ def invalidate_grown(conn, work_dir):
     parent's captured bytes, the registry high-water, which `size` now
     holds. A transcript pruned after capture can still be re-audited from
     its records."""
+    # a compacted session's records are gone: its standing entry is the
+    # lasting output (ADR-0034), never rewritten from a tail
+    compacted = {s for (s,) in conn.execute(
+        "SELECT DISTINCT session_id FROM records_index WHERE provenance='compacted'")}
     rows = conn.execute("SELECT s.id, s.transcript_path, s.size, s.status,"
                         " s.audited_size, t.high_water"
                         " FROM sessions s JOIN transcripts t ON t.session_id = s.id"
@@ -925,7 +935,8 @@ def invalidate_grown(conn, work_dir):
         if size is None or now <= size or (Path(path).exists() and _is_live(path)):
             continue
         conn.execute("UPDATE sessions SET size=? WHERE id=?", (now, sid))
-        reaudit = (status == "done" and audited is not None and now > audited
+        reaudit = (status == "done" and sid not in compacted
+                   and audited is not None and now > audited
                    and (now - audited) / now >= REAUDIT_SHARE)
         if status != "done" or reaudit:
             for f in [*(Path(work_dir) / "extracts").glob(f"{sid}.*"),
@@ -1871,6 +1882,92 @@ def canonicalize_projects(conn):
     conn.commit()
 
 
+def raw_days():
+    """HINDSIGHT_RAW_DAYS (ADR-0034 §2): days of raw records kept past a
+    session's newest record, default 90, `0` forever. A negative or
+    non-numeric value raises: bad configuration stops deletion, never
+    triggers it, and never falls back to the default."""
+    v = os.environ.get("HINDSIGHT_RAW_DAYS", "90")
+    try:
+        days = int(v)
+    except ValueError:
+        days = -1
+    if days < 0:
+        raise ValueError(f"HINDSIGHT_RAW_DAYS={v!r} is not a whole number of"
+                         " days >= 0; nothing compacted")
+    return days
+
+
+def compact(conn, work_dir, report):
+    """Compaction (ADR-0034, ticket #92): delete the raw records of every
+    session whose newest record is older than the raw limit, unless a
+    current deriver still has it due or the what-pass holds it
+    pending/partial — those are counted as held. Per session, one
+    transaction: its raw records go, its `raw` derived rows (records index
+    included) become `compacted`, and its cached extract and part outputs
+    are deleted; the registry row and audit row stay. A session with no
+    timestamped record has no newest record and is kept. Fills `report`
+    with the active limit and the held count for the health row."""
+    days = raw_days()
+    report.update(raw_days=days, held=0)
+    if not days:
+        return
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    except OverflowError:
+        return  # a limit past the calendar's start: nothing is ever that old
+    tables = [name for name, _, _ in derivers()]
+    keys = [f"{name}@{version}" for name, version, _ in derivers()]
+    state = {(d, s): r for d, s, r in conn.execute(
+        "SELECT deriver, session_id, raw_rowid FROM deriver_state")}
+    status = dict(conn.execute("SELECT id, status FROM sessions"))
+    # an open rewrite breakage refers to the captured prefix: keep it
+    rewritten = {s for (s,) in conn.execute(
+        "SELECT session_id FROM breakage WHERE acknowledged_at IS NULL"
+        " AND condition=?", (REWRITTEN,))}
+    newest = {}
+    for sid, ts in conn.execute("SELECT session_id, timestamp FROM records_index"
+                                " WHERE timestamp IS NOT NULL"):
+        dt = parse_ts(ts)
+        if dt and (sid not in newest or dt > newest[sid]):
+            newest[sid] = dt
+    compacted, failed = 0, []
+    for sid, top in conn.execute("SELECT session_id, MAX(rowid) FROM raw_records"
+                                 " GROUP BY session_id").fetchall():
+        if sid not in newest or newest[sid] >= cutoff:
+            continue
+        if (status.get(sid) in SELECTABLE or sid in rewritten
+                or any(state.get((k, sid), 0) < top for k in keys)):
+            report["held"] += 1
+            continue
+        try:
+            conn.execute("DELETE FROM raw_records WHERE session_id=?", (sid,))
+            # the freed rowids are reused, so state naming them would read a
+            # resumed tail as derived; the next derivation deletes only `raw` rows
+            conn.execute("DELETE FROM deriver_state WHERE session_id=?"
+                         " AND deriver NOT GLOB 'otel_histogram@*'", (sid,))
+            for t in tables:
+                conn.execute(f"UPDATE {t} SET provenance='compacted'"
+                             " WHERE session_id=? AND provenance='raw'", (sid,))
+            # files cannot roll back, but they are rebuildable caches: a
+            # failure past here still leaves the raw records intact
+            for f in [*(Path(work_dir) / "extracts").glob(f"{sid}.*"),
+                      *(Path(work_dir) / PROMPT_VERSION).glob(f"{sid}.*")]:
+                f.unlink()
+            conn.commit()
+            compacted += 1
+        except Exception as e:
+            conn.rollback()
+            failed.append(f"{sid}: {type(e).__name__}: {e}")
+    if compacted:
+        conn.execute("PRAGMA incremental_vacuum").fetchall()
+    print(f"compaction: {compacted} session(s) compacted, {report['held']} held"
+          f" past the {days}-day raw limit")
+    if failed:
+        raise RuntimeError(f"compaction failed on {len(failed)} session(s): "
+                           + "; ".join(failed))
+
+
 def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
                   work_dir=DEFAULT_WORK_DIR, model_runner=None,
                   claude_dir=DEFAULT_CLAUDE_DIR, projects_dir=DEFAULT_PROJECTS_DIR,
@@ -1984,9 +2081,10 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
         job("backstop", lambda: capture_backstop(
             conn, claude_dir, projects_dir, datetime.now(timezone.utc).isoformat()))
         job("sunk-cost scan", lambda: scan_sunk_cost(conn, claude_dir, projects_dir))
-        # compaction: no job yet (#92)
+        report = {"raw_days": None, "held": None}
+        job("compaction", lambda: compact(conn, work_dir, report))
         write_health(conn, "; ".join(f"{n}: {m}" for n, m in failed.items()) or None,
-                     source="analysis")
+                     source="analysis", detail=report)
     finally:
         conn.close()
 

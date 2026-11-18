@@ -21,6 +21,7 @@ import tempfile
 import time
 import unittest
 import unittest.mock
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import analyze
@@ -2120,6 +2121,206 @@ class SectionDrift(unittest.TestCase):
     def test_active_what_prompt_names_every_section(self):
         for name in analyze.SECTIONS:
             self.assertIn(f"**{name}:**", analyze.WHAT_PROMPT)
+
+
+class CompactionTest(DbHelpers, unittest.TestCase):
+    """Compaction at the raw limit (ADR-0034, ADR-0038 §1, ticket #92)."""
+
+    OLD = "2026-08-01T10:00:00Z"  # past a 90-day limit from any run after 2026-10-30
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.db = base / "hindsight.db"
+        self.work = base / "analysis"
+        self.proj = self.root / "test-project"
+
+    def write(self, sid, ts):
+        write_records(self.proj / f"{sid}.jsonl", [
+            rec("user", f"{sid}-0", ts, "do the thing"),
+            rec("assistant", f"{sid}-1", ts, [{"type": "text", "text": "done"}],
+                id=f"m-{sid}", model="claude-x", usage=USAGE)])
+
+    def run_pipeline(self, days, runner):
+        base = Path(self.tmp.name)
+        with unittest.mock.patch.dict(os.environ, {"HINDSIGHT_RAW_DAYS": days}), \
+                captured_earlier(), contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                         model_runner=runner, claude_dir=base / "claude",
+                         projects_dir=base / "repos")
+
+    def raw(self, sid):
+        return self.rows("SELECT rowid FROM raw_records WHERE session_id=?", (sid,))
+
+    def provenance(self, sid):
+        return {t: [r["provenance"] for r in self.rows(
+                    f"SELECT provenance FROM {t} WHERE session_id=?", (sid,))]
+                for t in ("records_index", "usage")}
+
+    def health(self):
+        [row] = self.rows("SELECT * FROM health WHERE source='analysis'")
+        return row, json.loads(row["detail"])
+
+    def caches(self, sid):
+        return [*self.work.glob(f"extracts/{sid}.*"),
+                *self.work.glob(f"{analyze.PROMPT_VERSION}/{sid}.*")]
+
+    def test_a_done_session_past_the_limit_is_compacted_and_its_rows_survive(self):
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        self.write("sess-old", self.OLD)
+        self.write("sess-new", recent.replace("+00:00", "Z"))
+        self.run_pipeline("90", StubRunner([ENTRY_A, ENTRY_A]))
+
+        self.assertEqual(self.raw("sess-old"), [])
+        self.assertTrue(self.raw("sess-new"))
+        self.assertEqual(self.provenance("sess-old"),
+                         {"records_index": ["compacted"] * 2, "usage": ["compacted"]})
+        self.assertEqual(self.provenance("sess-new"),
+                         {"records_index": ["raw"] * 2, "usage": ["raw"]})
+        self.assertEqual(self.caches("sess-old"), [])
+        self.assertTrue(self.caches("sess-new"))
+        self.assertIn("sess-old", self.audit_rows())
+        self.assertEqual(self.session_statuses()["sess-old"], "done")
+        self.assertEqual(self.rows(
+            f"SELECT {analyze.session_day('s')} AS day FROM sessions s WHERE id='sess-old'"),
+            [{"day": "2026-08-01"}])
+        row, detail = self.health()
+        self.assertIsNone(row["error_text"])
+        self.assertEqual(detail, {"raw_days": 90, "held": 0})
+
+        # The transcript is still on disk: the sweep must not capture it
+        # again, and a deriver version bump must leave its rows frozen.
+        bump = analyze.USAGE_VERSION
+        analyze.USAGE_VERSION = bump + 1
+        self.addCleanup(setattr, analyze, "USAGE_VERSION", bump)
+        self.run_pipeline("90", StubRunner([]))
+
+        self.assertEqual(self.raw("sess-old"), [])
+        self.assertEqual(self.provenance("sess-old"),
+                         {"records_index": ["compacted"] * 2, "usage": ["compacted"]})
+        self.assertEqual(self.provenance("sess-new")["usage"], ["raw"])
+
+    def test_a_due_or_pending_session_past_the_limit_is_held_and_reported(self):
+        self.write("sess-a", self.OLD)  # audited, but a deriver still has it due
+        self.write("sess-b", self.OLD)  # derived, but the what-pass paused on it
+        real = analyze.derive_usage
+
+        def poisoned(conn, sid, records):
+            if sid == "sess-a":
+                raise ValueError("poison")
+            return real(conn, sid, records)
+
+        analyze.derive_usage = poisoned
+        self.addCleanup(setattr, analyze, "derive_usage", real)
+        self.run_pipeline("90", StubRunner([ENTRY_A, LimitExhausted("limit")]))
+
+        self.assertEqual(self.session_statuses(), {"sess-a": "done", "sess-b": "pending"})
+        self.assertTrue(self.raw("sess-a"))
+        self.assertTrue(self.raw("sess-b"))
+        self.assertEqual(self.provenance("sess-b")["records_index"], ["raw"] * 2)
+        row, detail = self.health()
+        self.assertNotIn("compaction", row["error_text"])
+        self.assertEqual(detail, {"raw_days": 90, "held": 2})
+
+    def test_zero_never_compacts_and_a_bad_value_compacts_nothing_and_errors(self):
+        self.write("sess-a", self.OLD)
+        self.run_pipeline("0", StubRunner([ENTRY_A]))
+        self.assertTrue(self.raw("sess-a"))
+        row, detail = self.health()
+        self.assertIsNone(row["error_text"])
+        self.assertEqual(detail, {"raw_days": 0, "held": 0})
+
+        for bad in ("-1", "abc"):
+            with self.subTest(bad=bad):
+                self.run_pipeline(bad, StubRunner([]))
+                self.assertTrue(self.raw("sess-a"))
+                row, detail = self.health()
+                self.assertIn("compaction", row["error_text"])
+                self.assertIn("HINDSIGHT_RAW_DAYS", row["error_text"])
+                self.assertEqual(row["failing_since"] is not None, True)
+                self.assertEqual(detail, {"raw_days": None, "held": None})
+
+        self.run_pipeline("90", StubRunner([]))  # the same session was eligible all along
+        self.assertEqual(self.raw("sess-a"), [])
+
+    def test_a_large_limit_never_compacts(self):
+        self.write("sess-a", self.OLD)
+        for days in ("1000000", "999999999", "10000000000"):
+            with self.subTest(days=days):
+                self.run_pipeline(days, StubRunner([ENTRY_A]))
+                self.assertTrue(self.raw("sess-a"))
+                row, detail = self.health()
+                self.assertIsNone(row["error_text"])
+                self.assertEqual(detail, {"raw_days": int(days), "held": 0})
+
+    def test_a_compacted_session_resumed_keeps_its_audit_entry(self):
+        old = [rec("user", "r-0", self.OLD, "do the thing"),
+               rec("assistant", "r-1", self.OLD, [{"type": "text", "text": "done"}],
+                   id="m-r", model="claude-x", usage=USAGE)]
+        write_records(self.proj / "sess-r.jsonl", old)
+        self.run_pipeline("90", StubRunner([ENTRY_A]))
+        self.assertEqual(self.raw("sess-r"), [])
+        before = self.audit_rows()["sess-r"]
+
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        tail = [rec("user", f"r-{i}", recent.replace("+00:00", "Z"), "more " * 20)
+                for i in range(2, 8)]
+        write_records(self.proj / "sess-r.jsonl", old + tail)
+        runner = StubRunner([ENTRY_B])
+        self.run_pipeline("90", runner)
+
+        self.assertEqual(runner.calls, [])
+        self.assertEqual(self.audit_rows()["sess-r"], before)
+        self.assertEqual(self.session_statuses()["sess-r"], "done")
+
+    def test_a_compacted_session_resumed_with_a_short_tail_derives_the_tail_once(self):
+        # raw_records reuses the rowids compaction freed: a tail shorter than
+        # the compacted records lands at or below the session's old state
+        old = [rec("user", f"t-{i}", self.OLD, "go") if i % 2 == 0 else
+               rec("assistant", f"t-{i}", self.OLD, [{"type": "text", "text": "ok"}],
+                   id=f"m-t{i}", model="claude-x", usage=USAGE) for i in range(10)]
+        write_records(self.proj / "sess-t.jsonl", old)
+        self.run_pipeline("90", StubRunner([ENTRY_A]))
+        self.assertEqual(self.raw("sess-t"), [])
+        frozen = self.rows("SELECT * FROM usage WHERE session_id='sess-t'")
+        self.assertEqual(len(frozen), 5)
+
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        recent = recent.replace("+00:00", "Z")
+        tail = [rec("user", "t-10", recent, "more"),
+                rec("assistant", "t-11", recent, [{"type": "text", "text": "ok"}],
+                    id="m-t11", model="claude-x", usage=USAGE)]
+        write_records(self.proj / "sess-t.jsonl", old + tail)
+        for _ in range(3):
+            self.run_pipeline("90", StubRunner([]))
+
+            self.assertEqual(len(self.raw("sess-t")), 2)  # recent: not yet past the limit
+            self.assertEqual(self.rows("SELECT * FROM usage WHERE session_id='sess-t'"
+                                       " AND provenance='compacted'"), frozen)
+            self.assertEqual(self.rows("SELECT message_id FROM usage WHERE session_id="
+                                       "'sess-t' AND provenance='raw'"),
+                             [{"message_id": "m-t11"}])
+            self.assertEqual(self.provenance("sess-t")["records_index"],
+                             ["compacted"] * 10 + ["raw"] * 2)
+
+    def test_a_session_with_an_open_rewrite_breakage_is_held(self):
+        records = [rec("user", "w-0", self.OLD, "do the thing"),
+                   rec("assistant", "w-1", self.OLD, [{"type": "text", "text": "done"}],
+                       id="m-w", model="claude-x", usage=USAGE)]
+        write_records(self.proj / "sess-w.jsonl", records)
+        self.run_pipeline("0", StubRunner([ENTRY_A]))
+        records[1]["message"]["content"][0]["text"] = "DONE"
+        records.append(rec("user", "w-2", self.OLD, "and more"))  # grown, so capture checks
+        write_records(self.proj / "sess-w.jsonl", records)
+        self.run_pipeline("90", StubRunner([]))
+
+        self.assertTrue(self.rows("SELECT 1 FROM breakage WHERE condition=6"
+                                  " AND session_id='sess-w' AND acknowledged_at IS NULL"))
+        self.assertTrue(self.raw("sess-w"))
+        self.assertEqual(self.health()[1], {"raw_days": 90, "held": 1})
 
 
 class JobListTest(DbHelpers, unittest.TestCase):

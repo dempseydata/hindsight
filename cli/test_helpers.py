@@ -20,6 +20,9 @@ from substrate import LIVE_WINDOW_S
 
 os.environ["TZ"] = "America/New_York"
 time.tzset()
+# Fixtures are dated 2026-08: past the default raw limit, so a run would
+# compact them. Compaction tests set HINDSIGHT_RAW_DAYS themselves.
+os.environ["HINDSIGHT_RAW_DAYS"] = "0"
 
 SKIP_MD = "SKIP"
 REFUSAL_MD = ("I'm ready to generate audit-log entries, but I don't see a"

@@ -16,7 +16,8 @@ import analyze
 from import_backfill import import_backfill
 from test_helpers import (ENTRY_A, ENTRY_B, FIXTURE_TURNS,
                           MERGED_ENTRY, REFUSAL_MD, USAGE, DbHelpers,
-                          StubRunner, rec, write_records, write_transcript)
+                          StubRunner, captured_earlier, rec, write_records,
+                          write_transcript)
 
 MODEL = "test-model"
 
@@ -210,8 +211,11 @@ class ImportBackfillTest(DbHelpers, unittest.TestCase):
         # what call each; StopIteration would fail the test if any imported
         # session were re-analysed.
         stub = StubRunner([ENTRY_A, ENTRY_B, ENTRY_A])
-        analyze.run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                              model_runner=stub)
+        base = Path(self.tmp.name)
+        with captured_earlier():
+            analyze.run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                                  model_runner=stub, claude_dir=base / "claude",
+                                  projects_dir=base / "repos")
         self.assertEqual(len(stub.calls), 3)
 
         statuses = self.session_statuses()

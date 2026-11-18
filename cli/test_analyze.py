@@ -28,8 +28,9 @@ from analyze import LimitExhausted, run_analysis
 from sunk_cost import scan_sunk_cost as sunk_cost_scan
 from test_helpers import (DbHelpers, ENTRY_A, ENTRY_B, FIXTURE_TURNS,
                           MERGED_ENTRY, REFUSAL_MD, SKIP_MD, StubRunner,
-                          USAGE, _backdate, big_turns, fire_capture, rec,
-                          session_start, write_records, write_transcript)
+                          USAGE, _backdate, big_turns, captured_earlier,
+                          fire_capture, rec, session_start, settle_captures,
+                          write_records, write_transcript)
 
 
 class AnalyzeTest(DbHelpers, unittest.TestCase):
@@ -42,13 +43,14 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         self.work = base / "analysis"
         self.proj = self.root / "test-project"
 
-    def run_pipeline(self, model_runner):
+    def run_pipeline(self, model_runner, live=False):
         # Fixture backstop dirs (may not exist): the run must never touch
         # the real ~/.claude or project repos from a test.
         base = Path(self.tmp.name)
-        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                      model_runner=model_runner,
-                      claude_dir=base / "claude", projects_dir=base / "repos")
+        with contextlib.nullcontext() if live else captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=model_runner,
+                          claude_dir=base / "claude", projects_dir=base / "repos")
 
     def test_trivial_session_skip_and_idempotent_second_run(self):
         write_transcript(self.proj / "sess-trivial.jsonl",
@@ -248,21 +250,18 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         self.assertIn(FIXTURE_TURNS[2][1], stub.calls[-1],
                       "what-pass prompt built from stale truncated extract")
 
-    def test_live_session_left_pending_not_extracted(self):
-        """Ticket #29, the guard: a transcript still being written is not
-        extracted or substrate-scanned; the session waits for the next run."""
+    def test_session_captured_within_the_window_stays_pending(self):
+        """Issue #79's guard, judged from the records: a session whose newest
+        raw record was captured in the last 5 minutes is not extracted, even
+        though its file is quiet; once the capture is older it is audited."""
         path = self.proj / "sess-hot.jsonl"
-        write_transcript(path, FIXTURE_TURNS)
-        now = time.time()
-        os.utime(path, (now, now))  # still being written
-        self.run_pipeline(StubRunner([]))  # zero actions: no model call happens
+        write_transcript(path, FIXTURE_TURNS)  # file mtime is old
+        self.run_pipeline(StubRunner([]), live=True)  # captured now; no model call
 
         self.assertEqual(self.session_statuses()["sess-hot"], "pending")
         self.assertFalse(list((self.work / "extracts").glob("sess-hot.*")))
-        self.assertIsNone(self.rows(
-            "SELECT skipped_records FROM sessions")[0]["skipped_records"])
 
-        _backdate(path)  # session went quiet: next run processes it normally
+        settle_captures(self.db)
         self.run_pipeline(StubRunner([ENTRY_A]))
         self.assertEqual(self.session_statuses()["sess-hot"], "done")
 
@@ -451,30 +450,47 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         finally:
             conn.close()
 
-    def test_pruned_unextracted_session_is_lost_and_never_retried(self):
-        """Ticket #78: no transcript and no cached extract — terminal, not
-        retryable. The queue would otherwise never drain."""
-        write_transcript(self.proj / "sess-vanish.jsonl",
-                          [("user", "task"), ("assistant", "done")])
-        os.utime(self.proj / "sess-vanish.jsonl")  # live: the run knows it, extracts nothing
-        self.run_pipeline(StubRunner([]))
-        (self.proj / "sess-vanish.jsonl").unlink()  # gone before extraction runs
+    def _v1_session(self, sid):
+        """A session row carried over from v1 with no raw records: its
+        transcript was pruned before v2 ever captured it."""
+        conn = analyze.init_db(self.db)
+        conn.execute("INSERT INTO sessions (id, project, transcript_path, date,"
+                     " status) VALUES (?, 'p', ?, '2026-08-01', 'pending')",
+                     (sid, str(self.proj / f"{sid}.jsonl")))
+        conn.commit()
+        conn.close()
 
+    def test_session_with_neither_records_nor_extract_is_lost_for_good(self):
+        """ADR-0015 as revised by issue #79: nothing captured and nothing
+        cached — terminal, never selected again."""
+        self._v1_session("sess-vanish")
         self.run_pipeline(StubRunner([]))  # no model call
         self.assertEqual(self.session_statuses()["sess-vanish"], "lost")
         self.assertNotIn("sess-vanish", self.audit_rows())
 
-        self.run_pipeline(StubRunner([]))  # never selected again
+        self.run_pipeline(StubRunner([]))
         self.assertEqual(self.session_statuses()["sess-vanish"], "lost")
 
-    def test_pruned_session_with_cached_extract_proceeds_to_model_pass(self):
-        write_transcript(self.proj / "sess-cached.jsonl",
-                          [("user", "task"), ("assistant", "done")])
-        os.utime(self.proj / "sess-cached.jsonl")  # live: the run knows it, extracts nothing
-        self.run_pipeline(StubRunner([]))
-        analyze.extract_session(self.work, "sess-cached",
-                                self.proj / "sess-cached.jsonl")
-        (self.proj / "sess-cached.jsonl").unlink()
+    def test_captured_session_with_its_transcript_pruned_is_audited_not_lost(self):
+        path = self.proj / "sess-pruned.jsonl"
+        write_transcript(path, FIXTURE_TURNS)
+        fire_capture(self.db, {"hook_event_name": "Stop", "transcript_path": str(path)})
+        path.unlink()  # retention takes the file before any run extracts it
+
+        settle_captures(self.db)
+        stub = StubRunner([ENTRY_A])
+        self.run_pipeline(stub)
+        self.assertEqual(self.session_statuses()["sess-pruned"], "done")
+        self.assertIn(FIXTURE_TURNS[2][1], stub.calls[0])
+
+    def test_session_without_records_but_with_a_cached_extract_is_audited(self):
+        src = Path(self.tmp.name) / "elsewhere" / "sess-cached.jsonl"
+        write_transcript(src, FIXTURE_TURNS)
+        (self.work / "extracts").mkdir(parents=True)
+        subprocess.run([sys.executable, str(analyze.REPO / "cli" / "extract.py"),
+                        str(src), str(self.work / "extracts" / "sess-cached")],
+                       check=True, capture_output=True)
+        self._v1_session("sess-cached")
 
         self.run_pipeline(StubRunner([ENTRY_A]))
         self.assertEqual(self.session_statuses()["sess-cached"], "done")
@@ -494,20 +510,72 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
                          {"sess-re": "done"})
         conn.close()
 
-    def test_unextractable_transcript_stays_partial(self):
-        """ExtractionFailed on a path that exists is retryable — only
-        absence is terminal (ticket #78)."""
-        conn = analyze.init_db(self.db)
-        bad = self.proj / "sess-bad.jsonl"
-        bad.mkdir(parents=True)  # exists, but extract.py cannot read it
-        _backdate(bad)
-        conn.execute("INSERT INTO sessions (id, project, transcript_path, date,"
-                     " status) VALUES ('sess-bad', 'p', ?, '2026-08-01', 'partial')",
-                     (str(bad),))
-        analyze.classify_and_extract(conn, self.work)
-        self.assertEqual(dict(conn.execute("SELECT id, status FROM sessions")),
-                         {"sess-bad": "partial"})
-        conn.close()
+    def test_unextractable_records_stay_partial(self):
+        """ExtractionFailed is retryable — only absence is terminal (ticket
+        #78). A line that is not UTF-8 fails extract.py from the records as
+        it did from the file."""
+        path = self.proj / "sess-bad.jsonl"
+        write_transcript(path, FIXTURE_TURNS)
+        with path.open("ab") as f:
+            f.write(b'{"type": "user", "message": {"content": "\xff\xfe"}}\n')
+        _backdate(path)
+        self.run_pipeline(StubRunner([]))
+        self.assertEqual(self.session_statuses()["sess-bad"], "partial")
+
+    def test_raw_built_extract_and_map_equal_the_file_built_ones(self):
+        """Issue #79: the extract is built from the parent's raw records in
+        offset order and equals v1's, built from the file, byte for byte —
+        multi-part, non-ASCII, command boilerplate, a file-tool marker, a
+        malformed line and a subagent all included."""
+        path = self.proj / "sess-eq.jsonl"
+        write_transcript(path, big_turns() + [
+            ("user", "<command-name>/x</command-name>"),
+            ("assistant", "naïve café — 日本語 ✓")])
+        with path.open("a") as f:
+            f.write("not json at all\n")
+            f.write(json.dumps(rec("assistant", "t1", "2026-08-01T10:00:00Z", [
+                {"type": "tool_use", "name": "Edit", "input": {"file_path": "a.py"}}]))
+                    + "\n")
+        _backdate(path)
+        write_transcript(self.proj / "sess-eq" / "subagents" / "agent-s1.jsonl",
+                         [("assistant", "subagent text")])
+        self.run_pipeline(StubRunner([LimitExhausted()]))  # greedy pass caches it
+
+        v1 = Path(self.tmp.name) / "v1"
+        v1.mkdir()
+        subprocess.run([sys.executable, str(analyze.REPO / "cli" / "extract.py"),
+                        str(path), str(v1 / "sess-eq")], check=True, capture_output=True)
+        want = {p.name: p.read_bytes() for p in v1.iterdir()}
+        got = {p.name: p.read_bytes() for p in (self.work / "extracts").glob("sess-eq.*")}
+        self.assertGreater(len(want), 2, "fixture is not multi-part")
+        self.assertEqual(got, want)
+
+        # the local real-data check agrees on the same store
+        sys.path.insert(0, str(analyze.REPO / "eval"))
+        self.addCleanup(sys.path.remove, str(analyze.REPO / "eval"))
+        import extract_equivalence
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(extract_equivalence.main(["--db", str(self.db)]), 0)
+        self.assertIn("compared 1 session(s): 1 equal", out.getvalue())
+
+    def test_reaudit_share_is_measured_on_captured_bytes(self):
+        """Issue #79, ADR-0039 §7: growth the hook captured counts toward
+        REAUDIT_SHARE even once the transcript is pruned, and `size` and
+        the watermark are the registry high-water, never the file size."""
+        path = self._resume("sess-cap", [
+            rec("assistant", f"a{i}", f"2026-08-01T11:{i:02d}:00Z",
+                [{"type": "text", "text": "grew " * 8000}]) for i in range(1, 4)])
+        with path.open("a") as f:
+            f.write('{"type": "user", "partial')  # a line still being written
+        fire_capture(self.db, {"hook_event_name": "Stop", "transcript_path": str(path)})
+        captured = path.stat().st_size - len('{"type": "user", "partial')
+        path.unlink()
+
+        settle_captures(self.db)
+        self.run_pipeline(StubRunner([ENTRY_B]))
+        self.assertEqual(self.audit_rows()["sess-cap"]["markdown"], ENTRY_B)
+        [row] = self.rows("SELECT size, audited_size FROM sessions")
+        self.assertEqual(row, {"size": captured, "audited_size": captured})
 
     def test_greedy_extract_caches_every_session_before_first_model_call(self):
         """Ticket #78's race: a session behind a limit pause used to sit
@@ -1009,9 +1077,10 @@ class IdentityFixture(DbHelpers):
 
     def run_pipeline(self, model_runner):
         base = Path(self.tmp.name)
-        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                      model_runner=model_runner,
-                      claude_dir=base / "claude", projects_dir=self.repos)
+        with captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=model_runner,
+                          claude_dir=base / "claude", projects_dir=self.repos)
 
     def open_session(self, folder_name, sid, date="2026-08-01T10:00:00Z"):
         """A session opened with cwd = repos/folder_name — the transcript
@@ -1751,10 +1820,11 @@ class DriftTest(DbHelpers, unittest.TestCase):
 
     def run_pipeline(self, notify=False):
         base = Path(self.tmp.name)
-        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                      model_runner=StubRunner([SKIP_MD] * 20),
-                      claude_dir=base / "claude", projects_dir=base / "repos",
-                      notify=notify)
+        with captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=StubRunner([SKIP_MD] * 20),
+                          claude_dir=base / "claude", projects_dir=base / "repos",
+                          notify=notify)
 
     def open_rows(self):
         return self.rows("SELECT * FROM breakage WHERE acknowledged_at IS NULL ORDER BY id")
@@ -1910,9 +1980,10 @@ class JobListTest(DbHelpers, unittest.TestCase):
                           [("user", "task a"), ("assistant", "done a")])
 
     def run_pipeline(self, model_runner):
-        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                      model_runner=model_runner,
-                      claude_dir=self.claude, projects_dir=self.repos)
+        with captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=model_runner,
+                          claude_dir=self.claude, projects_dir=self.repos)
 
     def patch(self, name, fn):
         orig = getattr(analyze, name)

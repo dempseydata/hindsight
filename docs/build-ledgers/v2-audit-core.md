@@ -11,10 +11,10 @@ Contracts: ADR-0039.
 | #84 | built, open for human check | 10206e1 | 1 | 261 tests, 31 s | `async` on Stop/SubagentStop needs a live session |
 | #85 | closed | 52ceaf5 | 0 | 266 tests, 48 s | |
 | #86 | closed | fdfc635 | 2 | 274 tests, 55 s | suite at 1.8× baseline |
+| #91 | built, open for human run | (this commit) | 0 | 277 tests, 54 s | real-data equivalence: `eval/extract_equivalence.py` |
 | #87 | unblocked, queued after #91 | wip: night-shift/v2-audit-core-wip-87 | 1 | 276 tests, 54 s | v1 rows replaced per captured agent (ADR-0039 §9) |
 
 ## Owed
-- #91: `size` should be the high-water offset always (ADR-0039 §7), not the file size — deferred from #86.
 - #87: the drift guard (ADR-0038 §3) must skip when no session is due, not only when the derivation job raises — deferred from #85.
 
 ## Decisions
@@ -37,6 +37,10 @@ Contracts: ADR-0039.
 - #86: derivation runs the records index first, then the v1 substrate scan, each regardless of the other; the sweep fails per file (OSError) and skips non-files; v1 scan reads with `errors="replace"` — ADR? no
 - #86: fresh schema no longer creates `audit.date` — ADR? no
 - #87: operator decided v1 rows are replaced only for agents the raw store holds — ADR? yes (ADR-0039 §9, done)
+- #91: the first v2 run holds every swept session one run (records captured by the run's own sweep count as just captured; #79 §3) — ADR? no
+- #91: the live guard reads all of a session's raw records, subagents included — ADR? no
+- #91: raw records reach the unchanged `extract.py` through `/dev/stdin` (macOS/Linux only) — ADR? no
+- #91: growth compares against the high-water; the substrate is wiped only when the file is on disk; sessions with no registry row are skipped — ADR? no
 
 ## Blocked
 
@@ -51,3 +55,5 @@ Contracts: ADR-0039.
 - #86: excluded sessions are still captured and indexed (the spec allows it).
 - #86: condition-5 rows send no notification.
 - #86: `docs/flows.md` and `docs/automation.md` still describe `redate_sessions` and `audit.date`.
+- #91: `sessions.size` is not lowered to the high-water when a v1 row's size exceeds it (kept deliberately: lowering would trigger spurious re-audits as capture catches up).
+- #91: `held_live` treats an unparseable `captured_at` as not live.

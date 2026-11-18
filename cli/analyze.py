@@ -48,9 +48,9 @@ Idempotent: a session already `done` is never reprocessed. Model outputs are
 cached on disk; an invalid/failed output is left uncached so the next run
 retries it. Subscription-limit exhaustion (the model runner raises
 LimitExhausted) pauses the run cleanly — sessions not yet reached stay
-`pending`/`partial` and the next run resumes them. A session whose transcript
-is gone before it was ever extracted is `lost` — terminal, never retried
-(ticket #78, ADR-0015).
+`pending`/`partial` and the next run resumes them. A session with no parent
+raw records and no cached extract is `lost` — terminal, never retried
+(ticket #78, ADR-0015, revised by issue #79).
 
 Every day bucket is the operator's local day off the stored UTC instant
 (ADR-0014); `HINDSIGHT_TZ=<IANA name>` pins that zone, unset is the host's
@@ -97,8 +97,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-from substrate import (FIELD_CONTRACT, _is_live, adr_count,  # noqa: E402
-                       fill_substrate, record_count, subagent_transcripts)
+from substrate import (FIELD_CONTRACT, LIVE_WINDOW_S, _is_live,  # noqa: E402
+                       adr_count, fill_substrate, record_count, subagent_transcripts)
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 from home import home, log_to  # noqa: E402
 from capture import capture, now as stamp, transcript_key, write_health  # noqa: E402
@@ -372,7 +372,7 @@ STATUSES = ("pending", "partial", "done", "empty", "lost")
 # not an oversight.
 SELECTABLE = ("pending", "partial")
 SELECTABLE_SQL = "(" + ", ".join(f"'{s}'" for s in SELECTABLE) + ")"
-LOST = "lost"  # what serve.py reads: never extracted, transcript gone (#78)
+LOST = "lost"  # what serve.py reads: no parent raw records, no cached extract (#79)
 # tool_events.consumer_type (ticket #42) — classify() emits exactly these
 CONSUMER_TYPES = ("skill", "mcp", "cli", "shell", "builtin")
 SKILL = "skill"  # the member the how-trail selects by name — never by index
@@ -825,12 +825,9 @@ def sync_sessions(conn):
         if any(sig in head[:3000] for sig in ANALYSIS_SIGS):
             excluded.append((sid,))
             continue
-        try:
-            size = Path(path).stat().st_size
-        except OSError:
-            size = hw  # the file is gone; the store holds this much of it
+        # size is the registry high-water, file bytes captured (ADR-0039 §7)
         rows.append((sid, project_name(Path(path).parent.name), path, version,
-                     size, fid, "hook" if fid is not None else None))
+                     hw, fid, "hook" if fid is not None else None))
     conn.executemany(
         "INSERT INTO sessions (id, project, transcript_path, cli_version,"
         " size, status, folder_identity, attribution_source)"
@@ -959,22 +956,30 @@ def invalidate_grown(conn, work_dir):
     session that grew (issue #13) — the same path backfills subagents of
     sessions synced before they were ingested. Only the substrate follows:
     the re-audit share is measured on the parent transcript alone, so a
-    subagent appearing or growing never rewrites the audit."""
-    rows = conn.execute("SELECT id, transcript_path, size, status, audited_size,"
-                        " skipped_records FROM sessions").fetchall()
-    for sid, path, size, status, audited, scanned in rows:
-        p = Path(path)
-        if not p.exists() or size is None or _is_live(path):
+    subagent appearing or growing never rewrites the audit.
+
+    v2 (issue #79, ADR-0039 §7): growth and the share are measured on the
+    parent's captured bytes, the registry high-water, which `size` now
+    holds. A transcript pruned after capture can still be re-audited from
+    its records; only the substrate wipe needs the file, which the v1 scan
+    refills from."""
+    rows = conn.execute("SELECT s.id, s.transcript_path, s.size, s.status,"
+                        " s.audited_size, s.skipped_records, t.high_water"
+                        " FROM sessions s JOIN transcripts t ON t.session_id = s.id"
+                        " AND t.agent_id IS NULL").fetchall()
+    for sid, path, size, status, audited, scanned, now in rows:
+        on_disk = Path(path).exists()
+        if size is None or (on_disk and _is_live(path)):
             continue
-        now = p.stat().st_size
-        if now <= size and not (scanned is not None
+        if now <= size and not (on_disk and scanned is not None
                                 and _subagents_grew(conn, sid, path)):
             continue
-        for table in SUBSTRATE_TABLES:
-            conn.execute(f"DELETE FROM {table} WHERE session_id=?", (sid,))
-        conn.execute("UPDATE sessions SET skipped_records=NULL, size=?"
-                     " WHERE id=?", (now, sid))
-        reaudit = (status == "done" and audited is not None
+        if on_disk:
+            for table in SUBSTRATE_TABLES:
+                conn.execute(f"DELETE FROM {table} WHERE session_id=?", (sid,))
+            conn.execute("UPDATE sessions SET skipped_records=NULL WHERE id=?", (sid,))
+        conn.execute("UPDATE sessions SET size=? WHERE id=?", (now, sid))
+        reaudit = (status == "done" and audited is not None and now > audited
                    and (now - audited) / now >= REAUDIT_SHARE)
         # the extract reads the parent alone: subagent-only growth leaves it
         if (status != "done" and now > size) or reaudit:
@@ -1241,50 +1246,76 @@ def part_files(extracts_dir, session_id):
                   key=lambda p: int(re.search(r"part(\d+)", p.name)[1]))
 
 
-def extract_session(work_dir, session_id, transcript_path):
-    """Indexed extract + sidecar map (ADR-0002), via the frozen
-    cli/extract.py. Raises ExtractionFailed (retryable) if the subprocess
-    exits non-zero."""
+def parent_lines(conn, session_id):
+    """The parent transcript's captured bytes: its raw records (agent NULL)
+    in offset order, which rebuild the file prefix (ADR-0039 §3)."""
+    return b"".join(zlib.decompress(line) for (line,) in conn.execute(
+        "SELECT line FROM raw_records WHERE session_id=? AND agent_id IS NULL"
+        " ORDER BY byte_offset", (session_id,)))
+
+
+def run_extract(data, prefix):
+    """The frozen cli/extract.py over `data`, fed as its file: it reads
+    /dev/stdin exactly as it reads a transcript, so the extract and map are
+    the file-built ones byte for byte (issue #79). Raises ExtractionFailed
+    (retryable) if it exits non-zero."""
+    r = subprocess.run([sys.executable, str(REPO / "cli" / "extract.py"),
+                        "/dev/stdin", str(prefix)], input=data, capture_output=True)
+    if r.returncode != 0:
+        raise ExtractionFailed(r.stderr.decode(errors="replace").strip())
+
+
+def extract_session(conn, work_dir, session_id):
+    """Indexed extract + sidecar map (ADR-0002) from the parent's raw
+    records, cached in the work directory."""
     extracts_dir = Path(work_dir) / "extracts"
     prefix = extracts_dir / session_id
     if not Path(f"{prefix}.map.json").exists():
         extracts_dir.mkdir(parents=True, exist_ok=True)
-        r = subprocess.run([sys.executable, str(REPO / "cli" / "extract.py"),
-                            str(transcript_path), str(prefix)],
-                            capture_output=True, text=True)
-        if r.returncode != 0:
-            raise ExtractionFailed(r.stderr.strip())
+        run_extract(parent_lines(conn, session_id), prefix)
     return part_files(extracts_dir, session_id)
 
 
-def is_lost(work_dir, session_id, transcript_path):
-    """Ticket #78: nothing to read and nothing cached — no retry can ever
-    succeed. An explicit existence test, not inferred from ExtractionFailed,
-    which also covers unreadable/malformed files that remain retryable."""
-    return (not Path(transcript_path).exists()
+def is_lost(conn, work_dir, session_id):
+    """ADR-0015 as revised by issue #79: no parent raw records and no cached
+    extract — no retry can ever succeed. An explicit existence test, never
+    inferred from ExtractionFailed, which stays retryable. A pruned
+    transcript alone no longer loses a captured session."""
+    return (not conn.execute("SELECT 1 FROM raw_records WHERE session_id=?"
+                             " AND agent_id IS NULL LIMIT 1", (session_id,)).fetchone()
             and not (Path(work_dir) / "extracts" / f"{session_id}.map.json").exists())
+
+
+def held_live(conn, session_id):
+    """The what-pass live guard (issue #79): the session's newest raw record,
+    parent or subagent, was captured within the window, so its extract would
+    be mid-flight. Derivation has no guard."""
+    (at,) = conn.execute("SELECT MAX(captured_at) FROM raw_records"
+                         " WHERE session_id=?", (session_id,)).fetchone()
+    dt = parse_ts(at) if at else None
+    return dt is not None and time.time() - dt.timestamp() < LIVE_WINDOW_S
 
 
 def classify_and_extract(conn, work_dir):
     """The greedy pass ahead of the model loop (ticket #78): every selectable,
     quiet session is either marked `lost` or has its extract cached before a
-    single model call is made — so a transcript pruned after this point loses
-    nothing, and the backlog drains to `lost` on first contact with no
+    single model call is made — so compaction or pruning after this point
+    loses nothing, and the backlog drains to `lost` on first contact with no
     migration. ExtractionFailed is swallowed: the session stays retryable."""
     rows = conn.execute(
-        "SELECT s.id, s.transcript_path, a.session_id IS NOT NULL"
+        "SELECT s.id, a.session_id IS NOT NULL"
         " FROM sessions s LEFT JOIN audit a ON a.session_id = s.id"
         f" WHERE s.status IN {SELECTABLE_SQL}").fetchall()
-    for sid, path, audited in rows:
-        if _is_live(path):
+    for sid, audited in rows:
+        if held_live(conn, sid):
             continue
-        if is_lost(work_dir, sid, path):
-            # A re-audit (ADR-0013) that lost its transcript before the
+        if is_lost(conn, work_dir, sid):
+            # A re-audit (ADR-0013) that lost its records before the
             # rewrite keeps the standing entry: prefix-semantic, not lost.
             _mark(conn, sid, "done" if audited else "lost")
             continue
         try:
-            extract_session(work_dir, sid, path)
+            extract_session(conn, work_dir, sid)
         except ExtractionFailed:
             pass
 
@@ -1355,7 +1386,7 @@ def process_session(conn, work_dir, session, model_runner):
     # stale cached output under the new label.
     what_dir = Path(work_dir) / PROMPT_VERSION
     try:
-        parts = extract_session(work_dir, sid, session["transcript_path"])
+        parts = extract_session(conn, work_dir, sid)
     except ExtractionFailed:
         _mark(conn, sid, "partial")
         return
@@ -1782,7 +1813,7 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
         # large run's wall-clock becomes the bottleneck — kept serial here
         # for a clean, testable limit-exhaustion pause boundary.
         for sid, project, path in todo:
-            if _is_live(path):
+            if held_live(conn, sid):
                 continue  # live session: stays pending for the next run
             session = {"id": sid, "project": project, "transcript_path": path}
             try:

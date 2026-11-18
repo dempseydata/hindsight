@@ -16,7 +16,8 @@ from pathlib import Path
 import analyze
 from analyze import run_analysis
 from test_helpers import (DbHelpers, ENTRY_A, ENTRY_B, REFUSAL_MD,
-                          StubRunner, USAGE, _backdate, rec, write_records)
+                          StubRunner, USAGE, _backdate, captured_earlier, rec,
+                          write_records)
 
 
 class SubstrateTest(DbHelpers, unittest.TestCase):
@@ -43,9 +44,10 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
 
     def run_pipeline(self, model_runner):
         base = Path(self.tmp.name)
-        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                      model_runner=model_runner,
-                      claude_dir=base / "claude", projects_dir=base / "repos")
+        with captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=model_runner,
+                          claude_dir=base / "claude", projects_dir=base / "repos")
 
     def test_sync_fills_tool_events_paired_by_id_and_usage(self):
         write_records(self.root / "proj-a" / "sess-tools.jsonl", [
@@ -892,6 +894,7 @@ class FieldHistogramTest(DbHelpers, unittest.TestCase):
                 f.write(json.dumps(r) + "\n")
         _backdate(self.root / "p" / "s1.jsonl")
         conn = analyze.init_db(self.db)
+        analyze.sweep(conn, self.root)  # growth is measured on captured bytes
         analyze.invalidate_grown(conn, self.tmp.name)
         analyze.fill_substrate(conn)
         conn.close()

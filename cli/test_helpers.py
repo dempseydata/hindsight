@@ -12,6 +12,8 @@ import sqlite3
 import subprocess
 import sys
 import time
+import unittest.mock
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from substrate import LIVE_WINDOW_S
@@ -55,6 +57,28 @@ def _backdate(path):
     live-session guard (ticket #29). Live-guard tests re-touch to now."""
     t = time.time() - 2 * LIVE_WINDOW_S
     os.utime(path, (t, t))
+
+
+def _aged_stamp():
+    t = datetime.now(timezone.utc) - timedelta(seconds=2 * LIVE_WINDOW_S)
+    return t.isoformat().replace("+00:00", "Z")
+
+
+def captured_earlier():
+    """Fixture transcripts are finished sessions the hook captured as they
+    ended: the run's own sweep stamps its captures past the what-pass live
+    guard (issue #79). Live-guard tests run without it."""
+    return unittest.mock.patch("capture.now", _aged_stamp)
+
+
+def settle_captures(db):
+    """Time passes: every captured record is older than the live guard."""
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("UPDATE raw_records SET captured_at=?", (_aged_stamp(),))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def write_records(path, records):

@@ -9,6 +9,12 @@ import os
 import sys
 from pathlib import Path
 
+INGEST, NIGHTLY = "com.hindsight.ingest", "com.hindsight.nightly"  # launchd labels
+
+
+def domain():
+    return f"gui/{os.getuid()}"
+
 
 def home():
     return Path(os.environ.get("HINDSIGHT_HOME") or Path.home() / ".hindsight")

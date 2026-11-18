@@ -6,11 +6,12 @@ test_import_backfill. The TZ pin runs at import time: day buckets are the
 operator's local day (ADR-0014), so fixtures need a pinned zone or they
 assert whatever the runner's clock says.
 """
+import contextlib
+import io
 import json
 import os
 import sqlite3
-import subprocess
-import sys
+import tempfile
 import time
 import unittest.mock
 from datetime import datetime, timedelta, timezone
@@ -114,14 +115,28 @@ def big_turns(n=140, size=2000):
     return turns
 
 
+def run_hook(main, stdin, env=None):
+    """A hook entrypoint's main(argv) in-process, as Claude Code fires it:
+    `stdin` (str) on stdin, `env` over os.environ. Returns (stdout, stderr).
+    The subprocess spawn is Claude Code's, not ours (#93: suite cost)."""
+    with tempfile.TemporaryFile() as f, \
+            unittest.mock.patch.dict(os.environ, env or {}), \
+            unittest.mock.patch("sys.stdin", f), \
+            contextlib.redirect_stdout(io.StringIO()) as out, \
+            contextlib.redirect_stderr(io.StringIO()) as err:
+        f.write(stdin.encode())
+        f.seek(0)
+        main([])
+    return out.getvalue(), err.getvalue()
+
+
 def fire_capture(db, payload):
-    """Fire the capture hook (ticket #84) as Claude Code does — a subprocess
-    with the payload on stdin — against the store at `db`, which must be
-    named hindsight.db: its directory stands in for Hindsight home."""
+    """Fire the capture hook (ticket #84) through its main(argv) with the
+    payload on stdin, against the store at `db`, which must be named
+    hindsight.db: its directory stands in for Hindsight home."""
+    import capture
     assert Path(db).name == "hindsight.db"
-    subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "capture.py")],
-                   input=json.dumps(payload).encode(), check=True, timeout=30,
-                   env={**os.environ, "HINDSIGHT_HOME": str(Path(db).parent)})
+    run_hook(capture.main, json.dumps(payload), {"HINDSIGHT_HOME": str(Path(db).parent)})
 
 
 def session_start(db, transcript, cwd):

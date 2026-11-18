@@ -1,7 +1,7 @@
 """Tests for the capture hook (ticket #84, ADR-0031, ADR-0033 §1-2).
 
-Seam: run capture.py as a subprocess with hook JSON on stdin and a temp
-Hindsight home — exactly how Claude Code fires it. Assert the store: raw
+Seam: the hook's main(argv) with hook JSON on stdin and a temp Hindsight
+home; one test spawns capture.py as Claude Code does, for the script entry. Assert the store: raw
 records, the breakage table, the capture health row. Detaching (the
 hooks.json `async` flag) is Claude Code's, not tested here.
 """
@@ -15,6 +15,9 @@ import time
 import unittest
 import zlib
 from pathlib import Path
+
+import capture
+from test_helpers import run_hook
 
 HERE = Path(__file__).resolve().parent
 CAPTURE = HERE / "capture.py"
@@ -36,14 +39,11 @@ class CaptureTest(unittest.TestCase):
         self.parent = self.proj / "sess-1.jsonl"
 
     def fire(self, payload):
+        """main(argv) in-process: it must not raise and must print nothing.
+        The script entry itself is driven once, by the stdin test below."""
         stdin = payload if isinstance(payload, str) else json.dumps(payload)
-        proc = subprocess.run(
-            [sys.executable, str(CAPTURE)], input=stdin.encode(),
-            capture_output=True, timeout=30,
-            env={**os.environ, "HINDSIGHT_HOME": str(self.home)})
-        self.assertEqual(proc.returncode, 0)
-        self.assertEqual(proc.stdout + proc.stderr, b"")
-        return proc
+        out, err = run_hook(capture.main, stdin, {"HINDSIGHT_HOME": str(self.home)})
+        self.assertEqual(out + err, "")
 
     def stop(self, path=None):
         return self.fire({"session_id": "sess-1", "hook_event_name": "Stop",

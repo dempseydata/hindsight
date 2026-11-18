@@ -16,7 +16,8 @@ Contracts: ADR-0039.
 | #88 | closed | 8112338 | 1 | 288 tests, 56 s | v12 drops `scan_runs` |
 | #89 | closed | dd5fb93 | 1 | 294 tests, 56 s | |
 | #90 | closed | 16701b1 | 1 | 298 tests, 55 s | where-view wording: optional human look |
-| #92 | closed | (this commit) | 2 | 305 tests, 61 s | suite at 2× baseline — next implementer moves tests to cheaper seams |
+| #92 | closed | de496fa | 2 | 305 tests, 61 s | suite at 2× baseline — next implementer moves tests to cheaper seams |
+| #93 | built, open for human run | (this commit) | 1 | 320 tests, 39 s | tests moved to cheaper seams (61 → 39 s); live install, launchd, ~100 ms budget need a human |
 
 ## Owed
 
@@ -65,6 +66,10 @@ Contracts: ADR-0039.
 - #92: held: every pending/partial session ("trivial excepted" has no mechanical state), and any session with an open condition-5 or condition-6 breakage — ADR? no
 - #92: a compacted session is never re-audited (its audit entry is the lasting output); a resumed tail derives as raw beside compacted rows — ADR? yes (ADR-0034 §5 covers re-capture only)
 - #92: compaction clears the session's raw-rowid deriver_state in the same transaction (raw_records rowids are reused after deletion) — ADR? yes (a standing invariant on ADR-0039 §2's rowid table)
+- #93: staleness compares another session's newest OTel Stop with capture's newest `captured_at`, with a 120 s grace; compacted sessions skipped; "how long" counts from the first missed Stop — ADR? no
+- #93: health lines prefixed "hindsight: ", joined by "; "; an unexpected exception prints "health check failed: …"; exit is always 0 — ADR? no
+- #93: SessionStart health entry is synchronous with timeout 5; launchctl calls time out at 1 s; launchd labels and `domain()` moved to `cli/home.py` — ADR? no
+- #93: no analysis-staleness rule (no source names a threshold; ADR-0033 rejects a fixed age), so a migration failure (no health row, #85) is not surfaced at SessionStart — ADR? yes (operator decision: is a stale analysis row worth a line?)
 
 ## Blocked
 
@@ -98,3 +103,6 @@ Contracts: ADR-0039.
 - #92: the ops and health readers never show `held`.
 - #92: an acknowledged condition-6 session stays held while the transcript still differs (each sweep files a new open row).
 - #92: a resumed tail is derived alone; a tool call whose result lands in the tail is split across the cut (not probed).
+- #93: a hung `launchctl print` reports "not installed"; the timed-out child is left running.
+- #93: a plain file at `current` is overwritten without a message.
+- #93: a healthy run takes ~0.2 s including Python startup, against the ~100 ms budget.

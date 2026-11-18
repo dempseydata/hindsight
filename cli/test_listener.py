@@ -20,6 +20,7 @@ import unittest
 from pathlib import Path
 
 import listener
+from analyze import init_db
 
 REPO = Path(__file__).resolve().parent.parent
 REAL_CAPTURES = REPO / "local-data" / "otel-capture"
@@ -317,6 +318,48 @@ class ListenerTest(unittest.TestCase):
         db.close()
         self.assertEqual(n, 1)
         self.assertEqual(mode, "wal")
+
+
+class HealthRowTest(unittest.TestCase):
+    """#93: the listener writes its health row on ingest success and on error,
+    into a store the analysis run has migrated."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = Path(tmp.name) / "hindsight.db"
+        init_db(self.db).close()
+        server = listener.make_server(port=0, db_path=self.db)
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                         daemon=True).start()  # a short poll: shutdown waits one
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.port = server.server_address[1]
+
+    post = ListenerTest.post
+
+    def row(self):
+        db = sqlite3.connect(self.db)
+        db.row_factory = sqlite3.Row
+        try:
+            return dict(db.execute("SELECT * FROM health WHERE source='listener'").fetchone())
+        finally:
+            db.close()
+
+    def test_success_then_error_then_success(self):
+        self.post("/v1/logs", logs_payload(log_record()))
+        h = self.row()
+        self.assertTrue(h["last_success"].endswith("Z"))
+        self.assertIsNone(h["last_error"])
+
+        self.post("/v1/logs", b"{not json", raw=True)
+        h = self.row()
+        self.assertTrue(h["last_error"].endswith("Z"))
+        self.assertIn("/v1/logs", h["error_text"])
+        self.assertEqual(h["failing_since"], h["last_error"])
+
+        self.post("/v1/metrics", METRICS_PAYLOAD)
+        self.assertIsNone(self.row()["failing_since"])
 
 
 if __name__ == "__main__":

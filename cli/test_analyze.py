@@ -2000,16 +2000,18 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.corpus("new", "2.1.2", strip=("usage",))
         self.run_pipeline()
         bid = self.open_rows()[0]["id"]
-        r = subprocess.run([sys.executable, str(analyze.REPO / "cli" / "analyze.py"),
-                            "acknowledge-breakage", str(bid), "--db", str(self.db)],
-                           capture_output=True, text=True)
-        self.assertEqual(r.returncode, 0, r.stderr)
+        # the CLI's main(argv) in-process; exit codes surface as SystemExit
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            analyze.main(["acknowledge-breakage", str(bid), "--db", str(self.db)])
+        self.assertEqual(err.getvalue(), "")
         self.assertEqual(self.open_rows(), [])
-        r = subprocess.run([sys.executable, str(analyze.REPO / "cli" / "analyze.py"),
-                            "acknowledge-breakage", "99", "--db", str(self.db)],
-                           capture_output=True, text=True)
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("no open breakage row 99", r.stderr)
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as err, \
+                self.assertRaises(SystemExit) as exit_:
+            analyze.main(["acknowledge-breakage", "99", "--db", str(self.db)])
+        self.assertEqual(exit_.exception.code, 1)
+        self.assertIn("no open breakage row 99", err.getvalue())
 
 
 class CrossCheckTest(DbHelpers, unittest.TestCase):

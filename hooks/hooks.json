@@ -1,5 +1,5 @@
 {
-  "description": "The capture hook (ADR-0033): raw capture on Stop and SubagentStop, folder identity on SessionStart. Async, so a session never waits on it.",
+  "description": "The capture hook (ADR-0033): raw capture on Stop and SubagentStop, folder identity on SessionStart. Async, so a session never waits on it. The health check (ADR-0036 §6): synchronous on SessionStart, silent when healthy.",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,15 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/cli/capture.py\"",
             "async": true
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/cli/health.py\"",
+            "timeout": 5
           }
         ]
       }

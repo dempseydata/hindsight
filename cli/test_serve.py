@@ -303,7 +303,7 @@ class QuietHowTest(unittest.TestCase):
             (d / "my-process.md").write_text(DECL)
             self.server = serve.make_server(0, Path(tmp) / "hindsight.db", tmp)
             self.port = self.server.server_address[1]
-            threading.Thread(target=self.server.serve_forever, daemon=True).start()
+            threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
             try:
                 _, body = ServerTest.get(self, "/how?p=quiet")
             finally:
@@ -389,7 +389,7 @@ class ServerTest(unittest.TestCase):
         fixture_projects(cls.tmp.name)
         cls.server = serve.make_server(0, cls.db, cls.tmp.name)
         cls.port = cls.server.server_address[1]
-        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        threading.Thread(target=cls.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
 
     @classmethod
     def tearDownClass(cls):
@@ -905,7 +905,7 @@ class ServerTest(unittest.TestCase):
             conn.close()
             server = serve.make_server(0, db, tmp)
             port = server.server_address[1]
-            threading.Thread(target=server.serve_forever, daemon=True).start()
+            threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
             try:
                 c = http.client.HTTPConnection("127.0.0.1", port)
                 c.request("GET", "/what")
@@ -1437,7 +1437,7 @@ class GuardsTest(unittest.TestCase):
             analyze.init_db(db).close()
             server = serve.make_server(0, db, tmp)
             port = server.server_address[1]
-            threading.Thread(target=server.serve_forever, daemon=True).start()
+            threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
             try:
                 for view in ("what", "where", "how"):
                     c = http.client.HTTPConnection("127.0.0.1", port)

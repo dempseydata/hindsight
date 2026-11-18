@@ -25,16 +25,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from home import home
+from home import INGEST, NIGHTLY, domain, home
 
 ROOT = Path(__file__).resolve().parent.parent   # the plugin root
-INGEST, NIGHTLY = "com.hindsight.ingest", "com.hindsight.nightly"
 NIGHTLY_HOUR = 3
 SERVE_PORT = 8321
-
-
-def domain():
-    return f"gui/{os.getuid()}"
 
 
 def plist_path(label):

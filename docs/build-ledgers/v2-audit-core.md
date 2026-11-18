@@ -9,8 +9,10 @@ Contracts: ADR-0039.
 | Ticket | Status | Commit | Rounds | Suite | Notes |
 | --- | --- | --- | --- | --- | --- |
 | #84 | built, open for human check | 10206e1 | 1 | 261 tests, 31 s | `async` on Stop/SubagentStop needs a live session |
+| #85 | closed | (this commit) | 0 | 266 tests, 48 s | |
 
 ## Owed
+- #87: the drift guard (ADR-0038 §3) must skip when no session is due, not only when the derivation job raises — deferred from #85.
 
 ## Decisions
 - #84: raw store columns are `session_id`, `agent_id`, `byte_offset`, `high_water`, `last_hash`, `last_size`; each new table gets a unique index on `ifnull(agent_id,'')` — ADR? yes (permanent once v10 ships; fold into ADR-0039 §8)
@@ -20,6 +22,10 @@ Contracts: ADR-0039.
 - #84: `otel_histogram` table created in v10 (ADR-0039 §1) — ADR? no
 - #84: the capture hook calls `init_db`, so it runs the migration itself — ADR? no
 - #84: a payload naming no transcript, or a path not ending `.jsonl`, writes nothing; a missing cwd records no identity; events other than SessionStart/Stop/SubagentStop exit before opening the store — ADR? no
+- #85: the lock file is `analysis.lock` beside the db (Hindsight home unless `--db` moves it) — ADR? no
+- #85: a migration failure re-raises (exit 1, traceback) and writes no health row; staleness surfaces it — ADR? no
+- #85: v1 steps mapped to job slots: sync+redate = sweep; invalidate_grown+fill_substrate = derivation; extract+model loop = what-pass — ADR? no
+- #85: backstop and sunk-cost scan are two named jobs; error text `<job>: <ExcType>: <msg>` joined by `; ` — ADR? no
 
 ## Blocked
 
@@ -29,3 +35,5 @@ Contracts: ADR-0039.
 - #84: `_migrate_v10` commits `user_version=10` before `VACUUM`; if that VACUUM fails, `auto_vacuum` is never retried.
 - #84: a refused rewrite still records capture health as a success.
 - #84: `docs/` (flows, architecture, cron, permissions, variables) still describes `hook.py` — re-run `/document-app` after the shift.
+- #85: the narrative still runs when the what-pass raises.
+- #85: `error_text` is kept after a success (only `failing_since` clears).

@@ -79,6 +79,7 @@ run on wake if the Mac was asleep at 03:00, and are skipped if powered off.
 `/hindsight:ops install` writes it (hindsight.py); it runs with `--log`.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -97,6 +98,7 @@ from substrate import (FIELD_CONTRACT, _is_live, adr_count,  # noqa: E402
                        fill_substrate, record_count, subagent_transcripts)
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 from home import home, log_to  # noqa: E402
+from capture import write_health  # noqa: E402
 
 DEFAULT_TRANSCRIPTS = Path.home() / ".claude" / "projects"
 DEFAULT_DB = home() / "hindsight.db"
@@ -1613,30 +1615,59 @@ def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
                   work_dir=DEFAULT_WORK_DIR, model_runner=None,
                   claude_dir=DEFAULT_CLAUDE_DIR, projects_dir=DEFAULT_PROJECTS_DIR,
                   notify=False):
-    """`notify`: pop a macOS notification on a thin-rows breakage (issue
+    """One ordered job list, each job failing alone, single-flight (ADR-0038).
+
+    `notify`: pop a macOS notification on a thin-rows breakage (issue
     #15) — on from the command line, off by default so no test pops one."""
     model_runner = model_runner or default_model_runner
-    conn = init_db(db_path)
+    db_path = Path(db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    # The lock sits beside the db, which is Hindsight home unless --db moves
+    # it. Held by this process's open file, so a crash never leaves it held.
+    lock = open(db_path.parent / "analysis.lock", "w")
     try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("analysis run already in progress; exiting", file=sys.stderr)
+            return
+        _run_jobs(root, db_path, work_dir, model_runner, claude_dir,
+                  projects_dir, notify)
+    finally:
+        lock.close()
+
+
+def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
+              notify):
+    conn = init_db(db_path)  # migration: a failure here runs nothing else
+    failed = {}
+
+    def job(name, fn):
+        try:
+            return fn()
+        except Exception as e:
+            conn.rollback()  # never let a later job's commit keep half of this one
+            failed[name] = f"{type(e).__name__}: {e}"
+            print(f"{name} failed: {e!r}", file=sys.stderr)
+
+    def sweep():
         sync_sessions(conn, root)
         redate_sessions(conn)
         conn.commit()
+
+    def bookkeeping():
         # Identity fill, presence, then canonicalisation, ahead of everything
         # that reads sessions.project — the model loop and narrative writer
         # must see a rename already applied (ADR-0018).
         fill_hook_identity(conn)
         observe_presence(conn, projects_dir)
         canonicalize_projects(conn)
+
+    def derivation():
         invalidate_grown(conn, work_dir)
-        records, skipped = fill_substrate(conn)
-        # The drift guard reads what the scan just wrote; ingest never
-        # halts on it — not on a trip, and not on a bug in the guard itself
-        # (the #77 rule: never trade mechanical fact for a nicety).
-        try:
-            check_drift(conn, datetime.now(timezone.utc).isoformat(), records,
-                        skipped, notify)
-        except Exception as e:
-            print(f"drift guard failed: {e!r}", file=sys.stderr)
+        return fill_substrate(conn)
+
+    def what_pass():
         classify_and_extract(conn, work_dir)
         todo = conn.execute(
             "SELECT id, project, transcript_path, date FROM sessions"
@@ -1651,27 +1682,31 @@ def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
             try:
                 process_session(conn, work_dir, session, model_runner)
             except LimitExhausted:
-                paused = True
-                break  # designed pause — remaining sessions stay pending/partial
-        else:
-            paused = False
-        if not paused:  # the narrative pass would only hit the same limit
-            try:
-                refresh_narratives(conn, projects_dir, model_runner)
-            except LimitExhausted:
-                pass  # ledgers unchanged, so the next run retries
-            except Exception as e:
-                # Ticket #77: the narrative is a nicety with a designed
-                # fallback (the mechanical status, ADR-0012); the backstop
-                # and sunk-cost scans below are mechanical fact. Never trade
-                # the second for the first — nothing is stored, so the next
-                # run retries, exactly as a gate rejection does.
-                print(f"narrative pass failed: {e!r}", file=sys.stderr)
-        # Backstop after the session loop; mechanical only, so a limit
-        # pause never skips it.
-        capture_backstop(conn, claude_dir, projects_dir,
-                         datetime.now(timezone.utc).isoformat())
-        scan_sunk_cost(conn, claude_dir, projects_dir)
+                return True  # designed pause — remaining sessions stay pending/partial
+        return False
+
+    def narrative():
+        try:
+            refresh_narratives(conn, projects_dir, model_runner)
+        except LimitExhausted:
+            pass  # ledgers unchanged, so the next run retries
+
+    try:
+        job("sweep", sweep)
+        job("project bookkeeping", bookkeeping)
+        scanned = job("derivation", derivation)
+        if "derivation" not in failed:  # a half-derived store trips the guard falsely
+            job("drift guard", lambda: check_drift(
+                conn, datetime.now(timezone.utc).isoformat(), *scanned, notify))
+        paused = job("what-pass", what_pass)
+        if not paused:  # the narrative would only hit the same limit
+            job("how narrative", narrative)
+        job("backstop", lambda: capture_backstop(
+            conn, claude_dir, projects_dir, datetime.now(timezone.utc).isoformat()))
+        job("sunk-cost scan", lambda: scan_sunk_cost(conn, claude_dir, projects_dir))
+        # compaction: no job yet (#92)
+        write_health(conn, "; ".join(f"{n}: {m}" for n, m in failed.items()) or None,
+                     source="analysis")
     finally:
         conn.close()
 

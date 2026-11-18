@@ -25,6 +25,7 @@ from pathlib import Path
 
 import analyze
 from analyze import LimitExhausted, run_analysis
+from sunk_cost import scan_sunk_cost as sunk_cost_scan
 from test_helpers import (DbHelpers, ENTRY_A, ENTRY_B, FIXTURE_TURNS,
                           MERGED_ENTRY, REFUSAL_MD, SKIP_MD, StubRunner,
                           USAGE, _backdate, big_turns, fire_capture, rec,
@@ -709,10 +710,12 @@ class V10MigrationTest(DbHelpers, unittest.TestCase):
             self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
             self.assertEqual(conn.execute("PRAGMA auto_vacuum").fetchone()[0], 2)
             for table in ("raw_records", "transcripts", "records_index",
-                          "deriver_state", "health", "otel_histogram"):
+                          "deriver_state", "otel_histogram"):
                 with self.subTest(table=table):
                     self.assertEqual(
                         conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT source FROM health").fetchall(),
+                             [("analysis",)], "the run writes its own row, nothing else")
         finally:
             conn.close()
 
@@ -1675,6 +1678,113 @@ class SectionDrift(unittest.TestCase):
     def test_active_what_prompt_names_every_section(self):
         for name in analyze.SECTIONS:
             self.assertIn(f"**{name}:**", analyze.WHAT_PROMPT)
+
+
+class JobListTest(DbHelpers, unittest.TestCase):
+    """The analysis run as an ordered job list (ADR-0038, ticket #85): each
+    job fails alone, one `analysis` health row, single-flight."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.db = base / "hindsight.db"
+        self.work = base / "analysis"
+        self.claude = base / "claude"
+        self.claude.mkdir()
+        (self.claude / "CLAUDE.md").write_text("# rules")
+        self.repos = base / "repos"
+        self.repos.mkdir()
+        write_transcript(self.root / "test-project" / "sess-a.jsonl",
+                          [("user", "task a"), ("assistant", "done a")])
+
+    def run_pipeline(self, model_runner):
+        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                      model_runner=model_runner,
+                      claude_dir=self.claude, projects_dir=self.repos)
+
+    def patch(self, name, fn):
+        orig = getattr(analyze, name)
+        setattr(analyze, name, fn)
+        self.addCleanup(setattr, analyze, name, orig)
+
+    def health(self):
+        return self.rows("SELECT * FROM health WHERE source='analysis'")
+
+    def test_failing_job_runs_the_rest_and_errors_the_row_naming_it(self):
+        self.patch("capture_backstop",
+                   lambda *a: (_ for _ in ()).throw(TypeError("bad shape")))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.run_pipeline(StubRunner([ENTRY_A]))
+        self.assertEqual(self.session_statuses()["sess-a"], "done")
+        self.assertTrue(self.rows("SELECT * FROM sunk_cost"),
+                        "the sunk-cost scan never ran after the backstop failed")
+        [row] = self.health()
+        self.assertIsNotNone(row["last_error"])
+        self.assertIsNone(row["last_success"])
+        self.assertEqual(row["failing_since"], row["last_error"])
+        self.assertTrue(row["last_error"].endswith("Z"))
+        self.assertIn("backstop", row["error_text"])
+        self.assertIn("bad shape", row["error_text"])
+        self.assertNotIn("sunk-cost", row["error_text"])
+
+    def test_migration_failure_runs_nothing_else(self):
+        self.db.write_bytes(b"not a database" * 100)
+        stub = StubRunner([ENTRY_A])
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.run_pipeline(stub)
+        self.assertEqual(stub.calls, [])
+        self.assertFalse(self.work.exists(), "a job ran after the migration failed")
+
+    def test_limit_pause_skips_the_narrative_and_leaves_the_row_ok(self):
+        narratives = []
+        self.patch("refresh_narratives", lambda *a: narratives.append(a))
+        self.run_pipeline(StubRunner([LimitExhausted("usage limit reached")]))
+        self.assertEqual(narratives, [])
+        [row] = self.health()
+        self.assertIsNotNone(row["last_success"])
+        self.assertTrue(row["last_success"].endswith("Z"))
+        self.assertIsNone(row["last_error"])
+        self.assertIsNone(row["failing_since"])
+
+    def test_success_after_an_error_clears_failing_since(self):
+        self.patch("scan_sunk_cost",
+                   lambda *a: (_ for _ in ()).throw(OSError("gone")))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.run_pipeline(StubRunner([ENTRY_A]))
+        analyze.scan_sunk_cost = sunk_cost_scan
+        self.run_pipeline(StubRunner([]))
+        [row] = self.health()
+        self.assertIsNotNone(row["last_success"])
+        self.assertIsNone(row["failing_since"])
+
+    def test_second_run_while_one_holds_the_lock_exits_at_once(self):
+        import threading
+        started, release = threading.Event(), threading.Event()
+
+        def blocking_runner(prompt):
+            started.set()
+            release.wait(30)
+            return ENTRY_A
+
+        first = threading.Thread(target=self.run_pipeline, args=(blocking_runner,))
+        first.start()
+        self.addCleanup(first.join)
+        self.addCleanup(release.set)
+        self.assertTrue(started.wait(30), "the first run never reached the model")
+        second = StubRunner([])
+        err = io.StringIO()
+        t0 = time.monotonic()
+        with contextlib.redirect_stderr(err):
+            self.run_pipeline(second)  # returns: exit 0 from the CLI
+        self.assertLess(time.monotonic() - t0, 5)
+        self.assertEqual(second.calls, [])
+        self.assertEqual(len(err.getvalue().strip().splitlines()), 1)
+        self.assertEqual(self.health(), [], "the second run wrote a health row")
+        release.set()
+        first.join()
+        self.assertEqual(len(self.health()), 1)
 
 
 if __name__ == "__main__":

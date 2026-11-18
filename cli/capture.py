@@ -155,18 +155,18 @@ def record_identity(conn, transcript_path, cwd):
     conn.commit()
 
 
-def write_health(conn, error=None):
-    """The `capture` health row (ADR-0039 §5): failing_since is set by the
+def write_health(conn, error=None, source="capture"):
+    """A source's health row (ADR-0039 §5): failing_since is set by the
     first error after a success and cleared by the next success."""
     at = now()
-    conn.execute("INSERT OR IGNORE INTO health (source) VALUES ('capture')")
+    conn.execute("INSERT OR IGNORE INTO health (source) VALUES (?)", (source,))
     if error is None:
         conn.execute("UPDATE health SET last_success=?, failing_since=NULL"
-                     " WHERE source='capture'", (at,))
+                     " WHERE source=?", (at, source))
     else:
         conn.execute("UPDATE health SET last_error=?, error_text=?,"
-                     " failing_since=ifnull(failing_since, ?) WHERE source='capture'",
-                     (at, error, at))
+                     " failing_since=ifnull(failing_since, ?) WHERE source=?",
+                     (at, error, at, source))
     conn.commit()
 
 

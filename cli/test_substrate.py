@@ -6,6 +6,7 @@ count, and the substrate-touching db migrations.
 import contextlib
 import io
 import json
+import re
 import sqlite3
 import tempfile
 import time
@@ -982,11 +983,16 @@ class DeriverTest(DbHelpers, unittest.TestCase):
         try:
             pages = lambda: [serve.render(v, conn, "p=proj-a", self.base / "repos")  # noqa: E731
                              for v in ("where", "what", "how")]
+            # the token source count behind the wcov line is the one thing
+            # usage provenance may change (#90): every number else is equal
+            label = lambda ps: [re.sub(r'"src": \{[^}]*\}', "", p) for p in ps]  # noqa: E731
             mixed = pages()
             conn.execute("UPDATE tool_events SET provenance='v1'")
             conn.execute("UPDATE usage SET provenance='v1'")
             conn.execute("UPDATE command_grains SET provenance='v1'")
-            self.assertEqual(pages(), mixed)
+            flipped = pages()
+            self.assertNotEqual(flipped, mixed)   # the label does follow provenance
+            self.assertEqual(label(flipped), label(mixed))
             self.assertEqual(serve.subagent_counts(conn), {"sess-raw": 1})
         finally:
             conn.close()

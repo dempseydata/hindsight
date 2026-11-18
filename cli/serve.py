@@ -70,8 +70,8 @@ from pathlib import Path
 # already resolve cli/ — no path insert needed (the #50 shadowing lesson).
 import how
 from analyze import (DEFAULT_PROJECTS_DIR, DEFAULT_DB, LOST, REPO,  # noqa: E402 — one authority on paths
-                     BREAKAGE_COLS, SECTIONS, audit_title, breakage_text, day_sql,
-                     local_day, session_day)
+                     BREAKAGE_COLS, SECTIONS, SIDE_REQUESTS, audit_title, breakage_text,
+                     day_sql, local_day, session_day)
 from score import BOUNDS  # noqa: E402 — narrative group names; eval/ on sys.path via analyze
 
 TOKENS_CSS = REPO / "design" / "tokens.css"
@@ -96,6 +96,31 @@ def open_db(db_path):
     # timeout covers the brief checkpoint lock and a db no writer has
     # switched yet, where it means "wait for the write" instead of a 500.
     return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
+
+
+def tok_sql(conn):
+    """A `tok` CTE in usage's columns plus `src` and `side` (ADR-0033 §4):
+    a session's tokens from OTel api_request when OTel saw it, else its
+    usage rows labelled with their provenance — never mixed in a session.
+    The OTel attributes read are declared in analyze.OTEL_DECLARED."""
+    usage = ("SELECT session_id, at, input_tokens, output_tokens,"
+             " cache_creation_input_tokens, cache_read_input_tokens, model, agent_id,"
+             " provenance AS src, 0 AS side FROM usage")
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'otel_events'").fetchone():
+        return f"WITH tok AS ({usage})"
+    n = lambda k: f"ifnull(CAST(json_extract(attributes, '$.{k}') AS INTEGER), 0)"
+    side = ", ".join(f"'{q}'" for q in SIDE_REQUESTS)
+    return f"""WITH o AS (
+        SELECT session_id, timestamp AS at, {n('input_tokens')} AS input_tokens,
+               {n('output_tokens')} AS output_tokens,
+               {n('cache_creation_tokens')} AS cache_creation_input_tokens,
+               {n('cache_read_tokens')} AS cache_read_input_tokens,
+               json_extract(attributes, '$.model') AS model,
+               json_extract(attributes, '$.agent_id') AS agent_id, 'otel' AS src,
+               ifnull(json_extract(attributes, '$.query_source'), '') IN ({side}) AS side
+        FROM otel_events WHERE event_name = 'api_request' AND session_id IS NOT NULL),
+      tok AS (SELECT * FROM o UNION ALL {usage}
+              WHERE session_id NOT IN (SELECT session_id FROM o))"""
 
 
 def chip_rows(projects):
@@ -163,18 +188,19 @@ def breakage_banner(conn):
 
 
 def header_data(conn):
+    tok = tok_sql(conn)
     days = [{"d": d, "p": p, "t": [i, o, cc, cr]} for d, p, i, o, cc, cr in
-            conn.execute(f"""
+            conn.execute(f"""{tok}
         SELECT {day_sql("u.at")}, s.project,
                SUM(u.input_tokens), SUM(u.output_tokens),
                SUM(u.cache_creation_input_tokens), SUM(u.cache_read_input_tokens)
-        FROM usage u JOIN sessions s ON s.id = u.session_id
+        FROM tok u JOIN sessions s ON s.id = u.session_id
         WHERE u.at IS NOT NULL GROUP BY 1, 2""")]
-    projects = list(conn.execute("""
+    projects = list(conn.execute(f"""{tok}
         SELECT s.project, COUNT(DISTINCT s.id),
                SUM(u.input_tokens + u.output_tokens
                    + u.cache_creation_input_tokens + u.cache_read_input_tokens)
-        FROM sessions s LEFT JOIN usage u ON u.session_id = s.id
+        FROM sessions s LEFT JOIN tok u ON u.session_id = s.id
         GROUP BY s.project"""))
     chips, tail = chip_rows(projects)
     # Hiding is chips-only: `tail`, the chart, the ledger, the league and the
@@ -359,26 +385,28 @@ def where_data(conn):
     # agent count, attributed to the session's first day like the sessions
     # tile beside it; absent when none.
     subs = subagent_counts(conn)
-    sess, sidx = [], {}
-    for sid, p, d, i, o, cc, cr in conn.execute(f"""
-            SELECT u.session_id, s.project, MIN({day_sql("u.at")}),
+    tok = tok_sql(conn)
+    sess, sidx, srcs = [], {}, Counter()
+    for sid, p, d, src, i, o, cc, cr in conn.execute(f"""{tok}
+            SELECT u.session_id, s.project, MIN({day_sql("u.at")}), MIN(u.src),
                    SUM(u.input_tokens), SUM(u.output_tokens),
                    SUM(u.cache_creation_input_tokens),
                    SUM(u.cache_read_input_tokens)
-            FROM usage u JOIN sessions s ON s.id = u.session_id
+            FROM tok u JOIN sessions s ON s.id = u.session_id
             GROUP BY u.session_id"""):
         sidx[sid] = len(sess)
+        srcs[src] += 1
         sess.append({"p": p, "d": d, "t": [i, o, cc, cr],
                      **({"na": subs[sid]} if sid in subs else {})})
     # subagent tokens at (day, project) grain — the same base as the header's
     # day rows the tiles sum, so the tile's share is a true ratio in any window
     subd = [{"d": d, "p": p, "t": [i, o, cc, cr]}
-            for d, p, i, o, cc, cr in conn.execute(f"""
+            for d, p, i, o, cc, cr in conn.execute(f"""{tok}
             SELECT {day_sql("u.at")}, s.project,
                    SUM(u.input_tokens), SUM(u.output_tokens),
                    SUM(u.cache_creation_input_tokens),
                    SUM(u.cache_read_input_tokens)
-            FROM usage u JOIN sessions s ON s.id = u.session_id
+            FROM tok u JOIN sessions s ON s.id = u.session_id
             WHERE u.agent_id IS NOT NULL GROUP BY 1, 2""")]
     cs = {}
     for ty, c, sid in conn.execute("""
@@ -390,12 +418,12 @@ def where_data(conn):
 
     models = [{"d": d, "p": p, "m": m.replace("claude-", ""), "n": n,
                "t": [i, o, cc, cr]}
-              for d, p, m, n, i, o, cc, cr in conn.execute(f"""
+              for d, p, m, n, i, o, cc, cr in conn.execute(f"""{tok}
             SELECT {day_sql("u.at")}, s.project, u.model, COUNT(*),
                    SUM(u.input_tokens), SUM(u.output_tokens),
                    SUM(u.cache_creation_input_tokens),
                    SUM(u.cache_read_input_tokens)
-            FROM usage u JOIN sessions s ON s.id = u.session_id
+            FROM tok u JOIN sessions s ON s.id = u.session_id
             WHERE u.model IS NOT NULL AND u.model != '<synthetic>'
             GROUP BY 1, 2, 3""")]
 
@@ -445,38 +473,38 @@ def where_data(conn):
                             "ex": ex,
                             "ms": _ms(a.get("total_retry_duration_ms")) if ex else None})
 
+    # hook timing from OTel (ADR-0033 §7): total_duration_ms is the firing's
+    # wall clock over all matching hooks; v1's hindsight.hook rows stay unread
     hooks = []
     for ts, attrs in conn.execute("""
             SELECT timestamp, attributes FROM otel_events
-            WHERE event_name = 'hindsight.hook'""") if has_otel else []:
+            WHERE event_name = 'hook_execution_complete'""") if has_otel else []:
         a = json.loads(attrs)
-        hooks.append({"d": local_day(ts),
-                      "ev": a.get("hook.event") or "unknown",
-                      "cpu": a.get("hook.cpu_ms"),
-                      "dur": a.get("hook.duration_ms")})
+        hooks.append({"d": local_day(ts), "ev": a.get("hook_event") or "?",
+                      "dur": _ms(a.get("total_duration_ms"))})
 
     sunk = [{"p": p, "cat": cat, "pl": pl, "name": n, "tok": t}
             for p, cat, pl, n, t in conn.execute(
                 "SELECT project, category, plugin, name, tokens "
                 "FROM sunk_cost")]
     med = {}
-    for p, v in conn.execute("""
+    for p, v in conn.execute(f"""{tok}
             SELECT s.project, f.v FROM sessions s JOIN (
               SELECT session_id, input_tokens + cache_read_input_tokens
                      + cache_creation_input_tokens v,
                      ROW_NUMBER() OVER (PARTITION BY session_id
                                         ORDER BY at) rn
-              FROM usage) f ON f.session_id = s.id AND f.rn = 1"""):
+              FROM tok WHERE NOT side) f ON f.session_id = s.id AND f.rn = 1"""):
         med.setdefault(p, []).append(v)
     medians = {p: {"med": int(statistics.median(v)), "n": len(v)}
                for p, v in med.items()}
 
     one = lambda sql: conn.execute(sql).fetchone()[0]
-    cov = {"usage_sessions": len(sess),
+    cov = {"usage_sessions": len(sess), "src": dict(srcs),
            "sessions": one("SELECT COUNT(*) FROM sessions"),
            "span": list(conn.execute(
-               f"SELECT MIN({day_sql('at')}), MAX({day_sql('at')})"
-               " FROM usage").fetchone()),
+               f"{tok} SELECT MIN({day_sql('at')}), MAX({day_sql('at')})"
+               " FROM tok").fetchone()),
            "otel": (local_day(one("SELECT MIN(timestamp) FROM otel_events"))
                     if has_otel else ""),
            "hook": min((h["d"] for h in hooks), default=None),
@@ -774,7 +802,8 @@ def render(view, conn, query="", projects_dir=DEFAULT_PROJECTS_DIR):
     else:
         data = header_data(conn)
         pretitle = f'synced through {data["synced"] or "never"} · {data["sessions"]} sessions'
-        desc = ("token usage from the transcript scan — days without data render as gaps;"
+        desc = ("token usage per session from OTel, else the transcript's — days without"
+                " data render as gaps;"
                 " pruned transcripts read unknown, never zero")
         actions = ('<div class="o-actions" id="ctl">window:'
                    + "".join(f' <button data-w="{w}">{w}</button>'

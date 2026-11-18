@@ -14,7 +14,8 @@ Contracts: ADR-0039.
 | #91 | built, open for human run | 29ff02f | 0 | 277 tests, 54 s | real-data equivalence: `eval/extract_equivalence.py` |
 | #87 | closed | 3fe14c1 | 1+3 | 283 tests, 52 s | blocked once; v1 rows replaced per captured agent (ADR-0039 §9) |
 | #88 | closed | 8112338 | 1 | 288 tests, 56 s | v12 drops `scan_runs` |
-| #89 | closed | (this commit) | 1 | 294 tests, 56 s | |
+| #89 | closed | dd5fb93 | 1 | 294 tests, 56 s | |
+| #90 | closed | (this commit) | 1 | 298 tests, 55 s | where-view wording: optional human look |
 
 ## Owed
 
@@ -55,6 +56,8 @@ Contracts: ADR-0039.
 - #89: a day with any condition-4 row, open or acknowledged, is never checked again; row `source='cross-check'`, key 'input-side tokens', signed gap in `new_share` — ADR? no
 - #89: separate "cross-check" job in the guard slot with the same any_due skip — ADR? no
 - #89: breakage banner headings per condition: 4 "input-side tokens disagree", 6 "transcript rewritten", others "transcript shape changed" — ADR? no
+- #90: the token source is chosen at render time (no column): OTel `api_request` tokens for a session OTel saw (≥1 api_request), else transcript usage, labelled by usage provenance — ADR? no
+- #90: the message lens stays on transcript usage (OTel has no message_id); the measured median skips OTel side requests; OTel subagent tokens come from `agent_id` (CLI ≥ 2.1.310) — ADR? no
 
 ## Blocked
 
@@ -81,3 +84,6 @@ Contracts: ADR-0039.
 - #88: sessions excluded from analysis still feed the OTel histogram.
 - #89: a day whose OTel tokens are all zero against non-zero transcript tokens is skipped silently (a zeroed attribute is not caught; a renamed one is, by OTEL_DECLARED).
 - #89: a listener outage partway through one session's day can still trip (ADR-0033's wording allows it).
+- #90: the coverage line labels a session `raw` (`MIN(u.src)`) when its main-agent usage is v1 and a subagent's is raw (valid under ADR-0039 §9).
+- #90: hook rows show "?" for a missing event where the old code showed "unknown".
+- #90: a session OTel joined partway through reads low, with no warning.

@@ -108,12 +108,17 @@ def fixture_db(path):
         is_error, error_text) VALUES ('s3', ?, ?, '2026-08-03T10:01:00Z',
         '2026-08-03T10:01:01Z', NULL, ?, ?, ?, 1, ?)""", errors)
     otel = [
-        ("api_request", "s1", "2026-08-03T09:00:00Z",
+        # latency only, on a session sync never saw: an api_request on s1
+        # would make OTel its token source (#90)
+        ("api_request", "u1", "2026-08-03T09:00:00Z",
          '{"model": "claude-sonnet-5", "duration_ms": "1500",'
-         ' "session.id": "s1"}'),
-        ("hindsight.hook", "s1", "2026-08-04T09:00:00Z",
+         ' "session.id": "u1"}'),
+        # v1's self-instrumentation row: stored, never read (#90)
+        ("hindsight.hook", "s1", "2026-08-03T09:00:00Z",
          '{"hook.event": "Stop", "hook.cpu_ms": 80.5,'
          ' "hook.duration_ms": 1.2}'),
+        ("hook_execution_complete", "s1", "2026-08-04T09:00:00Z",
+         '{"hook_event": "Stop", "total_duration_ms": 80}'),
         # reliability panel (#14): two retries and one exhaustion on s1 —
         # the CLI stringifies numbers on some paths, so one of each shape
         ("api_error", "s1", "2026-08-03T09:00:01Z",
@@ -305,6 +310,74 @@ class QuietHowTest(unittest.TestCase):
                 self.server.shutdown()
                 self.server.server_close()
         self.assertIn('<div class="o-stage-panel status none"><h2>', body)
+
+
+class TokenSourceTest(unittest.TestCase):
+    """#90 (ADR-0033 §4, §7): a session OTel saw takes its tokens from
+    OTel api_request alone; one it never saw from its usage rows, labelled
+    with their provenance. The hook panel reads hook_execution_complete."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        db = Path(cls.tmp.name) / "hindsight.db"
+        fixture_db(db)
+        conn = sqlite3.connect(db)
+        req = ('{"model": "claude-opus-5", "input_tokens": "%d", "output_tokens": %d,'
+               ' "cache_read_tokens": %d, "cache_creation_tokens": %d%s}')
+        conn.executemany("INSERT INTO otel_events (event_name, session_id, timestamp,"
+                         " attributes) VALUES (?, ?, ?, ?)", [
+            # s7 has no usage rows; s3 has some, which OTel now overrides
+            ("api_request", "s7", "2026-08-05T14:00:00Z", req % (40, 30, 500, 7, "")),
+            ("api_request", "s7", "2026-08-05T14:05:00Z",
+             req % (4, 3, 50, 0, ', "agent_id": "ag9"')),
+            ("api_request", "s3", "2026-08-02T10:00:00Z", req % (1, 2, 3, 4, ""))])
+        conn.execute("UPDATE usage SET provenance = 'raw' WHERE session_id = 's2'")
+        conn.commit()
+        conn.close()
+        cls.conn = serve.open_db(db)
+        cls.w = serve.where_data(cls.conn)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.conn.close()
+        cls.tmp.cleanup()
+
+    def test_otel_session_takes_otel_tokens_alone(self):
+        sess = {(r["p"], r["d"]): r for r in self.w["sess"]}
+        self.assertEqual(sess["big", "2026-08-05"]["t"], [44, 33, 7, 550])
+        self.assertEqual(sess["small", "2026-08-02"]["t"], [1, 2, 4, 3])   # usage unread
+        self.assertIn({"d": "2026-08-05", "p": "big", "t": [4, 3, 0, 50]}, self.w["subd"])
+        self.assertIn("opus-5", {m["m"] for m in self.w["models"]})
+
+    def test_unseen_session_labelled_with_its_usage_source(self):
+        sess = {(r["p"], r["d"]): r for r in self.w["sess"]}
+        self.assertEqual(sess["big", "2026-08-01"]["t"], [1600, 300, 50, 100000])
+        self.assertTrue(all("src" not in r for r in self.w["sess"]))   # page never reads it
+        self.assertEqual(self.w["cov"]["src"], {"otel": 2, "raw": 1, "v1": 2})
+
+    def test_header_chart_reads_the_same_source(self):
+        days = {(r["d"], r["p"]): r["t"] for r in serve.header_data(self.conn)["days"]}
+        self.assertEqual(days["2026-08-02", "small"], [1, 2, 4, 3])
+        self.assertNotIn(("2026-08-03", "small"), days)   # s3's usage day, not OTel's
+
+    def test_where_view_labels_transcript_tokens_and_the_undercount(self):
+        page = serve.render("where", self.conn)
+        [line] = [ln for ln in page.splitlines()
+                  if ln.startswith('document.getElementById("wcov")')]
+        self.assertIn("from transcript usage", line)
+        self.assertIn("output tokens undercounted", line)
+        [hnote] = [ln for ln in page.splitlines()
+                   if ln.startswith('document.getElementById("hnote")')]
+        self.assertIn("hook_execution_complete", hnote)
+        [mnote] = [ln for ln in page.splitlines()
+                   if ln.startswith('document.getElementById("mnote")')]
+        self.assertIn("from OTEL api_request where OTEL saw the session, else from transcript"
+                      " usage", mnote)
+        self.assertNotIn("transcript scan (full span)", mnote)
+        [snote] = [ln for ln in page.splitlines()
+                   if ln.startswith('document.getElementById("snote")')]
+        self.assertNotIn("first usage row", snote)
 
 
 class ServerTest(unittest.TestCase):
@@ -642,7 +715,7 @@ class ServerTest(unittest.TestCase):
         # latency from OTEL api_request; coverage + exclusion stated
         self.assertEqual(w["lat"][0]["durs"], [1500])
         self.assertEqual(w["lat"][0]["m"], "sonnet-5")
-        self.assertEqual(w["hooks"][0]["cpu"], 80.5)
+        self.assertEqual(w["hooks"], [{"d": "2026-08-04", "ev": "Stop", "dur": 80}])
         self.assertEqual(w["cov"]["excluded"], 1)
         self.assertEqual(w["cov"]["usage_sessions"], 4)
         self.assertEqual(w["cov"]["hook"], "2026-08-04")

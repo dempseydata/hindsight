@@ -1051,6 +1051,14 @@ OTEL_DECLARED = {
                     ("mcp_server_connection", "server_name"),
                     ("mcp_server_connection", "status"),
                     ("mcp_server_connection", "duration_ms")),
+    # serve.py's token source (ADR-0033 §4): every token panel for a session
+    # OTel saw; agent_id is absent on main-session requests, so undeclared
+    "tokens": (("api_request", "input_tokens"), ("api_request", "output_tokens"),
+               ("api_request", "cache_read_tokens"), ("api_request", "cache_creation_tokens"),
+               ("api_request", "model")),
+    # serve.py's hook panel (ADR-0033 §7)
+    "hooks": (("hook_execution_complete", "hook_event"),
+              ("hook_execution_complete", "total_duration_ms")),
     # the input-side token cross-check (ADR-0033 §5)
     "cross-check": (("api_request", "input_tokens"), ("api_request", "cache_read_tokens"),
                     ("api_request", "cache_creation_tokens"),

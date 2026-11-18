@@ -130,6 +130,11 @@ def hidden_projects(conn):
         "SELECT name FROM project_presence GROUP BY name HAVING MAX(present) = 0")}
 
 
+# condition 4 is the token cross-check (#89), 6 the capture hook's (#84);
+# every other condition is a transcript shape change
+HEADINGS = {4: "input-side tokens disagree", 6: "transcript rewritten"}
+
+
 def breakage_banner(conn):
     """The open breakage rows (issue #15) as one banner per row, on every
     view — it shows wherever the operator lands. Tier-coloured with the
@@ -147,7 +152,7 @@ def breakage_banner(conn):
     return "".join(
         f'<div class="breakage {r["tier"]}"><span class="o-badge'
         f' o-{"problem" if r["tier"] == "problem" else "ok"}">{r["tier"]}</span>'
-        f" <b>transcript shape changed</b> "
+        f" <b>{HEADINGS.get(r['condition'], 'transcript shape changed')}</b> "
         f"{html.escape(breakage_text(r))} · "
         + ("capture stopped appending for this session until resolved. "
            if r["condition"] == 6 else  # the capture hook's (#84)

@@ -2011,6 +2011,107 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.assertIn("no open breakage row 99", r.stderr)
 
 
+class CrossCheckTest(DbHelpers, unittest.TestCase):
+    """The input-side token cross-check (ADR-0033 §5, issue #89): per
+    completed local day, OTel against transcripts over sessions both saw."""
+
+    setUp = DriftTest.setUp
+    run_pipeline = DriftTest.run_pipeline
+    open_rows = DriftTest.open_rows
+
+    def session(self, days, sid="s", n=50):
+        """`n` assistant requests per day, each `per` input tokens; the
+        cache halves are fixed so the input-side sum is what is compared."""
+        recs = []
+        for day, per in days.items():
+            for i in range(n):
+                ts = f"{day}T15:00:00Z"
+                recs += [rec("user", f"{day}u{i}", ts, "go"),
+                         rec("assistant", f"{day}a{i}", ts, [{"type": "text", "text": "ok"}],
+                             model="m", id=f"{day}m{i}",
+                             usage={"input_tokens": per, "output_tokens": 1,
+                                    "cache_creation_input_tokens": 30,
+                                    "cache_read_input_tokens": 40})]
+        write_records(self.root / "p" / f"{sid}.jsonl", recs)
+
+    def otel(self, day, n, per=100, sid="s", query_source=None):
+        """`n` api_request events on `day`, each `per` input-side tokens."""
+        import listener
+        attrs = {"event.name": "api_request", "session.id": sid,
+                 "event.timestamp": f"{day}T15:00:00Z", "input_tokens": str(per - 70),
+                 "cache_read_tokens": "40", "cache_creation_tokens": "30"}
+        if query_source:
+            attrs["query_source"] = query_source
+        listener.init_db(self.db)
+        conn = sqlite3.connect(self.db)
+        with conn:
+            listener.ingest_logs({"resourceLogs": [{"scopeLogs": [{"logRecords": [
+                {"attributes": [{"key": k, "value": {"stringValue": v}}
+                                for k, v in attrs.items()]}] * n}]}]}, conn)
+        conn.close()
+
+    def cross_rows(self):
+        return [(r["tier"], r["day"]) for r in self.open_rows() if r["condition"] == 4]
+
+    def test_a_6_percent_gap_writes_one_row_and_4_percent_none(self):
+        # OTel 100 a request; transcripts 94 (6% short) and 96 (4% short)
+        self.session({"2026-08-01": 94 - 70, "2026-08-02": 96 - 70})
+        self.otel("2026-08-01", 50)
+        self.otel("2026-08-02", 50)
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [("problem", "2026-08-01")])
+        self.assertIn("2026-08-01", analyze.breakage_text(self.open_rows()[0]))
+        self.run_pipeline()  # one row per day, never a second
+        self.assertEqual(self.cross_rows(), [("problem", "2026-08-01")])
+
+    def test_a_day_under_the_floor_and_the_current_day_are_never_checked(self):
+        today = time.strftime("%Y-%m-%d")
+        self.session({"2026-08-01": 24, today: 24}, n=49)
+        self.otel("2026-08-01", 49)
+        self.otel(today, 49)
+        self.otel(today, 1)  # today clears the floor; it is still not checked
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [])
+
+    def test_denylisted_side_requests_are_excluded_and_a_new_side_source_trips(self):
+        self.session({"2026-08-01": 30})  # 100 a request: matches OTel exactly
+        self.otel("2026-08-01", 50)
+        for source in ("prompt_suggestion", "generate_session_title", "web_search_tool",
+                       "web_fetch_apply", "away_summary", "agent_summary"):
+            self.otel("2026-08-01", 5, per=1000, query_source=source)
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [])
+        self.otel("2026-08-01", 5, per=1000, query_source="brand_new_side_request")
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [("problem", "2026-08-01")])
+
+    def test_a_session_the_listener_missed_that_day_is_left_out(self):
+        # t has transcript usage on 08-01 but OTel only on 08-02 (listener
+        # down on 08-01): 08-01 compares s alone, which agrees
+        self.session({"2026-08-01": 30}, sid="s")
+        self.session({"2026-08-01": 30, "2026-08-02": 30}, sid="t")
+        self.otel("2026-08-01", 50, sid="s")
+        self.otel("2026-08-02", 50, sid="t")
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [])
+
+    def test_acknowledging_closes_that_day_and_shifts_no_baseline(self):
+        self.session({"2026-08-01": 24})
+        self.otel("2026-08-01", 50)
+        self.run_pipeline()
+        [row] = self.open_rows()
+        conn = sqlite3.connect(self.db)
+        self.assertTrue(analyze.acknowledge_breakage(conn, row["id"]))
+        conn.close()
+        # a later day drifts by the same 6%: still a trip at the frozen
+        # threshold, and the acknowledged day stays closed
+        self.session({"2026-08-01": 24, "2026-08-02": 24})
+        self.otel("2026-08-02", 50)
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [("problem", "2026-08-02")])
+        self.assertEqual(len(self.rows("SELECT 1 FROM breakage WHERE condition=4")), 2)
+
+
 class SectionDrift(unittest.TestCase):
     """Ticket #81: the prompt names the audit sections as prose
     (uninterpolated by design, #79) — detect drift from the SECTIONS

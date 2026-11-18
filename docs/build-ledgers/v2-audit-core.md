@@ -13,7 +13,8 @@ Contracts: ADR-0039.
 | #86 | closed | fdfc635 | 2 | 274 tests, 55 s | suite at 1.8× baseline |
 | #91 | built, open for human run | 29ff02f | 0 | 277 tests, 54 s | real-data equivalence: `eval/extract_equivalence.py` |
 | #87 | closed | 3fe14c1 | 1+3 | 283 tests, 52 s | blocked once; v1 rows replaced per captured agent (ADR-0039 §9) |
-| #88 | closed | (this commit) | 1 | 288 tests, 56 s | v12 drops `scan_runs` |
+| #88 | closed | 8112338 | 1 | 288 tests, 56 s | v12 drops `scan_runs` |
+| #89 | closed | (this commit) | 1 | 294 tests, 56 s | |
 
 ## Owed
 
@@ -50,6 +51,10 @@ Contracts: ADR-0039.
 - #88: OTel breakage rows: `source='otel'`, versions "<service> <version>", key "<event>.<attr>", baseline per service — ADR? yes (row format persists, the baseline parses it)
 - #88: `OTEL_DECLARED` holds the latency and reliability panels' pairs; #89/#90 add theirs — ADR? no
 - #88: OTel arrivals do not hold the guard; an OTel histogram version bump rebuilds every session — ADR? no
+- #89: gap = (transcript − OTel) / OTel; each day compares only sessions with both transcript usage and non-side OTel `api_request` events that day; the 50-request floor counts those shared requests — ADR? no
+- #89: a day with any condition-4 row, open or acknowledged, is never checked again; row `source='cross-check'`, key 'input-side tokens', signed gap in `new_share` — ADR? no
+- #89: separate "cross-check" job in the guard slot with the same any_due skip — ADR? no
+- #89: breakage banner headings per condition: 4 "input-side tokens disagree", 6 "transcript rewritten", others "transcript shape changed" — ADR? no
 
 ## Blocked
 
@@ -74,3 +79,5 @@ Contracts: ADR-0039.
 - #87: `docs/` still describes `fill_substrate` and `_reset_scanned`.
 - #88: a sharp shift in status mix (an optional OTel attribute 95% → 40%) trips a problem row; transcript keys share the exposure.
 - #88: sessions excluded from analysis still feed the OTel histogram.
+- #89: a day whose OTel tokens are all zero against non-zero transcript tokens is skipped silently (a zeroed attribute is not caught; a renamed one is, by OTEL_DECLARED).
+- #89: a listener outage partway through one session's day can still trip (ADR-0033's wording allows it).

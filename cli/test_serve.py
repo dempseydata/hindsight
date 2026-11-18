@@ -1089,6 +1089,18 @@ class ServerTest(unittest.TestCase):
         banner = banner[:banner.index("</div>")]
         self.assertNotIn("ingest continued", banner)
         self.assertIn("capture stopped appending for this session until resolved", banner)
+        self.assertIn("<b>transcript rewritten</b>", body)
+        self.assertNotIn("transcript shape changed", banner)
+
+    def test_cross_check_banner_has_its_own_heading(self):
+        """Condition 4 (#89): a token gap, not a shape change."""
+        body = self.serve_once(
+            "UPDATE breakage SET acknowledged_at = 'x';"
+            "INSERT INTO breakage (at, tier, condition, source, day, new_share)"
+            " VALUES ('2026-08-06T00:00:00Z', 'problem', 4, 'cross-check',"
+            " '2026-08-05', -0.06); DELETE FROM project_presence")
+        self.assertIn("<b>input-side tokens disagree</b>", body)
+        self.assertNotIn("transcript shape changed", body)
 
     def test_what_ledger_is_one_card_table(self):
         """#54 (ADR-0029 §2, ADR-0030 §10): the ledger is one card-table —

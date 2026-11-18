@@ -386,7 +386,7 @@ ADDED = 0.5             # condition 2: absent before, >50% after
 SPIKE = 3               # condition 3 (retired, ADR-0037 §6): its rows' text only
 # The breakage row as the guard writes it and the banner reads it (serve.py).
 BREAKAGE_COLS = ("id", "at", "tier", "condition", "old_version", "new_version",
-                 "key", "old_share", "new_share", "since", "session_id", "derivers")
+                 "key", "old_share", "new_share", "since", "session_id", "derivers", "day")
 
 
 class LimitExhausted(Exception):
@@ -1051,6 +1051,10 @@ OTEL_DECLARED = {
                     ("mcp_server_connection", "server_name"),
                     ("mcp_server_connection", "status"),
                     ("mcp_server_connection", "duration_ms")),
+    # the input-side token cross-check (ADR-0033 §5)
+    "cross-check": (("api_request", "input_tokens"), ("api_request", "cache_read_tokens"),
+                    ("api_request", "cache_creation_tokens"),
+                    ("api_request", "query_source")),
 }
 
 
@@ -1249,6 +1253,62 @@ def check_drift(conn, at, notify=False):
     return written
 
 
+# The cross-check (ADR-0033 §5, frozen there): OTel requests that never reach
+# the transcript. A new side source trips the check; add it here, in code.
+SIDE_REQUESTS = ("prompt_suggestion", "generate_session_title", "web_search_tool",
+                 "web_fetch_apply", "away_summary", "agent_summary")
+CROSS_CHECK_FLOOR = 50   # shared requests a day needs before it is compared
+CROSS_CHECK_GAP = 0.05   # absolute gap, against OTel, that trips condition 4
+CROSS_CHECK = 4
+
+
+def cross_check(conn, at):
+    """Condition 4 (ADR-0033 §5): per completed local day, OTel input-side
+    tokens (side requests excluded) against the transcript's, over sessions
+    both sources saw that day. A gap above CROSS_CHECK_GAP writes one *problem* row
+    for that day. A day that has a row, open or acknowledged, is never
+    checked again, so acknowledging closes that day and shifts nothing
+    else. Returns the rows written."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='otel_events'").fetchone():
+        return []
+    deny = ", ".join("?" * len(SIDE_REQUESTS))
+    tok = lambda k: f"ifnull(CAST(json_extract(attributes, '$.{k}') AS INTEGER), 0)"
+    # per (day, session): a day compares only sessions both sources saw that
+    # day, so a listener outage drops a session rather than tripping the day
+    transcript = {(d, s): t for d, s, t in conn.execute(
+        f"SELECT {day_sql('at')}, session_id, SUM(input_tokens + cache_read_input_tokens"
+        " + cache_creation_input_tokens) FROM usage WHERE at IS NOT NULL GROUP BY 1, 2")}
+    otel = {}
+    for d, s, n, o in conn.execute(
+            f"SELECT {day_sql('timestamp')}, session_id, COUNT(*), SUM({tok('input_tokens')}"
+            f" + {tok('cache_read_tokens')} + {tok('cache_creation_tokens')})"
+            " FROM otel_events WHERE event_name='api_request' AND timestamp IS NOT NULL"
+            f" AND ifnull(json_extract(attributes, '$.query_source'), '') NOT IN ({deny})"
+            " GROUP BY 1, 2", SIDE_REQUESTS):
+        if (d, s) in transcript:
+            day = otel.setdefault(d, [0, 0, 0])
+            day[0] += n
+            day[1] += o
+            day[2] += transcript[d, s]
+    done = {d for (d,) in conn.execute("SELECT day FROM breakage WHERE condition=?",
+                                       (CROSS_CHECK,))}
+    written = []
+    for day, (n, o, t) in otel.items():
+        if day >= local_day(at) or day in done or n < CROSS_CHECK_FLOOR or not o:
+            continue
+        gap = (t - o) / o
+        if abs(gap) <= CROSS_CHECK_GAP:
+            continue
+        r = {"at": at, "tier": "problem", "condition": CROSS_CHECK,
+             "key": "input-side tokens", "new_share": gap, "day": day,
+             "source": "cross-check"}
+        r["id"] = conn.execute(f"INSERT INTO breakage ({', '.join(r)}) VALUES"
+                               f" ({', '.join('?' * len(r))})", tuple(r.values())).lastrowid
+        written.append(r)
+    conn.commit()
+    return written
+
+
 def breakage_text(r):
     """One breakage row as one line — the banner's and the notification's."""
     if r["condition"] == UNPARSEABLE:  # written by the records index (#86)
@@ -1257,6 +1317,10 @@ def breakage_text(r):
     if r["condition"] == 6:  # written by the capture hook (#84)
         return (f"session {r['session_id']}'s transcript no longer matches what"
                 f" was captured; capture of it stopped — seen {r['at'][:10]}")
+    if r["condition"] == CROSS_CHECK:
+        return (f"input-side tokens on {r['day']}: transcripts {r['new_share']:+.1%}"
+                " against OTel over sessions both saw — a source has moved, or a"
+                " new side-request source belongs on the denylist")
     if r["condition"] == 3:
         return (f"skipped records are {r['new_share']:.0%} of this run's, over {SPIKE}×"
                 f" the recent median {r['old_share']:.0%} — run {r['at'][:10]}")
@@ -1869,6 +1933,12 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
         if not any_due(conn):  # due sessions: a designed skip, never an error
             check_drift(conn, datetime.now(timezone.utc).isoformat(), notify)
 
+    def cross_check_job():
+        if not any_due(conn):  # the same designed skip as the guard
+            rows = cross_check(conn, datetime.now(timezone.utc).isoformat())
+            if notify and rows:
+                _notify(f"{len(rows)} breakage(s) — {breakage_text(rows[0])}")
+
     def what_pass():
         classify_and_extract(conn, work_dir)
         todo = conn.execute(
@@ -1899,6 +1969,7 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
         job("derivation", derivation)
         if "derivation" not in failed:  # a half-derived store trips the guard falsely
             job("drift guard", drift_guard)
+            job("cross-check", cross_check_job)
         paused = job("what-pass", what_pass)
         if not paused:  # the narrative would only hit the same limit
             job("how narrative", narrative)

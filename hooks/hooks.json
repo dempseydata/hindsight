@@ -1,0 +1,15 @@
+{
+  "description": "v1's SessionStart folder-identity hook (ADR-0018), registered here until the capture hook lands (ADR-0036).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/cli/hook.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -20,7 +20,7 @@ from pathlib import Path
 from extract import FILE_TOOLS  # the create/modify tool set
 
 # The field contract (issue #15): every transcript key this scan, the
-# extract (build/extract.py msg_texts) and analyze.head_scan depend on
+# extract (cli/extract.py msg_texts) and analyze.head_scan depend on
 # being *present*, as (scope, key) — scope is the record type, then the
 # dotted path into it; a `content.<block type>` scope is one content block.
 # Enumerated from the three readers, not from memory. Keys read but not

@@ -2,16 +2,16 @@
 
 ## Principals
 
-There are no roles, claims, tokens, cookies or logins. One macOS user owns the repo, `local-data/` and the loopback interface, and every request to either server is served as that operator (ADR-0001). The real "roles" are the processes, which differ in what they may touch:
+There are no roles, claims, tokens, cookies or logins. One macOS user owns the repo, Hindsight home (`~/.hindsight/`), `local-data/` and the loopback interface, and every request to either server is served as that operator (ADR-0001). The real "roles" are the processes, which differ in what they may touch:
 
 | Process | Entry | DB access | Other reach |
 | --- | --- | --- | --- |
 | Analysis run | `analyze.py` — nightly launchd job or foreground; `attribute`, `acknowledge-breakage` subcommands | Read-write, every table except `otel_*` | Reads transcripts, `~/.claude`, workspace repos; runs `claude -p`, `git`, `osascript` |
 | Backfill importer | `import_backfill.py` | Writes `sessions`, `audit` only; never touches an existing id | Reads `local-data/backfill/` |
-| Server | `serve.py` on `127.0.0.1:8321` | Read-only (`mode=ro`) | Reads `.claude/my-process.md` of the `?p=` project, `design/tokens.css`, `build/assets/*` |
+| Server | `serve.py` on `127.0.0.1:8321` | Read-only (`mode=ro`) | Reads `.claude/my-process.md` of the `?p=` project, `design/tokens.css`, `cli/assets/*` |
 | Listener | `listener.py` on `127.0.0.1:4318`, the one background process | Writes `otel_events`, `otel_metrics` only | — |
-| Menu bar plugin | `menubar.py`, run by SwiftBar every 30 s | Nothing in the DB — `launchctl` on the ingest plist, `serve.py` started detached or `SIGTERM`ed by port, `analyze.py acknowledge-breakage`, all on click and all the operator's own commands; `install` writes the wrapper and, once, SwiftBar's `PluginDirectory` preference | `GET /health` on the listener, `GET /` on the views server; `breakage` read-only via `sqlite3` |
-| Hook | `hook.py`, spawned by Claude Code per hook event | None — POSTs one OTLP record to the listener | `stat` of the session's `cwd` at SessionStart (ADR-0018) |
+| Ops command | `hindsight.py`, run by the user-invoked `/hindsight:ops` skill (`disable-model-invocation`) | None — `install --from` moves a v1 database file into Hindsight home, once, after booting out both jobs; nothing deletes it | Writes both plists and `<home>/current`, runs `launchctl`, starts `serve.py` detached; reads `~/.claude/settings.json` to list v1 hook entries, never writes it; `GET /` on the views server |
+| Hook | `hook.py`, spawned by Claude Code at SessionStart (the plugin's `hooks/hooks.json`) | None — POSTs one OTLP record to the listener | `stat` of the session's `cwd` at SessionStart (ADR-0018) |
 | Model | `claude -p` subprocess of the analysis run | None — its stdout is data, gated before write | Receives the extract (tool results excluded, ADR-0002) and the run ledger |
 | Git pre-commit hook | `.githooks/pre-commit`, opt-in per clone via `git config core.hooksPath .githooks` | — | Refuses staged additions matching `.githooks/denylist.txt` |
 | Public repo reader | Anyone on GitHub | None | Everything in git history; never `local-data/` |
@@ -27,15 +27,16 @@ There are no roles, claims, tokens, cookies or logins. One macOS user owns the r
 | `sessions`, `audit`, `excluded_sessions`, `project_presence`, `status_narrative`, `sunk_cost` | Server | Analysis run; importer for `sessions`/`audit` |
 | `tool_events` (incl. `error_text`), `usage`, `command_grains`, `subagent_transcripts` | Server | Analysis run's substrate scan, per session wipe-and-refill (ADR-0019) |
 | `field_histogram`, `scan_runs` | Analysis run (drift guard, ADR-0020) | Analysis run |
-| `breakage` | Server (open rows → banner on every view); menu bar plugin (open rows → icon count and Acknowledge items) | Analysis run opens; `acknowledge-breakage <id>` closes, never rescans |
+| `breakage` | Server (open rows → banner on every view) | Analysis run opens; `acknowledge-breakage <id>` closes, never rescans |
 | `blobs`, `change_events`, `backstop_state` | Nothing serves them | Analysis run's backstop |
 | `~/.claude/projects/**/*.jsonl`, `…/subagents/agent-*.jsonl` | Analysis run | Never — no delete path exists |
 | `~/.claude/{CLAUDE.md, settings.json, settings.local.json, keybindings.json, mcp.json}`, `plugins/installed_plugins.json` | Analysis run, copied verbatim into `blobs` | Never |
 | Skill and command bodies, MCP config, CLAUDE.md chain (user scope and per project) | Analysis run (`sunk_cost`) | Never |
 | Workspace repos `~/Documents/Claude/*` | Analysis run: `git log`/`git show` of `.claude/` commits into `blobs`; server: `.claude/my-process.md` only | Never |
-| `local-data/` (DB, extracts, model cache, backfill) | Analysis run, server, importer | Analysis run, listener; gitignored |
-| `~/Library/LaunchAgents/com.hindsight.*.plist`, `~/Library/Logs/hindsight/` | launchd | `install` / `uninstall` of listener and analysis run |
-| `<SwiftBar PluginDirectory>/hindsight.30s.sh` | SwiftBar | `menubar.py install` / `uninstall` (a wrapper that execs the repo file) |
+| Hindsight home `~/.hindsight/` or `$HINDSIGHT_HOME` (`hindsight.db`, `logs/`, `current`) | Analysis run, server, importer, listener; launchd through `current` | Analysis run, listener, importer (DB); each job appends to its log; ops command (`current`, `logs/`, the `--from` move). Nothing deletes it |
+| Analysis work dir (extracts, model cache): `$CLAUDE_PLUGIN_DATA/analysis`, else `local-data/analysis` | Analysis run | Analysis run |
+| `local-data/` (backfill, eval material, a working-copy work dir) | Importer, analysis run, `eval/` | Analysis run, `eval/`; gitignored |
+| `~/Library/LaunchAgents/com.hindsight.*.plist` | launchd | `/hindsight:ops install` / `uninstall` |
 
 No row-level security: SQLite has none and there is one owner.
 
@@ -60,7 +61,7 @@ No row-level security: SQLite has none and there is one owner.
 | --- | --- | --- |
 | Listener accepts any local JSON writer | No auth; `Content-Type` must start with `application/json` (`415`) and the body is capped at `MAX_BODY` 8 MiB (`413`, or dropped once chunked/inflated), so a web page's cross-origin simple POST is refused (#34); unknown paths still return 200 (`Handler.do_POST`) | Any local process can pollute `otel_events`; on a single-user Mac the writer set is the operator's own processes |
 | Server has no auth | `serve.py` serves every view to any loopback client | Session titles, model prose, project and consumer names, and — since ADR-0027 — verbatim, uncapped error text including tracebacks that carry paths on every frame. Not `blobs`. |
-| `blobs` holds config verbatim | `capture_backstop` snapshots the whole `BACKSTOP_SURFACE` file and every `.claude/` commit's before/after | Reading the DB file reveals every settings/MCP file, current and historical; protected only by the file's Unix mode and the gitignore. See [variables.md](variables.md). |
+| `blobs` holds config verbatim | `capture_backstop` snapshots the whole `BACKSTOP_SURFACE` file and every `.claude/` commit's before/after | Reading the DB file reveals every settings/MCP file, current and historical; protected only by the file's Unix mode; it lives in Hindsight home, outside the repo. See [variables.md](variables.md). |
 | Model output gated by shape, not content | `valid_entry`, `score.contract` | A well-formed but wrong entry is written; `eval/` is the standing check. See [automation.md](automation.md). |
 | Pre-commit hook is opt-in | A clone without `core.hooksPath` set has no denylist | The publication rule then rests on the author alone |
 | `attribute` trusts the operator | Refuses only on a missing DB, an unreadable folder or a bad instant | A wrong `<synced-name> <folder>` pairing stamps the wrong identity; the next run re-keys those sessions under it |

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "hindsight",
+  "description": "Local observability over Claude Code history: where tokens went, what was done, how the process ran.",
+  "owner": {
+    "name": "Andrew Dempsey",
+    "url": "https://github.com/dempseydata"
+  },
+  "plugins": [
+    {
+      "name": "hindsight",
+      "source": "./",
+      "description": "Local observability over Claude Code history: where tokens went, what was done, how the process ran.",
+      "category": "productivity"
+    }
+  ]
+}

@@ -24,7 +24,7 @@ Issues live on this repo and are public. The private working repo this was built
 `dempseydata/hindsight-old` — closed, kept for its history, never to be flipped.
 
 ## Phase layout
-`background/ideation/` → `background/definition/` → `background/design/` → `build/`.
+`background/ideation/` → `background/definition/` → `background/design/` → `cli/`.
 Context from earlier phases informs later ones — don't engage on design without reading the
 definition, don't engage on build without reading the design decisions. `background/why.md`
 is the story: why it was built, how, and what was reversed. `background/tickets/` is the
@@ -37,11 +37,15 @@ on this repo starts afresh, so cite an exported ticket by its file, not `#N`.
 @.claude/my-process.md
 
 ## Stack conventions
+- The repo root is the plugin root (ADR-0036): `.claude-plugin/` manifests, `skills/ops`
+  (`/hindsight:ops`, user-invoked only), `hooks/hooks.json`, deterministic code in `cli/`.
+  `claude plugin validate` gates commits; its warning about this root `CLAUDE.md` is expected.
+  Tests run from `cli/`: `cd cli && python3 -m unittest`.
 - Domain vocabulary → `CONTEXT.md`. Decision rationale → `docs/adr/`. Reviewability docs
   (`architecture`, `flows`, `permissions`, `variables`, `cron`, `automation`) → `docs/`,
   from `/document-app`.
 - `diagnosing-bugs` and `improve-codebase-architecture` must read `CONTEXT.md` + `docs/adr/` first.
-- `design/tokens.css` is the styling contract, inlined by `build/serve.py` at render time.
+- `design/tokens.css` is the styling contract, inlined by `cli/serve.py` at render time.
   Change a value there, never in a view. Root `DESIGN.md` is the shipped design system,
   re-derived from the built UI (ticket 052) — an output, not an input.
 

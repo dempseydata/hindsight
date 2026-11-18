@@ -1,4 +1,4 @@
-"""Seam tests for the substrate scan (tickets #22, #42, #61 — build/substrate.py),
+"""Seam tests for the substrate scan (tickets #22, #42, #61 — cli/substrate.py),
 driven through the analysis-run entrypoint: tool_events/usage/command_grains
 filled at sync time, consumer classification, dedup, the mechanical ADR
 count, and the substrate-touching db migrations.

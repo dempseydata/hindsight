@@ -1,6 +1,6 @@
 # ADR-0031: Raw records are keyed by position, not uuid, and derived tables are versioned per deriver
 
-**Date:** 2026-11-13 · **Status:** accepted · **Decides:** issue #65 (map #59, v2 audit core)
+**Date:** 2026-11-13 · **Status:** accepted, amended by ADR-0039 (§1 migration split, §2 NULL agent key) · **Decides:** issue #65 (map #59, v2 audit core)
 
 ## Context
 

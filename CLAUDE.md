@@ -32,9 +32,7 @@ exported working tracker (88 tickets, closing comments included); GitHub's own n
 on this repo starts afresh, so cite an exported ticket by its file, not `#N`.
 
 ## Process
-`.claude/my-process.md` is the process — frontmatter the how-view reads, the house process details, then this project's specifics. This repo is the process's testing ground: changes are proven here and promoted to the house master.
-
-@.claude/my-process.md
+No local process: the house process applies — `~/Documents/Claude/my-standards/my-process.md`, read when needed, not imported.
 
 ## Stack conventions
 - The repo root is the plugin root (ADR-0036): `.claude-plugin/` manifests, `skills/ops`
@@ -49,7 +47,7 @@ on this repo starts afresh, so cite an exported ticket by its file, not `#N`.
   Change a value there, never in a view. Root `DESIGN.md` is the shipped design system,
   re-derived from the built UI (ticket 052) — an output, not an input.
 
-There is no house DESIGN.md; a product's root `DESIGN.md`, if any, is derived from its shipped UI for Impeccable's drift detection, never a source of truth. The design floor is in `.claude/my-process.md` → Design.
+There is no house DESIGN.md; a product's root `DESIGN.md`, if any, is derived from its shipped UI for Impeccable's drift detection, never a source of truth. The design floor is in the house process (`~/Documents/Claude/my-standards/my-process.md`) → Design.
 
 ## Agent skills
 
@@ -63,4 +61,4 @@ The five canonical defaults, label strings equal to role names. See `docs/agents
 Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 ## Design skills
-Direction is settled (ADR-0007, ADR-0008) — a new surface still runs the design flow in `my-process.md`, with the settled direction as an input. `taste-skill:design-taste-frontend` (the `taste-skill@taste-skill` plugin, user scope, nothing copied into the repo) is the taste-skill fallback for a new surface — it draws candidate directions from its own internal library, not a named-variant pick; `impeccable` fine-tunes only after a direction is chosen.
+Direction is settled (ADR-0007, ADR-0008) — a new surface still runs the design flow in the house process, with the settled direction as an input. `taste-skill:design-taste-frontend` (the `taste-skill@taste-skill` plugin, user scope, nothing copied into the repo) is the taste-skill fallback for a new surface — it draws candidate directions from its own internal library, not a named-variant pick; `impeccable` fine-tunes only after a direction is chosen.

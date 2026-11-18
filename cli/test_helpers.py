@@ -9,7 +9,10 @@ assert whatever the runner's clock says.
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 from substrate import LIVE_WINDOW_S
 
@@ -82,6 +85,22 @@ def big_turns(n=140, size=2000):
         role = "user" if i % 2 == 0 else "assistant"
         turns.append((role, f"turn {i} " + "x" * size))
     return turns
+
+
+def fire_capture(db, payload):
+    """Fire the capture hook (ticket #84) as Claude Code does — a subprocess
+    with the payload on stdin — against the store at `db`, which must be
+    named hindsight.db: its directory stands in for Hindsight home."""
+    assert Path(db).name == "hindsight.db"
+    subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "capture.py")],
+                   input=json.dumps(payload).encode(), check=True, timeout=30,
+                   env={**os.environ, "HINDSIGHT_HOME": str(Path(db).parent)})
+
+
+def session_start(db, transcript, cwd):
+    """The capture hook's SessionStart firing for one transcript."""
+    fire_capture(db, {"hook_event_name": "SessionStart", "source": "startup",
+                      "transcript_path": str(transcript), "cwd": str(cwd)})
 
 
 class StubRunner:

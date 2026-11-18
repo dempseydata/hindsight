@@ -393,7 +393,7 @@ SPIKE = 3               # condition 3: this run's skipped share vs the median
 SPIKE_WINDOW = 7        # ... of the last N runs
 # The breakage row as the guard writes it and the banner reads it (serve.py).
 BREAKAGE_COLS = ("id", "at", "tier", "condition", "old_version", "new_version",
-                 "key", "old_share", "new_share", "since")
+                 "key", "old_share", "new_share", "since", "session_id")
 
 
 class LimitExhausted(Exception):
@@ -533,6 +533,8 @@ def init_db(db_path):
         conn.execute("PRAGMA user_version = 9")
         conn.commit()
         fill_substrate(conn)
+    if v < 10:
+        _migrate_v10(conn)
     # Message-lens join indexes — after the gate, so a pre-#42 db grows the
     # columns before they're indexed.
     conn.executescript(
@@ -542,6 +544,123 @@ def init_db(db_path):
         " CREATE INDEX IF NOT EXISTS idx_field_histogram_session"
         " ON field_histogram(session_id);")
     return conn
+
+
+# v10 (ticket #84, ADR-0031, ADR-0039 §1-§8): additive only. Every new table
+# and column the v2 audit core needs lands here, even where a later ticket
+# is the first to write it; the drops come in v11 (#86) and v12 (#88).
+V10_TABLES = (
+    # raw store: one verbatim transcript line per row, zlib-compressed alone;
+    # a rowid table, since deriver state reads the rowid (ADR-0039 §2)
+    """CREATE TABLE IF NOT EXISTS raw_records (
+      session_id TEXT NOT NULL,
+      agent_id TEXT,              -- NULL for the parent transcript
+      byte_offset INTEGER NOT NULL,
+      line BLOB NOT NULL,         -- zlib of the exact line bytes, newline included
+      captured_at TEXT NOT NULL   -- ISO UTC, trailing Z
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_records_key"
+    " ON raw_records(session_id, ifnull(agent_id, ''), byte_offset)",
+    # the transcript registry, one row per (session, agent); outlives compaction
+    """CREATE TABLE IF NOT EXISTS transcripts (
+      session_id TEXT NOT NULL,
+      agent_id TEXT,
+      path TEXT NOT NULL,
+      high_water INTEGER NOT NULL DEFAULT 0,  -- file bytes captured so far
+      last_hash TEXT,          -- sha256 of the last captured line's bytes
+      last_size INTEGER,       -- that line's length, so verifying is one seek
+      folder_identity INTEGER  -- parent row: inode of cwd at SessionStart (ADR-0018)
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_transcripts_key"
+    " ON transcripts(session_id, ifnull(agent_id, ''))",
+    """CREATE TABLE IF NOT EXISTS records_index (
+      session_id TEXT NOT NULL,
+      agent_id TEXT,
+      byte_offset INTEGER NOT NULL,
+      type TEXT,
+      uuid TEXT,
+      timestamp TEXT,
+      provenance TEXT NOT NULL  -- 'raw' | 'v1' | 'compacted'
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_records_index_key"
+    " ON records_index(session_id, ifnull(agent_id, ''), byte_offset)",
+    "CREATE INDEX IF NOT EXISTS idx_records_index_uuid ON records_index(uuid)",
+    """CREATE TABLE IF NOT EXISTS deriver_state (
+      deriver TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      raw_rowid INTEGER NOT NULL,  -- newest raw_records rowid at the last derivation
+      PRIMARY KEY (deriver, session_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS health (
+      source TEXT PRIMARY KEY,  -- 'listener' | 'capture' | 'analysis'
+      last_success TEXT,
+      last_error TEXT,
+      error_text TEXT,
+      failing_since TEXT,  -- the first error after a success; NULL once one succeeds
+      detail TEXT          -- JSON (analysis: active raw limit, held count)
+    )""",
+    # the OTel histogram (ADR-0037 §4), per session like field_histogram
+    """CREATE TABLE IF NOT EXISTS otel_histogram (
+      session_id TEXT NOT NULL,
+      service_name TEXT NOT NULL,
+      service_version TEXT NOT NULL,
+      event_name TEXT NOT NULL,
+      key TEXT NOT NULL,  -- an attribute key; '*' = events counted
+      n INTEGER NOT NULL
+    )""",
+)
+
+BREAKAGE_V10 = (
+    # breakage: per-day, per-session, per-deriver and OTel rows share the
+    # table, so the shares relax to nullable (ADR-0039 §6)
+    """CREATE TABLE breakage_v10 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      at TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      condition INTEGER NOT NULL,  -- 1 thinned | 2 added | 3 skipped spike (history)
+                                   -- | 4 cross-check | 5 unparseable | 6 rewritten
+      old_version TEXT,
+      new_version TEXT,
+      key TEXT,
+      old_share REAL,
+      new_share REAL,
+      since TEXT,
+      acknowledged_at TEXT,
+      source TEXT,      -- e.g. 'capture', 'otel'
+      session_id TEXT,
+      day TEXT,
+      derivers TEXT
+    )""",
+    "INSERT INTO breakage_v10 (id, at, tier, condition, old_version, new_version,"
+    " key, old_share, new_share, since, acknowledged_at) SELECT id, at, tier,"
+    " condition, old_version, new_version, key, old_share, new_share, since,"
+    " acknowledged_at FROM breakage",
+    "DROP TABLE breakage",
+    "ALTER TABLE breakage_v10 RENAME TO breakage",
+)
+
+
+def _migrate_v10(conn):
+    """One transaction for the schema (a crash leaves v9 whole), then the
+    space setting, which only a full VACUUM outside it can apply."""
+    conn.execute("BEGIN")
+    for stmt in V10_TABLES:
+        conn.execute(stmt)
+    # Idempotent like the column sniffs above the gate, so a db re-entering
+    # the gate never fails or loses a column.
+    if [r[3] for r in conn.execute("PRAGMA table_info(breakage)")
+            if r[1] == "old_share"] == [1]:
+        for stmt in BREAKAGE_V10:
+            conn.execute(stmt)
+    # provenance on every derived table; every existing row is v1, and so is
+    # every row the v1 scan writes until the derivers replace it (#87)
+    for t in ("usage", "tool_events", "command_grains", "field_histogram"):
+        if "provenance" not in {r[1] for r in conn.execute(f"PRAGMA table_info({t})")}:
+            conn.execute(f"ALTER TABLE {t} ADD COLUMN provenance TEXT NOT NULL DEFAULT 'v1'")
+    conn.execute("PRAGMA user_version = 10")
+    conn.commit()
+    conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
+    conn.execute("VACUUM")
 
 
 def _reset_scanned(conn):
@@ -636,34 +755,14 @@ def head_scan(path):
     return text, first_ts, version
 
 
-def _has_otel(conn):
-    """Whether the listener has ever touched this db (ticket #50) — the
-    otel_events table is its, not the analysis run's."""
-    return bool(conn.execute("SELECT 1 FROM sqlite_master"
-                             " WHERE name = 'otel_events'").fetchone())
-
-
-def hook_folder_identity(conn, sid, has_otel):
-    """The folder identity the self-instrumentation hook recorded at this
-    session's SessionStart firing (ADR-0018), or None — pre-hook history,
-    an unreadable working directory, or (ticket #50) a db the listener has
-    never touched. A session can carry several hindsight.hook rows, one
-    per fired event, and SessionStart itself can fire more than once (a
-    resume or compact) — the earliest firing that actually carries an
-    identity wins; a stat failure on one firing doesn't hide a later one."""
-    if not has_otel:
-        return None
-    for (attrs,) in conn.execute(
-            "SELECT attributes FROM otel_events WHERE session_id=?"
-            " AND event_name='hindsight.hook' ORDER BY id", (sid,)):
-        a = json.loads(attrs)
-        if a.get("hook.event") != "SessionStart":
-            continue
-        try:
-            return int(a["folder.identity"])
-        except (KeyError, TypeError, ValueError):
-            continue  # this firing's stat failed; a later one may still carry it
-    return None
+def hook_folder_identity(conn, sid):
+    """The folder identity the capture hook recorded at this session's
+    SessionStart (ADR-0018, ADR-0033 §1), or None — pre-hook history or an
+    unreadable working directory. The first firing that carried one wins;
+    v1's `hindsight.hook` rows stay in otel_events, unread (ADR-0033 §7)."""
+    row = conn.execute("SELECT folder_identity FROM transcripts"
+                       " WHERE session_id=? AND agent_id IS NULL", (sid,)).fetchone()
+    return row[0] if row else None
 
 
 def redate_sessions(conn):
@@ -695,12 +794,11 @@ def sync_sessions(conn, root):
     grows the rescan cost forever. All file I/O happens before the write
     transaction opens (the ingest listener shares this db and its busy
     timeout is finite). A new session's folder identity and attribution
-    source ('hook') are filled from its SessionStart hook row when one
+    source ('hook') are filled from the capture hook's SessionStart identity when one
     exists (ADR-0018); a session with none is synced name-only, exactly as
     before. Returns the count inserted."""
     seen = {r[0] for r in conn.execute("SELECT id FROM sessions")}
     seen |= {r[0] for r in conn.execute("SELECT id FROM excluded_sessions")}
-    has_otel = _has_otel(conn)
     rows, excluded = [], []
     for jsonl in sorted(Path(root).glob("*/*.jsonl")):
         sid = jsonl.stem
@@ -711,7 +809,7 @@ def sync_sessions(conn, root):
         if any(sig in head[:3000] for sig in ANALYSIS_SIGS):
             excluded.append((sid,))
             continue
-        fid = hook_folder_identity(conn, sid, has_otel)
+        fid = hook_folder_identity(conn, sid)
         rows.append((sid, project_name(jsonl.parent.name), str(jsonl),
                      local_day(first_ts), version, jsonl.stat().st_size, fid,
                      "hook" if fid is not None else None))
@@ -725,25 +823,17 @@ def sync_sessions(conn, root):
 
 
 def fill_hook_identity(conn):
-    """The hook-row race (ticket #7): a session synced before the listener
-    stored its SessionStart row was filled name-only by sync_sessions and
-    would otherwise never be revisited. Each run, every identity-less
-    session that *has* a hindsight.hook row is re-read through the same
-    path sync uses. Pre-hook history has no hook rows, so it costs nothing
-    and no date rule enters; a session whose listener was down at
-    SessionStart never gains a row and is the attribute command's job."""
-    if not _has_otel(conn):
-        return
-    stamped = []
-    for (sid,) in conn.execute(
-            "SELECT DISTINCT s.id FROM sessions s JOIN otel_events o"
-            " ON o.session_id = s.id AND o.event_name = 'hindsight.hook'"
-            " WHERE s.folder_identity IS NULL"):
-        fid = hook_folder_identity(conn, sid, True)
-        if fid is not None:
-            stamped.append((fid, sid))
-    conn.executemany("UPDATE sessions SET folder_identity=?,"
-                     " attribution_source='hook' WHERE id=?", stamped)
+    """The hook-row race (ticket #7): a session synced before the capture
+    hook recorded its SessionStart identity was filled name-only by
+    sync_sessions and would otherwise never be revisited. Each run, every
+    identity-less session the hook has since stamped is filled. A session
+    with no identity recorded is the attribute command's job."""
+    conn.execute("UPDATE sessions SET attribution_source='hook', folder_identity ="
+                 " (SELECT t.folder_identity FROM transcripts t WHERE"
+                 "  t.session_id = sessions.id AND t.agent_id IS NULL)"
+                 " WHERE folder_identity IS NULL AND id IN (SELECT session_id"
+                 "  FROM transcripts WHERE agent_id IS NULL"
+                 "  AND folder_identity IS NOT NULL)")
     conn.commit()
 
 
@@ -991,7 +1081,7 @@ def check_drift(conn, at, records, skipped, notify=False):
             " key, old_share, new_share, since) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (at, tier, cond, old, new, key, a, b, since))
         written.append(dict(zip(BREAKAGE_COLS, (cur.lastrowid, at, tier, cond, old,
-                                                new, key, a, b, since))))
+                                                new, key, a, b, since, None))))
     conn.commit()
     loud = [r for r in written if r["condition"] in (1, 3)]
     if notify and loud:
@@ -1001,6 +1091,9 @@ def check_drift(conn, at, records, skipped, notify=False):
 
 def breakage_text(r):
     """One breakage row as one line — the banner's and the notification's."""
+    if r["condition"] == 6:  # written by the capture hook (#84)
+        return (f"session {r['session_id']}'s transcript no longer matches what"
+                f" was captured; capture of it stopped — seen {r['at'][:10]}")
     if r["condition"] == 3:
         return (f"skipped records are {r['new_share']:.0%} of this run's, over {SPIKE}×"
                 f" the recent median {r['old_share']:.0%} — run {r['at'][:10]}")

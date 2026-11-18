@@ -24,12 +24,11 @@ import unittest.mock
 from pathlib import Path
 
 import analyze
-import listener
 from analyze import LimitExhausted, run_analysis
 from test_helpers import (DbHelpers, ENTRY_A, ENTRY_B, FIXTURE_TURNS,
                           MERGED_ENTRY, REFUSAL_MD, SKIP_MD, StubRunner,
-                          USAGE, _backdate, big_turns, rec, write_records,
-                          write_transcript)
+                          USAGE, _backdate, big_turns, fire_capture, rec,
+                          session_start, write_records, write_transcript)
 
 
 class AnalyzeTest(DbHelpers, unittest.TestCase):
@@ -554,9 +553,9 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
 
 class FolderIdentityTest(DbHelpers, unittest.TestCase):
     """Sync fills a session's folder identity and attribution source from
-    its SessionStart hook row (ticket #4, ADR-0018), driven through the
-    analysis-run entrypoint over a fixture transcript root and the shared
-    otel_events table the listener also writes to."""
+    what the capture hook recorded at its SessionStart (ticket #4, ADR-0018,
+    ticket #84), driven through the capture hook and the analysis-run
+    entrypoint over a fixture transcript root."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -566,6 +565,8 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         self.db = base / "hindsight.db"
         self.work = base / "analysis"
         self.proj = self.root / "test-project"
+        self.folder = base / "repos" / "test-project"
+        self.folder.mkdir(parents=True)
 
     def run_pipeline(self, model_runner):
         base = Path(self.tmp.name)
@@ -573,35 +574,23 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
                       model_runner=model_runner,
                       claude_dir=base / "claude", projects_dir=base / "repos")
 
-    def seed_hook_row(self, sid, attributes_json):
-        conn = analyze.init_db(self.db)
-        conn.executescript(listener.SCHEMA)
-        conn.execute(
-            "INSERT INTO otel_events (event_name, session_id, timestamp, attributes)"
-            " VALUES ('hindsight.hook', ?, '2026-08-01T09:00:00Z', ?)",
-            (sid, attributes_json))
-        conn.commit()
-        conn.close()
-
     def identity_row(self, sid):
         return next(r for r in self.rows(
             "SELECT id, folder_identity, attribution_source FROM sessions")
             if r["id"] == sid)
 
-    def test_sync_fills_identity_and_source_from_session_start_row(self):
-        write_transcript(self.proj / "sess-id.jsonl",
-                          [("user", "add a feature"), ("assistant", "added")])
-        self.seed_hook_row(
-            "sess-id",
-            '{"hook.event": "SessionStart", "folder.identity": "424242"}')
+    def test_sync_fills_identity_and_source_from_session_start(self):
+        t = self.proj / "sess-id.jsonl"
+        write_transcript(t, [("user", "add a feature"), ("assistant", "added")])
+        session_start(self.db, t, self.folder)
 
         self.run_pipeline(StubRunner([ENTRY_A]))
 
         row = self.identity_row("sess-id")
-        self.assertEqual(row["folder_identity"], 424242)
+        self.assertEqual(row["folder_identity"], self.folder.stat().st_ino)
         self.assertEqual(row["attribution_source"], "hook")
 
-    def test_sync_leaves_session_name_only_without_a_hook_row(self):
+    def test_sync_leaves_session_name_only_without_a_session_start(self):
         write_transcript(self.proj / "sess-noid.jsonl",
                           [("user", "add a feature"), ("assistant", "added")])
 
@@ -613,49 +602,28 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
 
     def test_sync_falls_through_a_failed_session_start_firing_to_a_later_one(self):
         # A resumed session can fire SessionStart twice; the first firing's
-        # stat failed (no folder.identity), the second succeeded — the
-        # valid one must still be picked up, not hidden by the first.
-        write_transcript(self.proj / "sess-resumed.jsonl",
-                          [("user", "add a feature"), ("assistant", "added")])
-        conn = analyze.init_db(self.db)
-        conn.executescript(listener.SCHEMA)
-        conn.executemany(
-            "INSERT INTO otel_events (event_name, session_id, timestamp, attributes)"
-            " VALUES ('hindsight.hook', ?, ?, ?)",
-            [("sess-resumed", "2026-08-01T09:00:00Z",
-              '{"hook.event": "SessionStart"}'),
-             ("sess-resumed", "2026-08-01T09:05:00Z",
-              '{"hook.event": "SessionStart", "folder.identity": "99"}')])
-        conn.commit()
-        conn.close()
+        # stat failed, the second succeeded — the valid one must still be
+        # picked up, not hidden by the first.
+        t = self.proj / "sess-resumed.jsonl"
+        write_transcript(t, [("user", "add a feature"), ("assistant", "added")])
+        session_start(self.db, t, self.folder / "gone")
+        session_start(self.db, t, self.folder)
 
         self.run_pipeline(StubRunner([ENTRY_A]))
 
         row = self.identity_row("sess-resumed")
-        self.assertEqual(row["folder_identity"], 99)
+        self.assertEqual(row["folder_identity"], self.folder.stat().st_ino)
         self.assertEqual(row["attribution_source"], "hook")
 
-    def test_sync_ignores_non_session_start_hook_rows(self):
-        write_transcript(self.proj / "sess-stop.jsonl",
-                          [("user", "add a feature"), ("assistant", "added")])
-        self.seed_hook_row(
-            "sess-stop", '{"hook.event": "Stop", "hook.cpu_ms": 5}')
+    def test_sync_ignores_identity_on_other_events(self):
+        t = self.proj / "sess-stop.jsonl"
+        write_transcript(t, [("user", "add a feature"), ("assistant", "added")])
+        fire_capture(self.db, {"hook_event_name": "Stop", "transcript_path": str(t),
+                               "cwd": str(self.folder)})
 
         self.run_pipeline(StubRunner([ENTRY_A]))
 
         row = self.identity_row("sess-stop")
-        self.assertIsNone(row["folder_identity"])
-        self.assertIsNone(row["attribution_source"])
-
-    def test_sync_without_otel_table_leaves_session_name_only(self):
-        # Ticket #50: a db the listener has never touched has no otel
-        # tables at all — sync must not raise.
-        write_transcript(self.proj / "sess-nolistener.jsonl",
-                          [("user", "add a feature"), ("assistant", "added")])
-
-        self.run_pipeline(StubRunner([ENTRY_A]))
-
-        row = self.identity_row("sess-nolistener")
         self.assertIsNone(row["folder_identity"])
         self.assertIsNone(row["attribution_source"])
 
@@ -673,12 +641,80 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 9)
+                conn.execute("PRAGMA user_version").fetchone()[0], 10)
         finally:
             conn.close()
         row = self.identity_row("sess-old")
         self.assertIsNone(row["folder_identity"])
         self.assertIsNone(row["attribution_source"])
+
+
+class V10MigrationTest(DbHelpers, unittest.TestCase):
+    """Ticket #84 (ADR-0031, ADR-0039 §1): the v10 migration over a v9
+    database keeps every row, marks the derived rows `v1`, keeps the stored
+    session day, and sets incremental auto-vacuum."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.db = self.base / "hindsight.db"
+
+    def test_v9_rows_survive_and_derived_rows_are_v1(self):
+        conn = sqlite3.connect(self.db)
+        conn.executescript(analyze.SCHEMA)  # the v9 shape v10 starts from
+        conn.executescript("""
+            INSERT INTO sessions (id, project, transcript_path, date, status,
+              skipped_records, audited_size)
+              VALUES ('s-v1', 'p', '/gone/s-v1.jsonl', '2026-08-01', 'done', 0, 10);
+            INSERT INTO audit (session_id, project, date, skip, markdown,
+              prompt_version, model) VALUES ('s-v1', 'p', '2026-08-01', 0,
+              '### Did', 'what-v3', 'm');
+            INSERT INTO tool_events (session_id, name, error_text)
+              VALUES ('s-v1', 'Edit', 'boom');
+            INSERT INTO usage (session_id, at, input_tokens, output_tokens,
+              cache_creation_input_tokens, cache_read_input_tokens)
+              VALUES ('s-v1', '2026-08-01T10:00:00Z', 1, 2, 3, 4);
+            INSERT INTO command_grains (session_id, command) VALUES ('s-v1', '/x');
+            INSERT INTO field_histogram (session_id, version, scope, key, n)
+              VALUES ('s-v1', '2.0', 'user', '*', 5);
+            INSERT INTO breakage (at, tier, condition, old_version, new_version,
+              key, old_share, new_share, since)
+              VALUES ('2026-08-02T00:00:00Z', 'problem', 1, '1.0', '2.0',
+              'user.x', 0.95, 0.1, '2026-08-01');
+            PRAGMA user_version = 9;
+        """)
+        conn.close()
+
+        run_analysis(root=self.base / "projects", db_path=self.db,
+                     work_dir=self.base / "analysis", model_runner=StubRunner([]),
+                     claude_dir=self.base / "claude", projects_dir=self.base / "repos")
+
+        for table in ("tool_events", "usage", "command_grains", "field_histogram"):
+            with self.subTest(table=table):
+                self.assertEqual(self.rows(f"SELECT provenance FROM {table}"),
+                                 [{"provenance": "v1"}])
+        self.assertEqual(self.rows("SELECT error_text FROM tool_events"),
+                         [{"error_text": "boom"}])
+        self.assertEqual(self.rows("SELECT date, status, audited_size FROM sessions"),
+                         [{"date": "2026-08-01", "status": "done", "audited_size": 10}])
+        self.assertEqual(len(self.audit_rows()), 1)
+        self.assertEqual(self.rows(
+            "SELECT condition, key, old_share, new_share, since, source, session_id"
+            " FROM breakage"),
+            [{"condition": 1, "key": "user.x", "old_share": 0.95, "new_share": 0.1,
+              "since": "2026-08-01", "source": None, "session_id": None}])
+        conn = sqlite3.connect(self.db)
+        try:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
+            self.assertEqual(conn.execute("PRAGMA auto_vacuum").fetchone()[0], 2)
+            for table in ("raw_records", "transcripts", "records_index",
+                          "deriver_state", "health", "otel_histogram"):
+                with self.subTest(table=table):
+                    self.assertEqual(
+                        conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
+        finally:
+            conn.close()
 
 
 def sha(text):
@@ -941,7 +977,7 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 9)
+                conn.execute("PRAGMA user_version").fetchone()[0], 10)
             row = conn.execute("SELECT folder_identity, name, present"
                                " FROM project_presence").fetchone()
         finally:
@@ -970,25 +1006,14 @@ class IdentityFixture(DbHelpers):
                       model_runner=model_runner,
                       claude_dir=base / "claude", projects_dir=self.repos)
 
-    def seed_hook_row(self, sid, identity):
-        conn = analyze.init_db(self.db)
-        conn.executescript(listener.SCHEMA)
-        conn.execute(
-            "INSERT INTO otel_events (event_name, session_id, timestamp, attributes)"
-            " VALUES ('hindsight.hook', ?, '2026-08-01T09:00:00Z', ?)",
-            (sid, json.dumps({"hook.event": "SessionStart",
-                              "folder.identity": str(identity)})))
-        conn.commit()
-        conn.close()
-
     def open_session(self, folder_name, sid, date="2026-08-01T10:00:00Z"):
         """A session opened with cwd = repos/folder_name — the transcript
         directory Claude Code encodes it under and the hook's stamped
         identity are both the folder's *live* state at this instant, exactly
         as sync_sessions/hook_folder_identity see it for real."""
-        write_transcript(self.root / folder_name / f"{sid}.jsonl",
-                          [("user", "do work"), ("assistant", "done")], date=date)
-        self.seed_hook_row(sid, (self.repos / folder_name).stat().st_ino)
+        t = self.root / folder_name / f"{sid}.jsonl"
+        write_transcript(t, [("user", "do work"), ("assistant", "done")], date=date)
+        session_start(self.db, t, self.repos / folder_name)
 
     def identity_of(self):
         return {r["id"]: (r["folder_identity"], r["attribution_source"])
@@ -1184,7 +1209,7 @@ class AttributeTest(IdentityFixture, unittest.TestCase):
     identity on the next run, no operator needed."""
 
     def sync_name_only(self, folder_name, *sids_and_dates):
-        """Transcripts under folder_name with no hook rows — pre-hook history
+        """Transcripts under folder_name with no SessionStart — pre-hook history
         — synced by one pipeline run. Returns the folder's live inode."""
         (self.repos / folder_name).mkdir(exist_ok=True)
         for sid, date in sids_and_dates:
@@ -1331,13 +1356,13 @@ class AttributeTest(IdentityFixture, unittest.TestCase):
         self.assertIn("1 session", out.getvalue())
 
     def test_hook_row_that_landed_after_sync_fills_on_the_next_run(self):
-        """The hook-row race (#5's review): sync ran before the listener
-        stored the SessionStart row. The per-run fill catches it; a session
-        with no hook row at all stays name-only."""
+        """The hook-row race (#5's review): sync ran before the capture
+        hook recorded the SessionStart identity. The per-run fill catches
+        it; a session with no identity recorded stays name-only."""
         ident = self.sync_name_only("proj", ("s-raced", "2026-08-01T10:00:00Z"),
                                     ("s-prehook", "2026-08-01T11:00:00Z"))
         self.assertEqual(self.identity_of()["s-raced"], (None, None))
-        self.seed_hook_row("s-raced", ident)
+        session_start(self.db, self.root / "proj" / "s-raced.jsonl", self.repos / "proj")
         self.run_pipeline(StubRunner([]))
         self.assertEqual(self.identity_of(), {"s-raced": (ident, "hook"),
                                               "s-prehook": (None, None)})

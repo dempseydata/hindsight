@@ -1,12 +1,35 @@
 {
-  "description": "v1's SessionStart folder-identity hook (ADR-0018), registered here until the capture hook lands (ADR-0036).",
+  "description": "The capture hook (ADR-0033): raw capture on Stop and SubagentStop, folder identity on SessionStart. Async, so a session never waits on it.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/cli/hook.py\""
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/cli/capture.py\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/cli/capture.py\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/cli/capture.py\"",
+            "async": true
           }
         ]
       }

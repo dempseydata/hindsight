@@ -148,9 +148,12 @@ def breakage_banner(conn):
         f'<div class="breakage {r["tier"]}"><span class="o-badge'
         f' o-{"problem" if r["tier"] == "problem" else "ok"}">{r["tier"]}</span>'
         f" <b>transcript shape changed</b> "
-        f"{html.escape(breakage_text(r))} · ingest continued; rows since may be"
-        f'{" thin" if r["tier"] == "problem" else " unaffected"}. '
-        f"<code>analyze.py acknowledge-breakage {r['id']}</code> to close</div>"
+        f"{html.escape(breakage_text(r))} · "
+        + ("capture stopped appending for this session until resolved. "
+           if r["condition"] == 6 else  # the capture hook's (#84)
+           "ingest continued; rows since may be"
+           f'{" thin" if r["tier"] == "problem" else " unaffected"}. ')
+        + f"<code>analyze.py acknowledge-breakage {r['id']}</code> to close</div>"
         for r in rows)
 
 

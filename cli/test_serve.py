@@ -1079,6 +1079,17 @@ class ServerTest(unittest.TestCase):
         self.assertIn('<div class="breakage informational"><span class="o-badge o-ok">'
                       "informational</span>", body)
 
+    def test_capture_breakage_banner_says_capture_stopped(self):
+        """Condition 6 (#84): capture, not ingest, and it stopped."""
+        body = self.serve_once(
+            "INSERT INTO breakage (at, tier, condition, source, session_id)"
+            " VALUES ('2026-08-06T00:00:00Z', 'problem', 6, 'capture', 'sx');"
+            " DELETE FROM project_presence")
+        banner = body[body.index("session sx"):]
+        banner = banner[:banner.index("</div>")]
+        self.assertNotIn("ingest continued", banner)
+        self.assertIn("capture stopped appending for this session until resolved", banner)
+
     def test_what_ledger_is_one_card_table(self):
         """#54 (ADR-0029 §2, ADR-0030 §10): the ledger is one card-table —
         a tinted uppercase header row, day headings as tinted group rows,

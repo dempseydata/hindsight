@@ -43,8 +43,8 @@ render beneath calls; OTEL-fed sparks shade the pre-coverage region.
 Pricing/cost columns are never rendered (ADR-0003).
 
 How-view (ticket #65, ADR-0010/0011/0012): one declaring project at a time
-(`?p=`; the selector lists projects whose `.claude/my-process.md` exists —
-absent declaration = no view), rendered server-side with no script: the
+(`?p=`; the selector lists projects whose resolved declaration is not
+absent — `local-process.md` reading `none` = no view, ADR-0032), rendered server-side with no script: the
 status card (model-written Built / Reversed / Now from `status_narrative`,
 marked stale when its ledger hash no longer matches the live ledger, the
 mechanical line when absent) over the phase runs newest first, beside the
@@ -565,12 +565,12 @@ def _ms(v):
 
 
 def declaring_projects(conn, projects_dir):
-    """Selector entries: projects in the DB whose declaration file exists
-    (#64 addendum — absent = no view), busiest first."""
+    """Selector entries: projects in the DB whose resolved declaration is
+    not absent (#64 addendum, ADR-0032 — `none` = no view), busiest first."""
     return [p for (p,) in conn.execute(
         "SELECT project FROM sessions WHERE project IS NOT NULL"
         " GROUP BY project ORDER BY COUNT(*) DESC, project")
-        if (Path(projects_dir) / p / ".claude" / "my-process.md").is_file()]
+        if how.resolve_declaration(Path(projects_dir) / p)[0] != "absent"]
 
 
 def _hue(d, stage):
@@ -677,13 +677,14 @@ def _aside(d):
     """Stated-process panel (valid) or the invalidity banner; the trail
     tally closes both."""
     dec = d["declaration"]
+    # the source line (ADR-0032): whose declaration this is
+    source = f'<p class="note">process: <code>{html.escape(dec["source"])}</code></p>'
     tally = (f'<p class="note">{len(d["sessions"])} sessions · {len(d["trail"])} trail events'
              f" · {len({local_day(e['at']) for e in d['trail']})} active days</p>")
     if dec["state"] == "invalid":
         return (f'<div class="warn"><b>{_icon("alert-triangle")}Declaration invalid — ignored whole.</b>'
-                f"<br>{html.escape(dec['error'])}<br><code>.claude/my-process.md</code></div>"
-                + tally)
-    out = [f'<h2>{_icon("list-check")}Stated process</h2>']
+                f"<br>{html.escape(dec['error'])}</div>" + source + tally)
+    out = [f'<h2>{_icon("list-check")}Stated process</h2>', source]
     for s, agg in zip(dec["stages"], d["summary"]):
         mk = " · ".join(f"{k}: {', '.join(s[k])}" for k in how.MARKER_KEYS if s[k])
         if agg["count"]:
@@ -716,8 +717,8 @@ def how_html(conn, project, projects_dir):
     falls back to the busiest declaring project."""
     projects = declaring_projects(conn, projects_dir)
     if not projects:
-        return ("<p>No project declares a process — add a <code>stages:</code> fence at"
-                " line 1 of a project's <code>.claude/my-process.md</code> (ADR-0011).</p>")
+        return ("<p>No project declares a process — every project's root"
+                " <code>local-process.md</code> reads <code>none</code> (ADR-0032).</p>")
     unknown = ""
     if project not in projects:
         if project:

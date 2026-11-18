@@ -17,7 +17,11 @@ import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import how
 from substrate import LIVE_WINDOW_S
+
+# never the operator's real house master (#94): a CLAUDE.md that cannot exist
+how.USER_CLAUDE_MD = Path(os.devnull) / "CLAUDE.md"
 
 os.environ["TZ"] = "America/New_York"
 time.tzset()

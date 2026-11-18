@@ -17,6 +17,7 @@ from pathlib import Path
 import analyze
 import listener
 import serve
+import test_helpers  # noqa: F401 — the house-master guard (#94)
 
 # Day buckets are the operator's local day (ADR-0014), so the fixtures
 # need a pinned zone or they assert whatever the runner's clock says.
@@ -228,10 +229,13 @@ DECL = "---\nstages:\n  - name: Ideate\n    commands: [grill-me]\n" \
 
 
 def fixture_projects(root):
-    for name, text in (("big", DECL), ("small", DECL.replace("commands", "cmds", 1))):
-        d = Path(root) / name / ".claude"
+    # "pruned" and the scratch path opt out; without a local file the
+    # (here unresolvable) house master would make them invalid, not absent
+    for name, text in (("big", DECL), ("small", DECL.replace("commands", "cmds", 1)),
+                       ("pruned", "none\n"), ("-private-tmp-scratch", "none\n")):
+        d = Path(root) / name
         d.mkdir(parents=True)
-        (d / "my-process.md").write_text(text)
+        (d / "local-process.md").write_text(text)
 
 
 class ChipPolicyTest(unittest.TestCase):
@@ -298,9 +302,9 @@ class QuietHowTest(unittest.TestCase):
                          " VALUES ('q1', '/clear', '2026-08-02T10:00:00Z')")
             conn.commit()
             conn.close()
-            d = Path(tmp) / "quiet" / ".claude"
+            d = Path(tmp) / "quiet"
             d.mkdir(parents=True)
-            (d / "my-process.md").write_text(DECL)
+            (d / "local-process.md").write_text(DECL)
             self.server = serve.make_server(0, Path(tmp) / "hindsight.db", tmp)
             self.port = self.server.server_address[1]
             threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
@@ -482,6 +486,9 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn('class="panel', body)
         self.assertIn("used: grilling, implement", body)
         self.assertIn("Stated process", body)
+        # the source line beside the stated-process panel (#94, ADR-0032)
+        self.assertIn('Stated process</h2><p class="note">process: <code>local-process.md</code></p>',
+                      body)
         self.assertNotIn('id="chart"', body)       # no shared filter chrome
         self.assertNotIn("const DATA", body)       # no filter data blob (#83:
         # the theme pin script is shared chrome and does render here)
@@ -542,6 +549,7 @@ class ServerTest(unittest.TestCase):
         _, body = self.get("/how?p=small")
         self.assertIn("Declaration invalid", body)
         self.assertIn("line 4: unknown key `cmds`", body)
+        self.assertIn('</div><p class="note">process: <code>local-process.md</code></p>', body)
         self.assertIn("unbucketed", body)
         self.assertIn("used: implement", body)     # trail still shown
         # the unbucketed lane takes the run's card, in the off hue (#55)

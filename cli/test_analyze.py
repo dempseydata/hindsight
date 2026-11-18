@@ -34,6 +34,7 @@ from test_helpers import (DbHelpers, ENTRY_A, ENTRY_B, FIXTURE_TURNS,
                           write_records, write_transcript)
 
 
+
 class AnalyzeTest(DbHelpers, unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1113,8 +1114,8 @@ class RenameTest(IdentityFixture, unittest.TestCase):
         narrative pass makes no call — the one call in the second run is
         the new session's what-pass."""
         import how
-        (self.repos / "old-name" / ".claude").mkdir(parents=True)
-        (self.repos / "old-name" / ".claude" / "my-process.md").write_text(
+        (self.repos / "old-name").mkdir(parents=True)
+        (self.repos / "old-name" / "local-process.md").write_text(
             "---\nstages:\n  - name: Build\n    skills: [tdd]\n---\n")
         self.open_session("old-name", "sess-1")
         self.run_pipeline(StubRunner([ENTRY_A]))
@@ -1724,8 +1725,8 @@ class NarrativeTest(DbHelpers, unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "h.db"
         self.projects = Path(self.tmp.name) / "projects"
-        (self.projects / "p" / ".claude").mkdir(parents=True)
-        (self.projects / "p" / ".claude" / "my-process.md").write_text(
+        (self.projects / "p").mkdir(parents=True)
+        (self.projects / "p" / "local-process.md").write_text(
             "---\nstages:\n  - name: Build\n    skills: [tdd]\n---\n")
         self.conn = analyze.init_db(self.db)
         self.conn.execute("INSERT INTO sessions (id, project, transcript_path, date, status)"
@@ -1767,7 +1768,7 @@ class NarrativeTest(DbHelpers, unittest.TestCase):
             self.assertEqual(self.stored(), [], bad)
 
     def test_undeclared_project_skipped_without_a_call(self):
-        (self.projects / "p" / ".claude" / "my-process.md").unlink()
+        (self.projects / "p" / "local-process.md").unlink()   # the master decides
         analyze.refresh_narratives(self.conn, self.projects,
                                    lambda p: self.fail("model called"))
         self.assertEqual(self.stored(), [])

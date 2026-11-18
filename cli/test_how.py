@@ -1,14 +1,17 @@
 """Tests for the how-view data pipeline (ticket #63, ADR-0010/0011):
-declaration parsing with its three states, marker matching, trail assembly
-and the dumb checker — over a fixture DB built from the real schema."""
+declaration parsing with its three states, process resolution (#94,
+ADR-0032), marker matching, trail assembly and the dumb checker — over a
+fixture DB built from the real schema."""
 import os
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import analyze
 import how
+import test_helpers  # noqa: F401 — the house-master guard (#94)
 
 # Day buckets are the operator's local day (ADR-0014), so the fixtures
 # need a pinned zone or they assert whatever the runner's clock says.
@@ -86,10 +89,9 @@ class Parse(unittest.TestCase):
 
 
     def test_live_fixture_hindsight_declaration(self):
-        state, stages, err = how.read_declaration(analyze.REPO)
-        if state == "absent":  # app-only checkout: the working repo's declaration doesn't ship
-            self.skipTest("live fixture .claude/my-process.md not present")
-        self.assertEqual((state, err), ("valid", None))
+        """Hindsight's own root local-process.md (#94) wins over any master."""
+        state, stages, err, source = how.resolve_declaration(analyze.REPO)
+        self.assertEqual((state, err, source), ("valid", None, "local-process.md"))
         self.assertEqual([s["name"] for s in stages],
                          ["Ideate", "Design", "Plan", "Build", "Release"])
         # A built-in CLI command is never declared, so it marks no stage. (The
@@ -100,15 +102,15 @@ class Parse(unittest.TestCase):
         self.assertEqual(how.stage_for(stages, "command", "/mattpocock-skills:to-tickets"), "Plan")
         self.assertEqual(how.stage_for(stages, "skill", "ponytail:ponytail-review"), "Build")
         self.assertEqual(how.stage_for(stages, "write", "docs/adr/0011-x.md"), "Plan")
+        for path in ("cli/how.py", "eval/what_run.py", "skills/ops/SKILL.md"):
+            self.assertEqual(how.stage_for(stages, "write", path), "Build", path)
 
     def test_unreadable_file_is_invalid_not_absent(self):
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / ".claude").mkdir()
-            (Path(d) / ".claude" / "my-process.md").mkdir()  # a dir: exists, unreadable
-            state, _, err = how.read_declaration(d)
+            (Path(d) / "local-process.md").mkdir()  # a dir: exists, unreadable
+            state, _, err, _ = how.resolve_declaration(d)
             self.assertEqual(state, "invalid")
             self.assertIn("cannot read", err)
-        self.assertEqual(how.read_declaration(Path(d) / "gone")[0], "absent")
 
 
 class Match(unittest.TestCase):
@@ -184,13 +186,15 @@ class Trail(unittest.TestCase):
         self.tmp.cleanup()
 
     def declare(self, text):
-        d = self.root / "proj" / ".claude"
-        d.mkdir(parents=True)
-        (d / "my-process.md").write_text(text)
+        d = self.root / "proj"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "local-process.md").write_text(text)
 
     def test_raw_trail_when_absent(self):
+        self.declare("none\n")
         data = how.how_data(self.conn, "proj", self.root)
-        self.assertEqual(data["declaration"], {"state": "absent", "error": None, "stages": []})
+        self.assertEqual(data["declaration"], {"state": "absent", "error": None, "stages": [],
+                                               "source": "local-process.md"})
         self.assertEqual([(e["kind"], e["name"]) for e in data["trail"]], [
             ("command", "/clear"), ("command", "/mattpocock-skills:wayfinder"),
             ("skill", "mattpocock-skills:grilling"), ("write", "docs/adr/0001.md"),
@@ -272,7 +276,114 @@ class Trail(unittest.TestCase):
     def test_unknown_project_is_empty_not_error(self):
         data = how.how_data(self.conn, "nope", self.root)
         self.assertEqual(data["trail"], [])
-        self.assertEqual(data["declaration"]["state"], "absent")
+        # no folder, so no local file: the (here unresolvable) master decides
+        self.assertEqual(data["declaration"]["state"], "invalid")
+
+
+class Resolution(unittest.TestCase):
+    """Process resolution (#94, ADR-0032), through how_data: a root
+    local-process.md decides; otherwise the house master, found through the
+    pointer under `## Process` in an injected user-level CLAUDE.md."""
+    MASTER = VALID.replace("build/", "cli/")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.conn = fixture(self.root)
+        (self.root / "proj").mkdir()
+        self.claude_md = self.root / "home" / ".claude" / "CLAUDE.md"
+        self.claude_md.parent.mkdir(parents=True)
+        self.master = self.root / "standards" / "my-process.md"
+        self.master.parent.mkdir()
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def point(self, pointer=None, master=MASTER):
+        pointer = pointer or f"`{self.master}`"
+        # a my-process.md token outside `## Process` is never the pointer
+        self.claude_md.write_text(
+            "# Me\n\n## Notes\nSee `elsewhere/my-process.md`.\n\n"
+            f"## Process\nThe master is {pointer}; also `.claude/my-process.md`.\n\n"
+            "## Constraints\n- none\n")
+        if master is not None:
+            self.master.write_text(master)
+
+    def dec(self):
+        return how.how_data(self.conn, "proj", self.root, claude_md=self.claude_md)["declaration"]
+
+    def local(self, text):
+        (self.root / "proj" / "local-process.md").write_text(text)
+
+    def test_local_file_states(self):
+        self.point()   # a valid master, which a local file always overrides
+        for text, state in (("  none\n", "absent"), (VALID, "valid"),
+                            ("", "invalid"), ("# prose, no fence\n", "invalid"),
+                            ("---\nstages:\n  - nam: X\n---\n", "invalid")):
+            self.local(text)
+            d = self.dec()
+            self.assertEqual((d["state"], d["source"]), (state, "local-process.md"), text)
+            self.assertEqual(d["error"] is None, state != "invalid", text)
+
+    def test_master_resolves_through_the_pointer(self):
+        self.point()
+        d = self.dec()
+        self.assertEqual((d["state"], d["error"]), ("valid", None))
+        self.assertEqual(d["source"], f"house master {self.master}")
+        self.assertEqual(d["stages"][1]["paths"], ["cli/"])
+
+    def test_pointer_expands_home(self):
+        self.point(pointer="`~/standards/my-process.md`")
+        with unittest.mock.patch.dict(os.environ, {"HOME": str(self.root)}):
+            d = self.dec()
+        self.assertEqual((d["state"], d["source"]), ("valid", f"house master {self.master}"))
+
+    def test_claude_my_process_is_never_read(self):
+        (self.root / "proj" / ".claude").mkdir()
+        (self.root / "proj" / ".claude" / "my-process.md").write_text(VALID)
+        self.assertEqual(self.dec()["state"], "invalid")   # no CLAUDE.md: master unresolvable
+
+    def test_unresolvable_master_is_invalid_with_path_and_reason(self):
+        cases = [
+            (lambda: None, str(self.claude_md), "cannot read"),
+            (lambda: self.claude_md.write_text("# Me\n## Work\n`x/my-process.md`\n"),
+             str(self.claude_md), "no `## Process` heading"),
+            (lambda: self.claude_md.write_text("# Me\n## Process\nno pointer\n## Next\n"
+                                               "`x/my-process.md`\n"),
+             str(self.claude_md), "pointer"),
+            (lambda: self.point(master=None), str(self.master), "cannot read"),
+            (lambda: self.point(master="# prose only\n"), str(self.master), "fence"),
+            (lambda: self.point(master="---\nstages:\n  - nam: X\n---\n"),
+             str(self.master), "line 3"),
+        ]
+        for i, (arrange, path, reason) in enumerate(cases):
+            arrange()
+            d = self.dec()
+            self.assertEqual((d["state"], d["stages"]), ("invalid", []), i)
+            self.assertIn(path, d["error"], i)
+            self.assertIn(reason, d["error"], i)
+            self.assertTrue(d["source"].startswith("house master"), i)
+            self.claude_md.unlink(missing_ok=True)
+            self.master.unlink(missing_ok=True)
+
+    def test_three_layout_marker_matches_only_the_existing_path(self):
+        """One master serves every house layout (ADR-0032): its Ideate paths
+        list all three; this project's writes sit under the born-public one,
+        and an unanchored look-alike never matches."""
+        self.point(master="---\nstages:\n  - name: Ideate\n"
+                          "    paths: [ideation/, background/ideation/, docs/ideation/]\n---\n")
+        p = self.root / "proj"
+        self.conn.executemany(
+            "INSERT INTO tool_events (session_id, name, at, file_path, consumer_type,"
+            " consumer) VALUES ('s1', 'Write', ?, ?, 'builtin', 'Write')",
+            [("2026-08-01T11:00:00Z", f"{p}/background/ideation/framing.md"),
+             ("2026-08-01T11:01:00Z", f"{p}/notes/ideation/x.md")])
+        data = how.how_data(self.conn, "proj", self.root, claude_md=self.claude_md)
+        stages = {e["name"]: e["stage"] for e in data["trail"] if e["kind"] == "write"}
+        self.assertEqual(stages["background/ideation/framing.md"], "Ideate")
+        self.assertIsNone(stages["notes/ideation/x.md"])
+
 
 class RunLedger(unittest.TestCase):
     """Phase runs (ticket #64): ≥3 fold, majority titling, first-appearance
@@ -363,9 +474,9 @@ class Narrative(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.conn = fixture(self.root)
-        d = self.root / "proj" / ".claude"
+        d = self.root / "proj"
         d.mkdir(parents=True)
-        (d / "my-process.md").write_text(VALID)
+        (d / "local-process.md").write_text(VALID)
         self.d = how.how_data(self.conn, "proj", self.root)
         self.assertTrue(self.d["runs"])   # the fixture must yield runs
 

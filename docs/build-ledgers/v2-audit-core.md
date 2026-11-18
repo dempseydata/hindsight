@@ -17,7 +17,8 @@ Contracts: ADR-0039.
 | #89 | closed | dd5fb93 | 1 | 294 tests, 56 s | |
 | #90 | closed | 16701b1 | 1 | 298 tests, 55 s | where-view wording: optional human look |
 | #92 | closed | de496fa | 2 | 305 tests, 61 s | suite at 2× baseline — next implementer moves tests to cheaper seams |
-| #93 | built, open for human run | (this commit) | 1 | 320 tests, 39 s | tests moved to cheaper seams (61 → 39 s); live install, launchd, ~100 ms budget need a human |
+| #93 | built, open for human run | 6336548 | 1 | 320 tests, 39 s | tests moved to cheaper seams (61 → 39 s); live install, launchd, ~100 ms budget need a human |
+| #94 | built, open for review | (this commit) | 1 | 326 tests, 36 s | draft `local-process.md` for review; house master frontmatter edit is the operator's |
 
 ## Owed
 
@@ -70,6 +71,8 @@ Contracts: ADR-0039.
 - #93: health lines prefixed "hindsight: ", joined by "; "; an unexpected exception prints "health check failed: …"; exit is always 0 — ADR? no
 - #93: SessionStart health entry is synchronous with timeout 5; launchctl calls time out at 1 s; launchd labels and `domain()` moved to `cli/home.py` — ADR? no
 - #93: no analysis-staleness rule (no source names a threshold; ADR-0033 rejects a fixed age), so a migration failure (no health row, #85) is not surfaced at SessionStart — ADR? yes (operator decision: is a stale analysis row worth a line?)
+- #94: hindsight's `local-process.md` sits at the repo root (tracked); Build paths `build/, cli/, skills/, eval/` so pre-plugin work still buckets — ADR? no
+- #94: a relative pointer is read from the CLAUDE.md's folder; the `## Process` section ends at the next `#`/`##` heading; `source` is `local-process.md` or `house master <path>`; the selector lists every project not `absent` — ADR? no
 
 ## Blocked
 
@@ -106,3 +109,8 @@ Contracts: ADR-0039.
 - #93: a hung `launchctl print` reports "not installed"; the timed-out child is left running.
 - #93: a plain file at `current` is overwritten without a message.
 - #93: a healthy run takes ~0.2 s including Python startup, against the ~100 ms budget.
+- #94: a dangling `local-process.md` symlink silently falls back to the master.
+- #94: the source line shows a relative pointer unnormalised (`../..`).
+- #94: house-master errors lack the `line N:` prefix the docstring promises.
+- #94: a `## Process` heading inside a code fence is matched.
+- #94: `docs/` (automation, flows, permissions, variables, architecture) still names `.claude/my-process.md`.

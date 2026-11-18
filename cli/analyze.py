@@ -1586,11 +1586,11 @@ def refresh_narratives(conn, projects_dir, model_runner):
     for (project,) in conn.execute("SELECT DISTINCT project FROM sessions"
                                    " WHERE project IS NOT NULL ORDER BY 1").fetchall():
         # No valid declaration: no how-view, no narrative (#64). Asked via
-        # read_declaration, ADR-0011's one read location — a second
-        # `is_file()` here was a duplicate that could drift from it (#72).
-        # Still a short-circuit: how_data scans every event for the project,
-        # which a non-declaring project should not pay on every run.
-        if how.read_declaration(Path(projects_dir) / project)[0] != "valid":
+        # resolve_declaration (ADR-0032), the view's own resolution — a
+        # second check here could drift from it (#72). Still a short-circuit:
+        # how_data scans every event for the project, which a project
+        # without a valid declaration should not pay on every run.
+        if how.resolve_declaration(Path(projects_dir) / project)[0] != "valid":
             continue
         d = how.how_data(conn, project, projects_dir)
         if not d["runs"]:

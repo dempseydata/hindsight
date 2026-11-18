@@ -10,7 +10,8 @@ Contracts: ADR-0039.
 | --- | --- | --- | --- | --- | --- |
 | #84 | built, open for human check | 10206e1 | 1 | 261 tests, 31 s | `async` on Stop/SubagentStop needs a live session |
 | #85 | closed | 52ceaf5 | 0 | 266 tests, 48 s | |
-| #86 | closed | (this commit) | 2 | 274 tests, 55 s | suite at 1.8× baseline |
+| #86 | closed | fdfc635 | 2 | 274 tests, 55 s | suite at 1.8× baseline |
+| #87 | blocked | wip: night-shift/v2-audit-core-wip-87 | 1 | 276 tests, 54 s | v1-row deletion undecided |
 
 ## Owed
 - #91: `size` should be the high-water offset always (ADR-0039 §7), not the file size — deferred from #86.
@@ -37,6 +38,7 @@ Contracts: ADR-0039.
 - #86: fresh schema no longer creates `audit.date` — ADR? no
 
 ## Blocked
+- #87: when a session's transcript is in the raw store, may derivers delete its `v1` rows and re-derive them as `raw`? ADR-0031 §7 and the spec say a rebuild replaces `raw` rows only; keeping both double-counts. Reviewer reproduced data loss when only the parent or only a subagent file was captured — downstream: #88, #89, #90, #92
 
 ## Nits
 - #84: acknowledging a condition-6 row does not stick; the next firing reopens it. The banner's "acknowledge … to close" overpromises until a reset path exists.

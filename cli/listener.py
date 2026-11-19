@@ -2,7 +2,7 @@
 """Hindsight ingest listener — the one sanctioned background process (ADR-0001).
 
 Receives OTLP/HTTP JSON on /v1/logs and /v1/metrics, writes otel_events and
-otel_metrics rows to the local SQLite store, and does nothing else. Ingest
+otel_metrics rows to the local SQLite store, and its `listener` health row (#93). Ingest
 contract (ADR-0003, definition/ingest-schema-verification.md): chunked bodies
 handled explicitly, every attribute optional-by-default kept as JSON, per-row
 count-and-skip, always return 200 once a body is accepted. Two guards run
@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from capture import write_health
 from home import home, log_to
 
 DEFAULT_DB = home() / "hindsight.db"
@@ -87,10 +88,18 @@ def _items(container, key):
 def ingest_logs(payload, conn):
     ok = bad = 0
     for rl in _items(payload, "resourceLogs"):
+        # the OTel histogram's version key (ADR-0037 §4) is a resource
+        # attribute; a malformed resource must not cost its records
+        try:
+            res = attr_dict(_items(rl.get("resource"), "attributes"))
+            res = {k: res[k] for k in ("service.name", "service.version") if k in res}
+        except Exception:
+            res = {}
         for sl in _items(rl, "scopeLogs"):
             for rec in _items(sl, "logRecords"):
                 try:
-                    attrs = attr_dict(rec.get("attributes"))
+                    # the record's own attributes win on a clash
+                    attrs = res | attr_dict(rec.get("attributes"))
                     name = attrs.get("event.name") or (
                         str((rec.get("body") or {}).get("stringValue", ""))
                         .removeprefix("claude_code.") or None)
@@ -165,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._refuse(413, f"content-length over {MAX_BODY} bytes")
         rejected_key = ("rejectedDataPoints" if self.path == "/v1/metrics"
                         else "rejectedLogRecords")
-        bad = 0
+        bad, error = 0, None
         try:
             body = self._read_body()
             if self.headers.get("Content-Encoding") == "gzip":
@@ -188,7 +197,9 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
         except Exception as e:
             bad += 1
+            error = f"{self.path}: {type(e).__name__}: {e}"
             print(f"ingest error on {self.path}: {e}", file=sys.stderr, flush=True)
+        self._health(error)
         if bad:
             print(f"{self.path}: skipped {bad} row(s)", file=sys.stderr, flush=True)
         resp = json.dumps(
@@ -198,6 +209,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(resp)))
         self.end_headers()
         self.wfile.write(resp)
+
+    def _health(self, error):
+        """The `listener` health row (#93). Per-row skips are the ingest
+        contract's count-and-skip, not an error; a body that failed is."""
+        try:
+            conn = sqlite3.connect(self.server.db_path, timeout=5)
+            try:
+                write_health(conn, error, source="listener")
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            pass  # no health table until the analysis run migrates the store
 
     def do_GET(self):
         # #37: the liveness probe. The one GET, no DB touch.

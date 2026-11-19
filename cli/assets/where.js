@@ -371,21 +371,18 @@ function hooksHtml() {
   const g = {};
   for (const h of WHERE.hooks) {
     if (h.d && !hs.inWin(h.d)) continue;     // user-scope: no project filter
-    const o = g[h.ev] ??= { n: 0, cpu: [], dur: [], perDay: {} };
+    const o = g[h.ev] ??= { n: 0, dur: [], perDay: {} };
     o.n++;
-    if (h.cpu != null) o.cpu.push(h.cpu);
     if (h.dur != null) o.dur.push(h.dur);
     o.perDay[h.d] = (o.perDay[h.d] || 0) + 1;
   }
   const rows = Object.entries(g).sort((a, b) => b[1].n - a[1].n).map(([ev, o]) => {
-    o.cpu.sort((a, b) => a - b); o.dur.sort((a, b) => a - b);
+    o.dur.sort((a, b) => a - b);
     return [esc(ev), sparkSvg(o.perDay, { covFrom: WHERE.cov.hook }), num(o.n),
-            { n: 1, h: ms(pct(o.cpu, 50)) }, { n: 1, h: ms(pct(o.cpu, 95)) },
-            { n: 1, h: `<span class="dim">${o.dur.length ? fmtMs(pct(o.dur, 50)) : "\u2014"}</span>` }];
+            { n: 1, h: ms(pct(o.dur, 50)) }, { n: 1, h: ms(pct(o.dur, 95)) }];
   });
   return table(["hook event", "firings/day", { h: "firings", n: 1 },
-                { h: "cpu p50", n: 1 }, { h: "cpu p95", n: 1 },
-                { h: "dur p50", n: 1 }], rows);
+                { h: "wall p50", n: 1 }, { h: "wall p95", n: 1 }], rows);
 }
 
 // reliability (#14): retries and wall time lost, never spend \u2014 api_error
@@ -461,13 +458,14 @@ function renderWhere() {
 // the title (ADR-0030 §4) while the explanation sits behind the `?`; OTEL-fed sparks
 // additionally shade their pre-coverage region (judged: in-chart beats
 // banner walls — see ticket #48's resolution)
-document.getElementById("wcov").textContent = `usage for ${WHERE.cov.usage_sessions} of ${WHERE.cov.sessions} synced sessions (${WHERE.cov.span[0]} \u2192 ${WHERE.cov.span[1]}; pruned transcripts read unknown, never zero) \u00b7 OTEL capture from ${WHERE.cov.otel || "\u2014"} \u00b7 hooks from ${WHERE.cov.hook || "\u2014"} \u00b7 ${WHERE.cov.excluded} of hindsight's own analysis sessions excluded from everything here`;
+const tcount = k => WHERE.cov.src[k] || 0;
+document.getElementById("wcov").textContent = `tokens for ${WHERE.cov.usage_sessions} of ${WHERE.cov.sessions} synced sessions \u2014 ${tcount("otel")} from OTEL api_request, ${tcount("raw") + tcount("compacted") + tcount("v1")} from transcript usage (${["raw", "compacted", "v1"].filter(tcount).map(k => `${k} ${tcount(k)}`).join(", ") || "none"}; output tokens undercounted, ADR-0033; ${WHERE.cov.span[0]} \u2192 ${WHERE.cov.span[1]}; pruned transcripts read unknown, never zero) \u00b7 OTEL capture from ${WHERE.cov.otel || "\u2014"} \u00b7 hooks from ${WHERE.cov.hook || "\u2014"} \u00b7 ${WHERE.cov.excluded} of hindsight's own analysis sessions excluded from everything here`;
 document.getElementById("mcov").textContent = `api latency from OTEL api_request \u2014 capture began ${WHERE.cov.otel || "\u2014"}, so models unused since then read \u2014.`;
-document.getElementById("mnote").textContent = `token counts come from the transcript scan (full span). No pricing columns, ever (ADR-0003).`;
-document.getElementById("snote").textContent = `what a session pays before the first prompt \u2014 ${WHERE.cov.excluded} of hindsight's own analysis sessions self-excluded. size/4 estimates; the measured median (first usage row per session) carries authority \u2014 the gap between itemized eager cost and the median is system-prompt/built-in overhead, invisible to the file scan.`;
+document.getElementById("mnote").textContent = `token counts per session come from OTEL api_request where OTEL saw the session, else from transcript usage (see the coverage line). No pricing columns, ever (ADR-0003).`;
+document.getElementById("snote").textContent = `what a session pays before the first prompt \u2014 ${WHERE.cov.excluded} of hindsight's own analysis sessions self-excluded. size/4 estimates; the measured median (first main-loop API request per session, from OTEL api_request where OTEL saw it, else transcript usage) carries authority \u2014 the gap between itemized eager cost and the median is system-prompt/built-in overhead, invisible to the file scan.`;
 document.getElementById("rnote").textContent = `retries and wall time lost, never spend \u2014 api_error carries no token counts. Retries are api_error events; exhausted is api_retries_exhausted, whose total_retry_duration_ms is the wall lost. MCP attempts are connected + failed per server (disconnected is a clean close, not an attempt); connect p50 over successful connections carrying a duration. Hover a sessions count for the ids. Hindsight's own analysis sessions are excluded.`;
 document.getElementById("rcov").textContent = `OTEL-fed \u2014 capture began ${WHERE.cov.otel || "\u2014"}, the shaded spark region predates it. A session OTEL saw but sync never did counts with its project unknown, so a project chip hides it.`;
-document.getElementById("hnote").textContent = `cpu_ms carries the table: per-firing process CPU including interpreter startup (ADR-0005). duration_ms (dim) times the script body only \u2014 clock starts after spawn, stops before the POST. True wall cost, spawn\u2192exit including timeout waits, is not captured.`;
+document.getElementById("hnote").textContent = `wall time per firing from OTEL hook_execution_complete: total_duration_ms, the wall clock of every hook matching the event, spawn to exit (ADR-0033 \u00a77).`;
 document.getElementById("hcov").textContent = `Capture began ${WHERE.cov.hook || "\u2014"} \u2014 the shaded spark region predates it. Hooks are user-scope: project chips don't apply.`;
 document.getElementById("cats").addEventListener("click", e => {
   const b = e.target.closest("button");

@@ -6,15 +6,28 @@ test_import_backfill. The TZ pin runs at import time: day buckets are the
 operator's local day (ADR-0014), so fixtures need a pinned zone or they
 assert whatever the runner's clock says.
 """
+import contextlib
+import io
 import json
 import os
 import sqlite3
+import tempfile
 import time
+import unittest.mock
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+import how
 from substrate import LIVE_WINDOW_S
+
+# never the operator's real house master (#94): a CLAUDE.md that cannot exist
+how.USER_CLAUDE_MD = Path(os.devnull) / "CLAUDE.md"
 
 os.environ["TZ"] = "America/New_York"
 time.tzset()
+# Fixtures are dated 2026-08: past the default raw limit, so a run would
+# compact them. Compaction tests set HINDSIGHT_RAW_DAYS themselves.
+os.environ["HINDSIGHT_RAW_DAYS"] = "0"
 
 SKIP_MD = "SKIP"
 REFUSAL_MD = ("I'm ready to generate audit-log entries, but I don't see a"
@@ -54,6 +67,28 @@ def _backdate(path):
     os.utime(path, (t, t))
 
 
+def _aged_stamp():
+    t = datetime.now(timezone.utc) - timedelta(seconds=2 * LIVE_WINDOW_S)
+    return t.isoformat().replace("+00:00", "Z")
+
+
+def captured_earlier():
+    """Fixture transcripts are finished sessions the hook captured as they
+    ended: the run's own sweep stamps its captures past the what-pass live
+    guard (issue #79). Live-guard tests run without it."""
+    return unittest.mock.patch("capture.now", _aged_stamp)
+
+
+def settle_captures(db):
+    """Time passes: every captured record is older than the live guard."""
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("UPDATE raw_records SET captured_at=?", (_aged_stamp(),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def write_records(path, records):
     """Raw JSONL fixture — dicts are serialized, str items written verbatim
     (for malformed-line fixtures)."""
@@ -82,6 +117,36 @@ def big_turns(n=140, size=2000):
         role = "user" if i % 2 == 0 else "assistant"
         turns.append((role, f"turn {i} " + "x" * size))
     return turns
+
+
+def run_hook(main, stdin, env=None):
+    """A hook entrypoint's main(argv) in-process, as Claude Code fires it:
+    `stdin` (str) on stdin, `env` over os.environ. Returns (stdout, stderr).
+    The subprocess spawn is Claude Code's, not ours (#93: suite cost)."""
+    with tempfile.TemporaryFile() as f, \
+            unittest.mock.patch.dict(os.environ, env or {}), \
+            unittest.mock.patch("sys.stdin", f), \
+            contextlib.redirect_stdout(io.StringIO()) as out, \
+            contextlib.redirect_stderr(io.StringIO()) as err:
+        f.write(stdin.encode())
+        f.seek(0)
+        main([])
+    return out.getvalue(), err.getvalue()
+
+
+def fire_capture(db, payload):
+    """Fire the capture hook (ticket #84) through its main(argv) with the
+    payload on stdin, against the store at `db`, which must be named
+    hindsight.db: its directory stands in for Hindsight home."""
+    import capture
+    assert Path(db).name == "hindsight.db"
+    run_hook(capture.main, json.dumps(payload), {"HINDSIGHT_HOME": str(Path(db).parent)})
+
+
+def session_start(db, transcript, cwd):
+    """The capture hook's SessionStart firing for one transcript."""
+    fire_capture(db, {"hook_event_name": "SessionStart", "source": "startup",
+                      "transcript_path": str(transcript), "cwd": str(cwd)})
 
 
 class StubRunner:

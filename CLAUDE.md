@@ -32,7 +32,11 @@ exported working tracker (88 tickets, closing comments included); GitHub's own n
 on this repo starts afresh, so cite an exported ticket by its file, not `#N`.
 
 ## Process
-No local process: the house process applies — `~/Documents/Claude/my-standards/my-process.md`, read when needed, not imported.
+No local process: the house process applies — `~/Documents/Claude/my-standards/my-process.md`, read when needed, not imported. Its frontmatter declares the born-public and plugin paths, so the how-view stages hindsight's own files from it (ADR-0032, amended by #98).
+
+Project rules the house process does not carry:
+- **What-eval before a what-pass change.** Any edit to a what-pass prompt or its model pin runs `eval/what_run.py` and lands only on ACCEPT (ADR-0016, `eval/README.md`). The status-narrative prompt has its own set: `eval/README.md`, top.
+- **`security-preflight` before publishing record.** Run it before any push touching `eval/`, `docs/screenshots/` or `background/` (`docs/variables.md`).
 
 ## Stack conventions
 - The repo root is the plugin root (ADR-0036): `.claude-plugin/` manifests, `skills/ops`

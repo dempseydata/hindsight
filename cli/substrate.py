@@ -1,8 +1,10 @@
 """The substrate scan (tickets #22, #42, #61) — the transcript JSONL
-grammar in one place: one full parse per session into tool_events (paired,
-deduped, consumer-classified), usage (deduped by API message id) and
-command_grains, plus the mechanical adr_count derived from tool_events
-(ADR-0004) and the live-session guard the fill respects (ticket #29).
+grammar in one place: one full parse of a transcript's lines into
+tool_events (paired, deduped, consumer-classified), usage (deduped by API
+message id), command_grains and the field histogram, each written by its
+own versioned deriver over the raw store (ticket #87, ADR-0031 §6); plus
+the mechanical adr_count derived from tool_events (ADR-0004) and the
+live-session guard the what-pass respects (ticket #29).
 
 A leaf module: imports extract's FILE_TOOLS and nothing from analyze —
 the import direction is analyze -> substrate only (ticket #82). Also home
@@ -15,40 +17,47 @@ import re
 import shutil
 import time
 from collections import Counter
+from itertools import groupby
 from pathlib import Path
 
 from extract import FILE_TOOLS  # the create/modify tool set
 
-# The field contract (issue #15): every transcript key this scan, the
-# extract (cli/extract.py msg_texts) and analyze.head_scan depend on
-# being *present*, as (scope, key) — scope is the record type, then the
-# dotted path into it; a `content.<block type>` scope is one content block.
-# Enumerated from the three readers, not from memory. Keys read but not
-# expected present are deliberately absent: `isMeta` (its absence is the
-# common case), `tool_result.is_error` (written only on error) and
-# `tool_result.content` (read only under it — ADR-0027),
-# `tool_use.input.file_path` / `notebook_path` (file tools only).
-# The schema-drift guard (analyze.check_drift) walks this list against the
-# per-version field histogram scan_transcript accumulates, so the guard and
-# the readers cannot drift apart — a key added to a reader is added here.
-FIELD_CONTRACT = (
-    ("user", "type"), ("user", "message"), ("user", "timestamp"),
-    ("user", "uuid"), ("user", "version"),
-    ("user.message", "content"),
-    ("user.message.content.tool_result", "tool_use_id"),
-    ("user.message.content.text", "text"),
-    ("assistant", "type"), ("assistant", "message"), ("assistant", "timestamp"),
-    ("assistant", "uuid"), ("assistant", "version"),
-    ("assistant.message", "content"), ("assistant.message", "id"),
-    ("assistant.message", "usage"), ("assistant.message", "model"),
+# The derivers (ticket #87, ADR-0031 §6, ADR-0037 §3): one per table, each
+# with its version — bump it to rebuild that table's `raw` rows from the raw
+# store — and the (scope, key) pairs it requires *present*. Scope is the
+# record type, then the dotted path into it; a `content.<block type>` scope
+# is one content block. The field contract is the union of every reader's
+# declaration (analyze.FIELD_CONTRACT). Keys read but not expected present
+# are deliberately absent: `isMeta` (its absence is the common case),
+# `tool_result.is_error` (written only on error) and `tool_result.content`
+# (read only under it — ADR-0027), `tool_use.input.file_path` /
+# `notebook_path` (file tools only). A key added to a deriver is added to
+# its declaration here; a missed one is a review finding.
+USAGE_VERSION = TOOL_EVENTS_VERSION = COMMAND_GRAINS_VERSION = FIELD_HISTOGRAM_VERSION = 1
+USAGE_REQUIRES = (
+    ("assistant", "message"), ("assistant", "timestamp"), ("assistant", "uuid"),
+    ("assistant.message", "id"), ("assistant.message", "usage"),
+    ("assistant.message", "model"),
     ("assistant.message.usage", "input_tokens"),
     ("assistant.message.usage", "output_tokens"),
     ("assistant.message.usage", "cache_creation_input_tokens"),
     ("assistant.message.usage", "cache_read_input_tokens"),
+)
+TOOL_EVENTS_REQUIRES = (
+    ("user", "message"), ("user", "timestamp"), ("user.message", "content"),
+    ("user.message.content.tool_result", "tool_use_id"),
+    ("assistant", "message"), ("assistant", "timestamp"),
+    ("assistant.message", "content"), ("assistant.message", "id"),
     ("assistant.message.content.tool_use", "id"),
     ("assistant.message.content.tool_use", "name"),
     ("assistant.message.content.tool_use", "input"),
-    ("assistant.message.content.text", "text"),
+)
+COMMAND_GRAINS_REQUIRES = (
+    ("user", "message"), ("user", "timestamp"), ("user.message", "content"),
+)
+FIELD_HISTOGRAM_REQUIRES = (
+    ("user", "type"), ("user", "version"),
+    ("assistant", "type"), ("assistant", "version"),
 )
 
 
@@ -166,8 +175,9 @@ def tally_record(e, hist):
                 _tally(hist, v, f"{t}.message.content.{bt}", c)
 
 
-def scan_transcript(path):
-    """One full parse of a transcript into the where-view substrate (tickets
+def scan_transcript(lines):
+    """One full parse of a transcript's lines (bytes, as the raw store holds
+    them, in offset order) into the where-view substrate (tickets
     #22, #42) plus command grains (ticket #61). Returns (events, usage_rows,
     commands, skipped, hist): hist the field histogram (issue #15), a
     Counter keyed (record version, scope, key) over every record parsed —
@@ -194,74 +204,73 @@ def scan_transcript(path):
     fatal."""
     events, results, usage, commands, skipped, seen_ids = [], {}, {}, [], 0, set()
     hist = Counter()
-    with Path(path).open() as f:
-        for line in f:
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
-                skipped += 1
-                continue
-            if not isinstance(e, dict):
-                skipped += 1  # a bare JSON scalar or list is not a record
-                continue
-            tally_record(e, hist)
-            t, m = e.get("type"), e.get("message")
-            content = m.get("content") if isinstance(m, dict) else None
-            if t == "assistant":
-                mid = m.get("id") if isinstance(m, dict) else None
-                u = m.get("usage") if isinstance(m, dict) else None
-                if isinstance(u, dict):
-                    key = mid or e.get("uuid") or ("anon", len(usage))
-                    usage[key] = [mid, e.get("timestamp"), m.get("model"),
-                                  u.get("input_tokens") or 0,
-                                  u.get("output_tokens") or 0,
-                                  u.get("cache_creation_input_tokens") or 0,
-                                  u.get("cache_read_input_tokens") or 0]
-                for c in (content if isinstance(content, list) else []):
-                    if not (isinstance(c, dict) and c.get("type") == "tool_use"):
-                        continue
-                    name, tid = c.get("name"), c.get("id")
-                    # dedup before the malformation skips, so one malformed
-                    # call streamed across records counts skipped once
-                    if tid in seen_ids:
-                        continue
-                    if tid:
-                        seen_ids.add(tid)
-                    if name is not None and not isinstance(name, str):
-                        skipped += 1  # non-string name: same wart, other face
-                        continue
-                    # ponytail: whitespace is the malformation tell (#38) — a
-                    # single-token command stored as a name would slip through.
-                    if name and re.search(r"\s", name):
-                        skipped += 1
-                        continue
-                    inp = c.get("input") if isinstance(c.get("input"), dict) else {}
-                    ctype, consumer, mcp_tool = (classify(name, inp) if name
-                                                 else (None, None, None))
-                    events.append({
-                        "tool_use_id": tid, "name": name,
-                        "at": e.get("timestamp"), "result_at": None,
-                        "file_path": inp.get("file_path") or inp.get("notebook_path"),
-                        "message_id": mid, "consumer_type": ctype,
-                        "consumer": consumer, "mcp_tool": mcp_tool,
-                        "is_error": None, "error_text": None})
-            elif t == "user":
-                # ponytail: string content only — every real command message
-                # observed is plain-string (209/209 across 69 transcripts);
-                # widen if the CLI ever writes command markers into blocks.
-                if isinstance(content, str) and content.lstrip().startswith("<command-"):
-                    cm = _COMMAND_RE.search(content)
-                    if cm:
-                        commands.append([cm.group(1), e.get("timestamp")])
-                for c in (content if isinstance(content, list) else []):
-                    if (isinstance(c, dict) and c.get("type") == "tool_result"
-                            and c.get("tool_use_id")):
-                        err = bool(c.get("is_error"))
-                        results[c["tool_use_id"]] = {
-                            "result_at": e.get("timestamp"), "is_error": 1 if err else 0,
-                            "error_text": _result_text(c.get("content")) if err else None}
-            else:
-                skipped += 1
+    for line in lines:
+        try:  # decoded as v1 read its files: invalid UTF-8 replaced, not fatal
+            e = json.loads(line.decode(errors="replace"))
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
+        if not isinstance(e, dict):
+            skipped += 1  # a bare JSON scalar or list is not a record
+            continue
+        tally_record(e, hist)
+        t, m = e.get("type"), e.get("message")
+        content = m.get("content") if isinstance(m, dict) else None
+        if t == "assistant":
+            mid = m.get("id") if isinstance(m, dict) else None
+            u = m.get("usage") if isinstance(m, dict) else None
+            if isinstance(u, dict):
+                key = mid or e.get("uuid") or ("anon", len(usage))
+                usage[key] = [mid, e.get("timestamp"), m.get("model"),
+                              u.get("input_tokens") or 0,
+                              u.get("output_tokens") or 0,
+                              u.get("cache_creation_input_tokens") or 0,
+                              u.get("cache_read_input_tokens") or 0]
+            for c in (content if isinstance(content, list) else []):
+                if not (isinstance(c, dict) and c.get("type") == "tool_use"):
+                    continue
+                name, tid = c.get("name"), c.get("id")
+                # dedup before the malformation skips, so one malformed
+                # call streamed across records counts skipped once
+                if tid in seen_ids:
+                    continue
+                if tid:
+                    seen_ids.add(tid)
+                if name is not None and not isinstance(name, str):
+                    skipped += 1  # non-string name: same wart, other face
+                    continue
+                # ponytail: whitespace is the malformation tell (#38) — a
+                # single-token command stored as a name would slip through.
+                if name and re.search(r"\s", name):
+                    skipped += 1
+                    continue
+                inp = c.get("input") if isinstance(c.get("input"), dict) else {}
+                ctype, consumer, mcp_tool = (classify(name, inp) if name
+                                             else (None, None, None))
+                events.append({
+                    "tool_use_id": tid, "name": name,
+                    "at": e.get("timestamp"), "result_at": None,
+                    "file_path": inp.get("file_path") or inp.get("notebook_path"),
+                    "message_id": mid, "consumer_type": ctype,
+                    "consumer": consumer, "mcp_tool": mcp_tool,
+                    "is_error": None, "error_text": None})
+        elif t == "user":
+            # ponytail: string content only — every real command message
+            # observed is plain-string (209/209 across 69 transcripts);
+            # widen if the CLI ever writes command markers into blocks.
+            if isinstance(content, str) and content.lstrip().startswith("<command-"):
+                cm = _COMMAND_RE.search(content)
+                if cm:
+                    commands.append([cm.group(1), e.get("timestamp")])
+            for c in (content if isinstance(content, list) else []):
+                if (isinstance(c, dict) and c.get("type") == "tool_result"
+                        and c.get("tool_use_id")):
+                    err = bool(c.get("is_error"))
+                    results[c["tool_use_id"]] = {
+                        "result_at": e.get("timestamp"), "is_error": 1 if err else 0,
+                        "error_text": _result_text(c.get("content")) if err else None}
+        else:
+            skipped += 1
     for ev in events:
         if ev["tool_use_id"]:
             ev.update(results.get(ev["tool_use_id"], {}))
@@ -329,70 +338,90 @@ def subagent_transcripts(transcript_path):
             sorted(Path(transcript_path).with_suffix("").glob("subagents/*.jsonl"))]
 
 
-def fill_substrate(conn):
-    """The sync stage that fills tool_events + usage + command_grains for
-    every session not yet scanned — sessions newly synced this run, and
-    sessions that predate the substrate (the ticket-#20 backfill import) on
-    their next run, whose existing audit rows get adr_count stamped here.
-    sessions.skipped_records doubles as the scanned marker: NULL means never
-    scanned, and a vanished transcript stays NULL rather than reading as an
-    empty session. The parent's subagent transcripts are scanned in the same
-    pass (issue #13): their rows file under the parent id with agent_id set
-    (NULL on the parent's own rows), their skipped records count on the
-    parent, and each is recorded in subagent_transcripts with its size so
-    growth is detected per transcript the way sessions.size does it.
+class NotSynced(Exception):
+    """A session not yet given its `sessions` row: the deriver loop leaves it due."""
 
-    The field histogram (issue #15) is stored per session too, so the
-    per-session wipe every rescan path runs (SUBSTRATE_TABLES) keeps it
-    exact — a growth top-up or a schema-bump rescan can never double-count;
-    the per-version view the guard compares is a SUM at check time.
-    Returns (records, skipped) scanned by this call: the run's own parse
-    figures, for drift condition 3."""
-    todo = conn.execute("SELECT id, transcript_path FROM sessions"
-                        " WHERE skipped_records IS NULL").fetchall()
-    run_records = run_skipped = 0
-    for sid, path in todo:
-        if not Path(path).exists() or _is_live(path):
-            continue
-        subs = subagent_transcripts(path)
-        total_skipped, hist = 0, Counter()
-        for aid, p in [(None, Path(path)), *subs]:
-            events, usage_rows, commands, skipped, h = scan_transcript(p)
-            total_skipped += skipped
-            hist += h
-            conn.executemany(
-                "INSERT INTO tool_events (session_id, agent_id, tool_use_id, name,"
-                " at, result_at, file_path, message_id, consumer_type, consumer,"
-                " mcp_tool, is_error, error_text) VALUES (:session_id, :agent_id,"
-                " :tool_use_id, :name, :at, :result_at, :file_path, :message_id,"
-                " :consumer_type, :consumer, :mcp_tool, :is_error, :error_text)",
-                [{**ev, "session_id": sid, "agent_id": aid} for ev in events])
-            conn.executemany(
-                "INSERT INTO usage (session_id, agent_id, message_id, at, model,"
-                " input_tokens, output_tokens, cache_creation_input_tokens,"
-                " cache_read_input_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [(sid, aid, *u) for u in usage_rows])
-            conn.executemany(
-                "INSERT INTO command_grains (session_id, agent_id, command, at)"
-                " VALUES (?, ?, ?, ?)", [(sid, aid, *c) for c in commands])
+
+def _scans(conn, table, sid, records):
+    """[(agent_id, scan_transcript result)] for one session's raw records
+    [(agent_id, byte_offset, line)], parent first, ready for the deriver of
+    `table` to write. Empty for a session with no `sessions` row: one
+    self-excluded (ADR-0003) or whose parent is not yet captured — v1 never
+    scanned either. A captured, unexcluded parent with no row yet (bookkeeping
+    failed or has not run since capture) raises NotSynced: not yet derivable. Otherwise the session's `v1` rows in `table` go first,
+    in the deriver's own transaction, for the captured agents only (ADR-0039
+    §9): v1 rows are frozen because nothing was left to re-derive them from
+    (ADR-0031 §7), and only a captured transcript now is. `field_histogram`
+    has no agent column, so its v1 rows go only once every v1 agent (the
+    parent and each `subagent_transcripts` row) is captured."""
+    if not conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid,)).fetchone():
+        if conn.execute("SELECT 1 FROM transcripts WHERE session_id=? AND agent_id"
+                        " IS NULL AND high_water > 0 AND session_id NOT IN (SELECT id FROM"
+                        " excluded_sessions)", (sid,)).fetchone():
+            raise NotSynced(sid)
+        return []
+    captured = {aid or "" for aid, _, _ in records}
+    if table == "field_histogram":
+        v1 = {"", *(a for (a,) in conn.execute(
+            "SELECT agent_id FROM subagent_transcripts WHERE session_id=?", (sid,)))}
+        if v1 <= captured:
+            conn.execute("DELETE FROM field_histogram WHERE session_id=?"
+                         " AND provenance='v1'", (sid,))
+    else:
+        conn.execute(f"DELETE FROM {table} WHERE session_id=? AND provenance='v1'"
+                     f" AND ifnull(agent_id,'') IN ({','.join('?' * len(captured))})",
+                     (sid, *captured))
+    return [(aid, scan_transcript(line for _, _, line in group))
+            for aid, group in groupby(records, key=lambda r: r[0])]
+
+
+def derive_usage(conn, sid, records):
+    for aid, (_, usage_rows, _, _, _) in _scans(conn, "usage", sid, records):
         conn.executemany(
-            "INSERT INTO subagent_transcripts (session_id, agent_id, path, size)"
-            " VALUES (?, ?, ?, ?)",
-            [(sid, aid, str(p), p.stat().st_size) for aid, p in subs])
+            "INSERT INTO usage (session_id, agent_id, message_id, at, model,"
+            " input_tokens, output_tokens, cache_creation_input_tokens,"
+            " cache_read_input_tokens, provenance)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'raw')",
+            [(sid, aid, *u) for u in usage_rows])
+
+
+def derive_tool_events(conn, sid, records):
+    """Also the session's skipped-record count (parent and subagents) —
+    still the scanned marker adr_count reads — and its audit row's
+    adr_count, both derived from the same scan."""
+    scans = _scans(conn, "tool_events", sid, records)
+    for aid, (events, *_) in scans:
         conn.executemany(
-            "INSERT INTO field_histogram (session_id, version, scope, key, n)"
-            " VALUES (?, ?, ?, ?, ?)",
-            [(sid, v, s, k, n) for (v, s, k), n in hist.items()])
+            "INSERT INTO tool_events (session_id, agent_id, tool_use_id, name,"
+            " at, result_at, file_path, message_id, consumer_type, consumer,"
+            " mcp_tool, is_error, error_text, provenance) VALUES (:session_id,"
+            " :agent_id, :tool_use_id, :name, :at, :result_at, :file_path,"
+            " :message_id, :consumer_type, :consumer, :mcp_tool, :is_error,"
+            " :error_text, 'raw')",
+            [{**ev, "session_id": sid, "agent_id": aid} for ev in events])
+    if scans:
         conn.execute("UPDATE sessions SET skipped_records=? WHERE id=?",
-                     (total_skipped, sid))
+                     (sum(scan[3] for _, scan in scans), sid))
         conn.execute("UPDATE audit SET adr_count=? WHERE session_id=?",
                      (adr_count(conn, sid), sid))
-        conn.commit()  # per session — short write transactions on a shared db
-        # records = JSON objects seen (unparseable lines are in skipped only)
-        run_records += sum(n for (_, s, k), n in hist.items()
-                           if k == "*" and "." not in s)
-        run_skipped += total_skipped
-    return run_records, run_skipped
+
+
+def derive_command_grains(conn, sid, records):
+    for aid, (_, _, commands, _, _) in _scans(conn, "command_grains", sid, records):
+        conn.executemany("INSERT INTO command_grains (session_id, agent_id, command,"
+                         " at, provenance) VALUES (?, ?, ?, ?, 'raw')",
+                         [(sid, aid, *c) for c in commands])
+
+
+def derive_field_histogram(conn, sid, records):
+    """Per session, summed over its transcripts (issue #15): the guard sums
+    sessions per version at check time."""
+    hist = Counter()
+    for _, (*_, h) in _scans(conn, "field_histogram", sid, records):
+        hist += h
+    conn.executemany("INSERT INTO field_histogram (session_id, version, scope, key, n,"
+                     " provenance) VALUES (?, ?, ?, ?, ?, 'raw')",
+                     [(sid, v, s, k, n) for (v, s, k), n in hist.items()])
 
 
 LIVE_WINDOW_S = 300  # transcript written this recently = session still live

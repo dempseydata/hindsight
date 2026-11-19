@@ -17,6 +17,7 @@ from pathlib import Path
 import analyze
 import listener
 import serve
+import test_helpers  # noqa: F401 — the house-master guard (#94)
 
 # Day buckets are the operator's local day (ADR-0014), so the fixtures
 # need a pinned zone or they assert whatever the runner's clock says.
@@ -108,12 +109,17 @@ def fixture_db(path):
         is_error, error_text) VALUES ('s3', ?, ?, '2026-08-03T10:01:00Z',
         '2026-08-03T10:01:01Z', NULL, ?, ?, ?, 1, ?)""", errors)
     otel = [
-        ("api_request", "s1", "2026-08-03T09:00:00Z",
+        # latency only, on a session sync never saw: an api_request on s1
+        # would make OTel its token source (#90)
+        ("api_request", "u1", "2026-08-03T09:00:00Z",
          '{"model": "claude-sonnet-5", "duration_ms": "1500",'
-         ' "session.id": "s1"}'),
-        ("hindsight.hook", "s1", "2026-08-04T09:00:00Z",
+         ' "session.id": "u1"}'),
+        # v1's self-instrumentation row: stored, never read (#90)
+        ("hindsight.hook", "s1", "2026-08-03T09:00:00Z",
          '{"hook.event": "Stop", "hook.cpu_ms": 80.5,'
          ' "hook.duration_ms": 1.2}'),
+        ("hook_execution_complete", "s1", "2026-08-04T09:00:00Z",
+         '{"hook_event": "Stop", "total_duration_ms": 80}'),
         # reliability panel (#14): two retries and one exhaustion on s1 —
         # the CLI stringifies numbers on some paths, so one of each shape
         ("api_error", "s1", "2026-08-03T09:00:01Z",
@@ -160,8 +166,8 @@ def fixture_db(path):
         ("s5", "pruned", "2026-08-04", 1, None, None),
         ("s6", "-private-tmp-scratch", "2026-08-04", 1, None, None),
     ]
-    conn.executemany("""INSERT INTO audit VALUES (?, ?, ?, ?, ?, 'what-v1',
-        'test-model', ?)""", audit)
+    conn.executemany("""INSERT INTO audit VALUES (?, ?, ?, ?, 'what-v1',
+        'test-model', ?)""", [(a[0], a[1], *a[3:]) for a in audit])  # no audit.date (#86)
     # how-view (ticket #65): "big" declares and has a stored narrative whose
     # hash will not match the live ledger (stale); "small" declares an
     # invalid fence; "pruned" declares nothing and must not be selectable
@@ -223,10 +229,13 @@ DECL = "---\nstages:\n  - name: Ideate\n    commands: [grill-me]\n" \
 
 
 def fixture_projects(root):
-    for name, text in (("big", DECL), ("small", DECL.replace("commands", "cmds", 1))):
-        d = Path(root) / name / ".claude"
+    # "pruned" and the scratch path opt out; without a local file the
+    # (here unresolvable) house master would make them invalid, not absent
+    for name, text in (("big", DECL), ("small", DECL.replace("commands", "cmds", 1)),
+                       ("pruned", "none\n"), ("-private-tmp-scratch", "none\n")):
+        d = Path(root) / name
         d.mkdir(parents=True)
-        (d / "my-process.md").write_text(text)
+        (d / "local-process.md").write_text(text)
 
 
 class ChipPolicyTest(unittest.TestCase):
@@ -293,18 +302,86 @@ class QuietHowTest(unittest.TestCase):
                          " VALUES ('q1', '/clear', '2026-08-02T10:00:00Z')")
             conn.commit()
             conn.close()
-            d = Path(tmp) / "quiet" / ".claude"
+            d = Path(tmp) / "quiet"
             d.mkdir(parents=True)
-            (d / "my-process.md").write_text(DECL)
+            (d / "local-process.md").write_text(DECL)
             self.server = serve.make_server(0, Path(tmp) / "hindsight.db", tmp)
             self.port = self.server.server_address[1]
-            threading.Thread(target=self.server.serve_forever, daemon=True).start()
+            threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
             try:
                 _, body = ServerTest.get(self, "/how?p=quiet")
             finally:
                 self.server.shutdown()
                 self.server.server_close()
         self.assertIn('<div class="o-stage-panel status none"><h2>', body)
+
+
+class TokenSourceTest(unittest.TestCase):
+    """#90 (ADR-0033 §4, §7): a session OTel saw takes its tokens from
+    OTel api_request alone; one it never saw from its usage rows, labelled
+    with their provenance. The hook panel reads hook_execution_complete."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        db = Path(cls.tmp.name) / "hindsight.db"
+        fixture_db(db)
+        conn = sqlite3.connect(db)
+        req = ('{"model": "claude-opus-5", "input_tokens": "%d", "output_tokens": %d,'
+               ' "cache_read_tokens": %d, "cache_creation_tokens": %d%s}')
+        conn.executemany("INSERT INTO otel_events (event_name, session_id, timestamp,"
+                         " attributes) VALUES (?, ?, ?, ?)", [
+            # s7 has no usage rows; s3 has some, which OTel now overrides
+            ("api_request", "s7", "2026-08-05T14:00:00Z", req % (40, 30, 500, 7, "")),
+            ("api_request", "s7", "2026-08-05T14:05:00Z",
+             req % (4, 3, 50, 0, ', "agent_id": "ag9"')),
+            ("api_request", "s3", "2026-08-02T10:00:00Z", req % (1, 2, 3, 4, ""))])
+        conn.execute("UPDATE usage SET provenance = 'raw' WHERE session_id = 's2'")
+        conn.commit()
+        conn.close()
+        cls.conn = serve.open_db(db)
+        cls.w = serve.where_data(cls.conn)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.conn.close()
+        cls.tmp.cleanup()
+
+    def test_otel_session_takes_otel_tokens_alone(self):
+        sess = {(r["p"], r["d"]): r for r in self.w["sess"]}
+        self.assertEqual(sess["big", "2026-08-05"]["t"], [44, 33, 7, 550])
+        self.assertEqual(sess["small", "2026-08-02"]["t"], [1, 2, 4, 3])   # usage unread
+        self.assertIn({"d": "2026-08-05", "p": "big", "t": [4, 3, 0, 50]}, self.w["subd"])
+        self.assertIn("opus-5", {m["m"] for m in self.w["models"]})
+
+    def test_unseen_session_labelled_with_its_usage_source(self):
+        sess = {(r["p"], r["d"]): r for r in self.w["sess"]}
+        self.assertEqual(sess["big", "2026-08-01"]["t"], [1600, 300, 50, 100000])
+        self.assertTrue(all("src" not in r for r in self.w["sess"]))   # page never reads it
+        self.assertEqual(self.w["cov"]["src"], {"otel": 2, "raw": 1, "v1": 2})
+
+    def test_header_chart_reads_the_same_source(self):
+        days = {(r["d"], r["p"]): r["t"] for r in serve.header_data(self.conn)["days"]}
+        self.assertEqual(days["2026-08-02", "small"], [1, 2, 4, 3])
+        self.assertNotIn(("2026-08-03", "small"), days)   # s3's usage day, not OTel's
+
+    def test_where_view_labels_transcript_tokens_and_the_undercount(self):
+        page = serve.render("where", self.conn)
+        [line] = [ln for ln in page.splitlines()
+                  if ln.startswith('document.getElementById("wcov")')]
+        self.assertIn("from transcript usage", line)
+        self.assertIn("output tokens undercounted", line)
+        [hnote] = [ln for ln in page.splitlines()
+                   if ln.startswith('document.getElementById("hnote")')]
+        self.assertIn("hook_execution_complete", hnote)
+        [mnote] = [ln for ln in page.splitlines()
+                   if ln.startswith('document.getElementById("mnote")')]
+        self.assertIn("from OTEL api_request where OTEL saw the session, else from transcript"
+                      " usage", mnote)
+        self.assertNotIn("transcript scan (full span)", mnote)
+        [snote] = [ln for ln in page.splitlines()
+                   if ln.startswith('document.getElementById("snote")')]
+        self.assertNotIn("first usage row", snote)
 
 
 class ServerTest(unittest.TestCase):
@@ -316,7 +393,7 @@ class ServerTest(unittest.TestCase):
         fixture_projects(cls.tmp.name)
         cls.server = serve.make_server(0, cls.db, cls.tmp.name)
         cls.port = cls.server.server_address[1]
-        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        threading.Thread(target=cls.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
 
     @classmethod
     def tearDownClass(cls):
@@ -409,6 +486,9 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn('class="panel', body)
         self.assertIn("used: grilling, implement", body)
         self.assertIn("Stated process", body)
+        # the source line beside the stated-process panel (#94, ADR-0032)
+        self.assertIn('Stated process</h2><p class="note">process: <code>local-process.md</code></p>',
+                      body)
         self.assertNotIn('id="chart"', body)       # no shared filter chrome
         self.assertNotIn("const DATA", body)       # no filter data blob (#83:
         # the theme pin script is shared chrome and does render here)
@@ -469,6 +549,7 @@ class ServerTest(unittest.TestCase):
         _, body = self.get("/how?p=small")
         self.assertIn("Declaration invalid", body)
         self.assertIn("line 4: unknown key `cmds`", body)
+        self.assertIn('</div><p class="note">process: <code>local-process.md</code></p>', body)
         self.assertIn("unbucketed", body)
         self.assertIn("used: implement", body)     # trail still shown
         # the unbucketed lane takes the run's card, in the off hue (#55)
@@ -642,7 +723,7 @@ class ServerTest(unittest.TestCase):
         # latency from OTEL api_request; coverage + exclusion stated
         self.assertEqual(w["lat"][0]["durs"], [1500])
         self.assertEqual(w["lat"][0]["m"], "sonnet-5")
-        self.assertEqual(w["hooks"][0]["cpu"], 80.5)
+        self.assertEqual(w["hooks"], [{"d": "2026-08-04", "ev": "Stop", "dur": 80}])
         self.assertEqual(w["cov"]["excluded"], 1)
         self.assertEqual(w["cov"]["usage_sessions"], 4)
         self.assertEqual(w["cov"]["hook"], "2026-08-04")
@@ -832,7 +913,7 @@ class ServerTest(unittest.TestCase):
             conn.close()
             server = serve.make_server(0, db, tmp)
             port = server.server_address[1]
-            threading.Thread(target=server.serve_forever, daemon=True).start()
+            threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
             try:
                 c = http.client.HTTPConnection("127.0.0.1", port)
                 c.request("GET", "/what")
@@ -1078,6 +1159,29 @@ class ServerTest(unittest.TestCase):
                                " DELETE FROM project_presence")
         self.assertIn('<div class="breakage informational"><span class="o-badge o-ok">'
                       "informational</span>", body)
+
+    def test_capture_breakage_banner_says_capture_stopped(self):
+        """Condition 6 (#84): capture, not ingest, and it stopped."""
+        body = self.serve_once(
+            "INSERT INTO breakage (at, tier, condition, source, session_id)"
+            " VALUES ('2026-08-06T00:00:00Z', 'problem', 6, 'capture', 'sx');"
+            " DELETE FROM project_presence")
+        banner = body[body.index("session sx"):]
+        banner = banner[:banner.index("</div>")]
+        self.assertNotIn("ingest continued", banner)
+        self.assertIn("capture stopped appending for this session until resolved", banner)
+        self.assertIn("<b>transcript rewritten</b>", body)
+        self.assertNotIn("transcript shape changed", banner)
+
+    def test_cross_check_banner_has_its_own_heading(self):
+        """Condition 4 (#89): a token gap, not a shape change."""
+        body = self.serve_once(
+            "UPDATE breakage SET acknowledged_at = 'x';"
+            "INSERT INTO breakage (at, tier, condition, source, day, new_share)"
+            " VALUES ('2026-08-06T00:00:00Z', 'problem', 4, 'cross-check',"
+            " '2026-08-05', -0.06); DELETE FROM project_presence")
+        self.assertIn("<b>input-side tokens disagree</b>", body)
+        self.assertNotIn("transcript shape changed", body)
 
     def test_what_ledger_is_one_card_table(self):
         """#54 (ADR-0029 §2, ADR-0030 §10): the ledger is one card-table —
@@ -1341,7 +1445,7 @@ class GuardsTest(unittest.TestCase):
             analyze.init_db(db).close()
             server = serve.make_server(0, db, tmp)
             port = server.server_address[1]
-            threading.Thread(target=server.serve_forever, daemon=True).start()
+            threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
             try:
                 for view in ("what", "where", "how"):
                     c = http.client.HTTPConnection("127.0.0.1", port)

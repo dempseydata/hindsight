@@ -9,9 +9,9 @@ what-pass over the extract (-> `audit`; multi-part sessions get the merge
 call). The why-pass and its findings/evidence/runs tables were removed
 wholesale per ADR-0006 (ticket #43) — v1 is two views, what and where.
 
-Sync also fills the where-view measurement substrate (tickets #22, #42):
-every newly seen (and any not-yet-scanned, e.g. backfill-imported) session's
-transcript is parsed once into `tool_events` (tool_use/tool_result paired by
+Derivation fills the where-view measurement substrate (tickets #22, #42)
+from the raw store, one versioned deriver per table (ticket #87): every
+session with newly captured records is parsed whole into `tool_events` (tool_use/tool_result paired by
 id, deduped across streamed records, each call carrying its consumer
 classification, error flag, and emitting message id — the message-lens join
 to usage), `usage` (per-API-response token counts by model, deduped by
@@ -48,18 +48,26 @@ Idempotent: a session already `done` is never reprocessed. Model outputs are
 cached on disk; an invalid/failed output is left uncached so the next run
 retries it. Subscription-limit exhaustion (the model runner raises
 LimitExhausted) pauses the run cleanly — sessions not yet reached stay
-`pending`/`partial` and the next run resumes them. A session whose transcript
-is gone before it was ever extracted is `lost` — terminal, never retried
-(ticket #78, ADR-0015).
+`pending`/`partial` and the next run resumes them. A session with no parent
+raw records and no cached extract is `lost` — terminal, never retried
+(ticket #78, ADR-0015, revised by issue #79).
 
 Every day bucket is the operator's local day off the stored UTC instant
 (ADR-0014); `HINDSIGHT_TZ=<IANA name>` pins that zone, unset is the host's
-(issue #1). `sessions.date`, the one stored bucket, re-derives each run.
+(issue #1). A session's day is read through `session_day` alone: a `v1`
+session's stored day, else the local day of its earliest records-index
+timestamp (ADR-0031 §5, ticket #86).
 
-The schema-drift guard (issue #15, ADR-0020) runs after the substrate
-fill: the scan counts every key it sees per record `version` into
-`field_histogram`, and check_drift compares the newest version's shape
-with the nearest earlier one against substrate.FIELD_CONTRACT. A trip is a
+Compaction (ADR-0034, ticket #92) deletes a session's raw records once its
+newest record is `HINDSIGHT_RAW_DAYS` old (default 90, `0` never) and no
+deriver or the what-pass still holds it; a bad value compacts nothing and
+errors the run.
+
+The schema-drift guard (issue #15, ADR-0020) runs once derivation has left
+no session due (ADR-0038 §3): the histogram deriver counts every key it sees
+per record `version` into `field_histogram`, and check_drift compares the
+newest version's shape with the nearest earlier one against FIELD_CONTRACT,
+the union of the derivers' declarations (ADR-0037 §3). A trip is a
 `breakage` row — banner on every view, notification when the rows may be
 thin — and the run carries on; `acknowledge-breakage` closes it. The CLI's
 own version is a log line per run, never a trigger.
@@ -79,24 +87,32 @@ run on wake if the Mac was asleep at 03:00, and are skipped if powered off.
 `/hindsight:ops install` writes it (hindsight.py); it runs with `--log`.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 import re
 import sqlite3
-import statistics
 import subprocess
 import sys
 import time
+import zlib
+import tempfile
 import zoneinfo
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-from substrate import (FIELD_CONTRACT, _is_live, adr_count,  # noqa: E402
-                       fill_substrate, record_count, subagent_transcripts)
+from substrate import (  # noqa: E402
+    COMMAND_GRAINS_REQUIRES, COMMAND_GRAINS_VERSION, FIELD_HISTOGRAM_REQUIRES,
+    FIELD_HISTOGRAM_VERSION, LIVE_WINDOW_S, TOOL_EVENTS_REQUIRES, TOOL_EVENTS_VERSION,
+    USAGE_REQUIRES, USAGE_VERSION, _is_live, adr_count, derive_command_grains,
+    derive_field_histogram, derive_tool_events, derive_usage, NotSynced, record_count)
+import extract  # noqa: E402
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 from home import home, log_to  # noqa: E402
+from capture import (REWRITTEN, capture, now as stamp, transcript_key,  # noqa: E402
+                     write_health)
 
 DEFAULT_TRANSCRIPTS = Path.home() / ".claude" / "projects"
 DEFAULT_DB = home() / "hindsight.db"
@@ -233,7 +249,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS audit (
   session_id TEXT PRIMARY KEY REFERENCES sessions(id),
   project TEXT,
-  date TEXT,
   skip INTEGER NOT NULL,
   markdown TEXT,
   prompt_version TEXT NOT NULL,
@@ -301,12 +316,6 @@ CREATE TABLE IF NOT EXISTS field_histogram (
   key TEXT NOT NULL,       -- a key present under scope; '*' = units counted
   n INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS scan_runs (
-  -- one row per analysis run that scanned anything: condition 3's baseline
-  at TEXT PRIMARY KEY,
-  records INTEGER NOT NULL,
-  skipped INTEGER NOT NULL
-);
 CREATE TABLE IF NOT EXISTS breakage (
   -- a run-level observation that the transcript shape moved (issue #15):
   -- ingest continued, the rows since may be thin; cleared by the operator
@@ -368,7 +377,7 @@ STATUSES = ("pending", "partial", "done", "empty", "lost")
 # not an oversight.
 SELECTABLE = ("pending", "partial")
 SELECTABLE_SQL = "(" + ", ".join(f"'{s}'" for s in SELECTABLE) + ")"
-LOST = "lost"  # what serve.py reads: never extracted, transcript gone (#78)
+LOST = "lost"  # what serve.py reads: no parent raw records, no cached extract (#79)
 # tool_events.consumer_type (ticket #42) — classify() emits exactly these
 CONSUMER_TYPES = ("skill", "mcp", "cli", "shell", "builtin")
 SKILL = "skill"  # the member the how-trail selects by name — never by index
@@ -376,24 +385,15 @@ SKILL = "skill"  # the member the how-trail selects by name — never by index
 # reshapes them is a format change and goes through that ADR.
 SECTIONS = ("Did", "Decided", "Setup changes")
 
-# The per-session substrate tables the scan fills — every wipe-for-rescan
-# site (growth invalidation, migration resets) must clear all of them, or a
-# rescan silently duplicates the forgotten table's rows.
-SUBSTRATE_TABLES = ("tool_events", "usage", "command_grains", "subagent_transcripts",
-                    "field_histogram")
-
 # The schema-drift guard (issue #15). A version needs this many units in a
-# scope before its shares mean anything; a run needs this many records
-# before its skipped share can trip condition 3.
+# scope before its shares mean anything.
 MIN_RECORDS = 20
-MIN_RUN_RECORDS = 1000
 THINNED_BEFORE, THINNED_AFTER = 0.9, 0.5  # condition 1: >90% before, <50% after
 ADDED = 0.5             # condition 2: absent before, >50% after
-SPIKE = 3               # condition 3: this run's skipped share vs the median
-SPIKE_WINDOW = 7        # ... of the last N runs
+SPIKE = 3               # condition 3 (retired, ADR-0037 §6): its rows' text only
 # The breakage row as the guard writes it and the banner reads it (serve.py).
 BREAKAGE_COLS = ("id", "at", "tier", "condition", "old_version", "new_version",
-                 "key", "old_share", "new_share", "since")
+                 "key", "old_share", "new_share", "since", "session_id", "derivers", "day")
 
 
 class LimitExhausted(Exception):
@@ -458,12 +458,11 @@ def init_db(db_path):
         # Ticket #61: command grains are new — rescan every scanned session
         # whose transcript survives so existing sessions gain their grains
         # (the forced rescan also heals the two prefix-truncated event tails
-        # found by #59). Wipe and refill in one call, per the #50 rule: no
-        # caller-dependent window. A vanished transcript keeps its old rows.
-        _reset_scanned(conn)
+        # found by #59). Since ticket #87 the derivers do it: a surviving
+        # transcript is captured by the sweep and its `v1` rows re-derived
+        # in one transaction. A vanished transcript keeps its old rows.
         conn.execute("PRAGMA user_version = 3")
         conn.commit()
-        fill_substrate(conn)
     if v < 4:
         # Ticket #73: resumed sessions were never rescanned, so their tails
         # never reached the db. The re-audit gate needs its own watermark —
@@ -478,8 +477,8 @@ def init_db(db_path):
         conn.execute("PRAGMA user_version = 4")
         conn.commit()
     if v < 5:
-        # Ticket #74 / ADR-0014: day buckets became the operator's local day.
-        redate_sessions(conn)
+        # Ticket #74 / ADR-0014 redated stored days here; the redate went
+        # with ticket #86 (ADR-0031 §5): a v1 day is frozen as stored.
         conn.execute("PRAGMA user_version = 5")
         conn.commit()
     if v < 7:  # v6 was the identity columns, now added above the gate
@@ -518,21 +517,31 @@ def init_db(db_path):
     if v < 8:
         # Issue #15: the field histogram is new — rescan every scanned
         # session whose transcript survives so the drift baseline covers
-        # the whole corpus (after #13's subagent fix, per ADR-0019). Same
-        # wipe-and-refill as v3; a vanished transcript keeps its old rows.
-        _reset_scanned(conn)
+        # the whole corpus (after #13's subagent fix, per ADR-0019). The
+        # derivers do it, as for v3; a vanished transcript keeps its old rows.
         conn.execute("PRAGMA user_version = 8")
         conn.commit()
-        fill_substrate(conn)
     if v < 9:
         # ADR-0027 / ticket #32: error text is new — rescan every scanned
         # session whose transcript survives so its failed calls carry their
-        # text. Same wipe-and-refill as v3/v8; a vanished transcript keeps
-        # its old rows with error_text NULL: counted, not captured.
-        _reset_scanned(conn)
+        # text. The derivers do it, as for v3/v8; a vanished transcript
+        # keeps its old rows with error_text NULL: counted, not captured.
         conn.execute("PRAGMA user_version = 9")
         conn.commit()
-        fill_substrate(conn)
+    if v < 10:
+        _migrate_v10(conn)
+    if v < 11:
+        # Ticket #86 (ADR-0039 §1): the audit row's copy of the day goes;
+        # every view reads the day through session_day.
+        if "date" in {r[1] for r in conn.execute("PRAGMA table_info(audit)")}:
+            conn.execute("ALTER TABLE audit DROP COLUMN date")
+        conn.execute("PRAGMA user_version = 11")
+        conn.commit()
+    if v < 12:
+        # Ticket #88 (ADR-0039 §1): condition 3's baseline goes with it.
+        conn.execute("DROP TABLE IF EXISTS scan_runs")
+        conn.execute("PRAGMA user_version = 12")
+        conn.commit()
     # Message-lens join indexes — after the gate, so a pre-#42 db grows the
     # columns before they're indexed.
     conn.executescript(
@@ -544,17 +553,121 @@ def init_db(db_path):
     return conn
 
 
-def _reset_scanned(conn):
-    """The schema-bump rescan: drop the substrate of every scanned session
-    whose transcript survives and clear its scanned marker, so the caller's
-    fill_substrate refills them in one place (the #50 rule). A vanished
-    transcript keeps its old rows — unknown, never less."""
-    stale = [(sid,) for sid, path in conn.execute(
-        "SELECT id, transcript_path FROM sessions"
-        " WHERE skipped_records IS NOT NULL") if Path(path).exists()]
-    for table in SUBSTRATE_TABLES:
-        conn.executemany(f"DELETE FROM {table} WHERE session_id=?", stale)
-    conn.executemany("UPDATE sessions SET skipped_records=NULL WHERE id=?", stale)
+# v10 (ticket #84, ADR-0031, ADR-0039 §1-§8): additive only. Every new table
+# and column the v2 audit core needs lands here, even where a later ticket
+# is the first to write it; the drops come in v11 (#86) and v12 (#88).
+V10_TABLES = (
+    # raw store: one verbatim transcript line per row, zlib-compressed alone;
+    # a rowid table, since deriver state reads the rowid (ADR-0039 §2)
+    """CREATE TABLE IF NOT EXISTS raw_records (
+      session_id TEXT NOT NULL,
+      agent_id TEXT,              -- NULL for the parent transcript
+      byte_offset INTEGER NOT NULL,
+      line BLOB NOT NULL,         -- zlib of the exact line bytes, newline included
+      captured_at TEXT NOT NULL   -- ISO UTC, trailing Z
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_records_key"
+    " ON raw_records(session_id, ifnull(agent_id, ''), byte_offset)",
+    # the transcript registry, one row per (session, agent); outlives compaction
+    """CREATE TABLE IF NOT EXISTS transcripts (
+      session_id TEXT NOT NULL,
+      agent_id TEXT,
+      path TEXT NOT NULL,
+      high_water INTEGER NOT NULL DEFAULT 0,  -- file bytes captured so far
+      last_hash TEXT,          -- sha256 of the last captured line's bytes
+      last_size INTEGER,       -- that line's length, so verifying is one seek
+      folder_identity INTEGER  -- parent row: inode of cwd at SessionStart (ADR-0018)
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_transcripts_key"
+    " ON transcripts(session_id, ifnull(agent_id, ''))",
+    """CREATE TABLE IF NOT EXISTS records_index (
+      session_id TEXT NOT NULL,
+      agent_id TEXT,
+      byte_offset INTEGER NOT NULL,
+      type TEXT,
+      uuid TEXT,
+      timestamp TEXT,
+      provenance TEXT NOT NULL  -- 'raw' | 'v1' | 'compacted'
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_records_index_key"
+    " ON records_index(session_id, ifnull(agent_id, ''), byte_offset)",
+    "CREATE INDEX IF NOT EXISTS idx_records_index_uuid ON records_index(uuid)",
+    """CREATE TABLE IF NOT EXISTS deriver_state (
+      deriver TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      raw_rowid INTEGER NOT NULL,  -- newest raw_records rowid at the last derivation
+      PRIMARY KEY (deriver, session_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS health (
+      source TEXT PRIMARY KEY,  -- 'listener' | 'capture' | 'analysis'
+      last_success TEXT,
+      last_error TEXT,
+      error_text TEXT,
+      failing_since TEXT,  -- the first error after a success; NULL once one succeeds
+      detail TEXT          -- JSON (analysis: active raw limit, held count)
+    )""",
+    # the OTel histogram (ADR-0037 §4), per session like field_histogram
+    """CREATE TABLE IF NOT EXISTS otel_histogram (
+      session_id TEXT NOT NULL,
+      service_name TEXT NOT NULL,
+      service_version TEXT NOT NULL,
+      event_name TEXT NOT NULL,
+      key TEXT NOT NULL,  -- an attribute key; '*' = events counted
+      n INTEGER NOT NULL
+    )""",
+)
+
+BREAKAGE_V10 = (
+    # breakage: per-day, per-session, per-deriver and OTel rows share the
+    # table, so the shares relax to nullable (ADR-0039 §6)
+    """CREATE TABLE breakage_v10 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      at TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      condition INTEGER NOT NULL,  -- 1 thinned | 2 added | 3 skipped spike (history)
+                                   -- | 4 cross-check | 5 unparseable | 6 rewritten
+      old_version TEXT,
+      new_version TEXT,
+      key TEXT,
+      old_share REAL,
+      new_share REAL,
+      since TEXT,
+      acknowledged_at TEXT,
+      source TEXT,      -- e.g. 'capture', 'otel'
+      session_id TEXT,
+      day TEXT,
+      derivers TEXT
+    )""",
+    "INSERT INTO breakage_v10 (id, at, tier, condition, old_version, new_version,"
+    " key, old_share, new_share, since, acknowledged_at) SELECT id, at, tier,"
+    " condition, old_version, new_version, key, old_share, new_share, since,"
+    " acknowledged_at FROM breakage",
+    "DROP TABLE breakage",
+    "ALTER TABLE breakage_v10 RENAME TO breakage",
+)
+
+
+def _migrate_v10(conn):
+    """One transaction for the schema (a crash leaves v9 whole), then the
+    space setting, which only a full VACUUM outside it can apply."""
+    conn.execute("BEGIN")
+    for stmt in V10_TABLES:
+        conn.execute(stmt)
+    # Idempotent like the column sniffs above the gate, so a db re-entering
+    # the gate never fails or loses a column.
+    if [r[3] for r in conn.execute("PRAGMA table_info(breakage)")
+            if r[1] == "old_share"] == [1]:
+        for stmt in BREAKAGE_V10:
+            conn.execute(stmt)
+    # provenance on every derived table; every existing row is v1, and so is
+    # every row the v1 scan writes until the derivers replace it (#87)
+    for t in ("usage", "tool_events", "command_grains", "field_histogram"):
+        if "provenance" not in {r[1] for r in conn.execute(f"PRAGMA table_info({t})")}:
+            conn.execute(f"ALTER TABLE {t} ADD COLUMN provenance TEXT NOT NULL DEFAULT 'v1'")
+    conn.execute("PRAGMA user_version = 10")
+    conn.commit()
+    conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
+    conn.execute("VACUUM")
 
 
 def _migrate(conn):
@@ -565,19 +678,15 @@ def _migrate(conn):
     for table, col in (("sessions", "skipped_records"), ("audit", "adr_count")):
         if col not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER")
-    # Ticket-#42 grains on a pre-#42 db: add the columns, then reset the
-    # scanned marker (dropping the stale substrate rows) wherever the
-    # transcript survives, and rescan immediately — wipe and refill in one
-    # place, so no caller (the backfill import included) can leave a window
-    # where a pruned transcript loses its substrate for good (ticket #50).
-    # A session whose transcript vanished keeps its old rows — grain columns
+    # Ticket-#42 grains on a pre-#42 db: add the columns; the derivers
+    # re-derive every session whose transcript survives (ticket #87). A
+    # session whose transcript vanished keeps its old rows — grain columns
     # NULL, unknown rather than a false zero.
     if "consumer_type" not in {r[1] for r in conn.execute("PRAGMA table_info(tool_events)")}:
         for col in ("message_id TEXT", "consumer_type TEXT", "consumer TEXT",
                     "mcp_tool TEXT", "is_error INTEGER"):
             conn.execute(f"ALTER TABLE tool_events ADD COLUMN {col}")
-        _reset_scanned(conn)
-        # The surviving old rows were scanned before dedup existed — the
+        # The old rows were scanned before dedup existed — the
         # records streaming one response repeated its tool_use blocks. One
         # row per call, in place, since their transcripts can't be rescanned.
         # ponytail: NULL-id rows stay undeduped — no key to pair them on.
@@ -585,7 +694,6 @@ def _migrate(conn):
             "DELETE FROM tool_events WHERE tool_use_id IS NOT NULL AND id NOT IN"
             " (SELECT MIN(id) FROM tool_events GROUP BY session_id, tool_use_id)")
         conn.commit()
-        fill_substrate(conn)
     # Ticket-#43 why-pass removal (ADR-0006) on a pre-cut db: drop the
     # findings/evidence/runs tables and their rows (the raw model outputs
     # stay cached on disk under local-data/), and the change_events link
@@ -609,141 +717,116 @@ def project_name(dirname):
     return dirname[len(prefix):] if dirname.startswith(prefix) else dirname
 
 
-def head_scan(path):
+def head_scan(lines):
     """(first user text, first record timestamp, cli version) from a
-    transcript's head — what self-exclusion, inventory metadata and the
-    attribute command's --before bound read, without a full parse."""
+    transcript's head lines — what self-exclusion, inventory metadata and
+    the attribute command's --before bound read, without a full parse."""
     text, first_ts, version = "", "", None
-    with path.open() as f:
-        for i, line in enumerate(f):
-            if i > 50 or (text and first_ts and version):
-                break
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not first_ts and e.get("timestamp"):
-                first_ts = e["timestamp"]
-            if version is None and e.get("version"):
-                version = e["version"]
-            if not text and e.get("type") == "user" and not e.get("isMeta"):
-                c = (e.get("message") or {}).get("content")
-                if isinstance(c, str):
-                    text = c
-                elif isinstance(c, list):
-                    text = next((x.get("text", "") for x in c
-                                 if isinstance(x, dict) and x.get("type") == "text"), "")
+    for i, line in enumerate(lines):
+        if i > 50 or (text and first_ts and version):
+            break
+        try:
+            e = json.loads(line)
+        except ValueError:  # bytes from the raw store may not even decode
+            continue
+        if not isinstance(e, dict):
+            continue
+        if not first_ts and e.get("timestamp"):
+            first_ts = e["timestamp"]
+        if version is None and e.get("version"):
+            version = e["version"]
+        if not text and e.get("type") == "user" and not e.get("isMeta"):
+            c = (e.get("message") or {}).get("content")
+            if isinstance(c, str):
+                text = c
+            elif isinstance(c, list):
+                text = next((x.get("text", "") for x in c
+                             if isinstance(x, dict) and x.get("type") == "text"), "")
     return text, first_ts, version
 
 
-def _has_otel(conn):
-    """Whether the listener has ever touched this db (ticket #50) — the
-    otel_events table is its, not the analysis run's."""
-    return bool(conn.execute("SELECT 1 FROM sqlite_master"
-                             " WHERE name = 'otel_events'").fetchone())
+def session_day(s="sessions"):
+    """The one day expression every view reads (ADR-0031 §5, ticket #86),
+    as SQL over the sessions table aliased `s`: a `v1` session's stored
+    day, else the local day of the earliest records-index timestamp across
+    its parent and subagents. A `raw` session stores no day."""
+    return (f"coalesce({s}.date, (SELECT {day_sql('MIN(timestamp)')}"
+            f" FROM records_index WHERE session_id = {s}.id))")
 
 
-def hook_folder_identity(conn, sid, has_otel):
-    """The folder identity the self-instrumentation hook recorded at this
-    session's SessionStart firing (ADR-0018), or None — pre-hook history,
-    an unreadable working directory, or (ticket #50) a db the listener has
-    never touched. A session can carry several hindsight.hook rows, one
-    per fired event, and SessionStart itself can fire more than once (a
-    resume or compact) — the earliest firing that actually carries an
-    identity wins; a stat failure on one firing doesn't hide a later one."""
-    if not has_otel:
-        return None
-    for (attrs,) in conn.execute(
-            "SELECT attributes FROM otel_events WHERE session_id=?"
-            " AND event_name='hindsight.hook' ORDER BY id", (sid,)):
-        a = json.loads(attrs)
-        if a.get("hook.event") != "SessionStart":
-            continue
+def sweep(conn, root):
+    """The catch-up for a missed firing (ADR-0033 §1, ticket #86): the
+    capture hook's own function over every transcript under `root` — parent
+    and subagent — past its registry high-water or with no registry row.
+    Returns the count of lines stored."""
+    known = {(sid, aid): hw for sid, aid, hw in conn.execute(
+        "SELECT session_id, agent_id, high_water FROM transcripts")}
+    stored, failed = 0, []
+    for path in sorted([*Path(root).glob("*/*.jsonl"),
+                        *Path(root).glob("*/*/subagents/agent-*.jsonl")]):
+        if not path.is_file():
+            continue  # a directory named *.jsonl is not a transcript
         try:
-            return int(a["folder.identity"])
-        except (KeyError, TypeError, ValueError):
-            continue  # this firing's stat failed; a later one may still carry it
-    return None
+            if path.stat().st_size > known.get(transcript_key(path), -1):
+                stored += capture(conn, path)
+        except FileNotFoundError:
+            pass  # gone between the listing and the read: nothing to catch up
+        except OSError as e:
+            conn.rollback()
+            failed.append(f"{path}: {type(e).__name__}: {e}")
+    if failed:
+        raise RuntimeError(f"sweep failed on {len(failed)} transcript(s): "
+                           + "; ".join(failed))
+    return stored
 
 
-def redate_sessions(conn):
-    """Every other day bucket converts at read time, but `sessions.date` is
-    a *stored* bucket that has already lost the clock time it would need —
-    so it re-derives from the transcript head under the effective zone
-    (ADR-0014). Ran once as migration 5; runs every analysis since issue #1,
-    because a changed `HINDSIGHT_TZ` would otherwise leave every older
-    session a day off its own usage bars. A vanished transcript keeps the
-    date it has: a guess is not a re-derivation."""
-    # ponytail: head-scans every surviving transcript each run (~0.6 s per
-    # 300 sessions). Store the start *instant* and bucket at read time if
-    # this ever shows in the run's wall-clock.
-    redated = []
-    for sid, path in conn.execute("SELECT id, transcript_path FROM sessions"):
-        if Path(path).exists():
-            date = local_day(head_scan(Path(path))[1])
-            if date:
-                redated.append((date, sid))
-    conn.executemany("UPDATE sessions SET date=? WHERE id=?", redated)
-    conn.executemany("UPDATE audit SET date=? WHERE session_id=?", redated)
-
-
-def sync_sessions(conn, root):
-    """Insert newly seen transcripts into `sessions`; self-excluded sessions
-    never enter it. Excluded ids are remembered in `excluded_sessions` so each
-    transcript is head-scanned once, not on every run — analysis runs mint
-    fresh `claude -p` transcripts of their own, so the excluded set otherwise
-    grows the rescan cost forever. All file I/O happens before the write
-    transaction opens (the ingest listener shares this db and its busy
-    timeout is finite). A new session's folder identity and attribution
-    source ('hook') are filled from its SessionStart hook row when one
-    exists (ADR-0018); a session with none is synced name-only, exactly as
-    before. Returns the count inserted."""
-    seen = {r[0] for r in conn.execute("SELECT id FROM sessions")}
-    seen |= {r[0] for r in conn.execute("SELECT id FROM excluded_sessions")}
-    has_otel = _has_otel(conn)
+def sync_sessions(conn):
+    """Project bookkeeping's session rows, from the transcript registry
+    (ticket #86), replacing the v1 directory scan: every parent transcript
+    with captured records and no `sessions` row gets one, named from its
+    transcript directory, with no stored day (session_day dates it).
+    Self-excluded sessions (ADR-0003, read from the stored head) never
+    enter it, and are remembered in `excluded_sessions`. A new session's
+    folder identity and attribution source ('hook') are filled from the
+    capture hook's SessionStart identity when one exists (ADR-0018); one
+    with none is synced name-only. Returns the count inserted."""
     rows, excluded = [], []
-    for jsonl in sorted(Path(root).glob("*/*.jsonl")):
-        sid = jsonl.stem
-        if sid in seen:
-            continue
-        seen.add(sid)
-        head, first_ts, version = head_scan(jsonl)
+    for sid, path, hw, fid in conn.execute(
+            "SELECT session_id, path, high_water, folder_identity FROM transcripts"
+            " WHERE agent_id IS NULL AND high_water > 0"
+            " AND session_id NOT IN (SELECT id FROM sessions)"
+            " AND session_id NOT IN (SELECT id FROM excluded_sessions)"
+            " ORDER BY session_id").fetchall():
+        head, _, version = head_scan(zlib.decompress(line) for (line,) in conn.execute(
+            "SELECT line FROM raw_records WHERE session_id=? AND agent_id IS NULL"
+            " ORDER BY byte_offset LIMIT 52", (sid,)))
         if any(sig in head[:3000] for sig in ANALYSIS_SIGS):
             excluded.append((sid,))
             continue
-        fid = hook_folder_identity(conn, sid, has_otel)
-        rows.append((sid, project_name(jsonl.parent.name), str(jsonl),
-                     local_day(first_ts), version, jsonl.stat().st_size, fid,
-                     "hook" if fid is not None else None))
+        # size is the registry high-water, file bytes captured (ADR-0039 §7)
+        rows.append((sid, project_name(Path(path).parent.name), path, version,
+                     hw, fid, "hook" if fid is not None else None))
     conn.executemany(
-        "INSERT INTO sessions (id, project, transcript_path, date, cli_version,"
+        "INSERT INTO sessions (id, project, transcript_path, cli_version,"
         " size, status, folder_identity, attribution_source)"
-        " VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)", rows)
+        " VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)", rows)
     conn.executemany("INSERT INTO excluded_sessions (id) VALUES (?)", excluded)
     conn.commit()
     return len(rows)
 
 
 def fill_hook_identity(conn):
-    """The hook-row race (ticket #7): a session synced before the listener
-    stored its SessionStart row was filled name-only by sync_sessions and
-    would otherwise never be revisited. Each run, every identity-less
-    session that *has* a hindsight.hook row is re-read through the same
-    path sync uses. Pre-hook history has no hook rows, so it costs nothing
-    and no date rule enters; a session whose listener was down at
-    SessionStart never gains a row and is the attribute command's job."""
-    if not _has_otel(conn):
-        return
-    stamped = []
-    for (sid,) in conn.execute(
-            "SELECT DISTINCT s.id FROM sessions s JOIN otel_events o"
-            " ON o.session_id = s.id AND o.event_name = 'hindsight.hook'"
-            " WHERE s.folder_identity IS NULL"):
-        fid = hook_folder_identity(conn, sid, True)
-        if fid is not None:
-            stamped.append((fid, sid))
-    conn.executemany("UPDATE sessions SET folder_identity=?,"
-                     " attribution_source='hook' WHERE id=?", stamped)
+    """The hook-row race (ticket #7): a session synced before the capture
+    hook recorded its SessionStart identity was filled name-only by
+    sync_sessions and would otherwise never be revisited. Each run, every
+    identity-less session the hook has since stamped is filled. A session
+    with no identity recorded is the attribute command's job."""
+    conn.execute("UPDATE sessions SET attribution_source='hook', folder_identity ="
+                 " (SELECT t.folder_identity FROM transcripts t WHERE"
+                 "  t.session_id = sessions.id AND t.agent_id IS NULL)"
+                 " WHERE folder_identity IS NULL AND id IN (SELECT session_id"
+                 "  FROM transcripts WHERE agent_id IS NULL"
+                 "  AND folder_identity IS NOT NULL)")
     conn.commit()
 
 
@@ -784,7 +867,7 @@ def attribute_sessions(conn, name, folder, before=None,
         before = parse_ts(before)
         if before is None:
             raise ValueError("--before is not an ISO-8601 instant")
-    rows = conn.execute("SELECT id, transcript_path, date FROM sessions"
+    rows = conn.execute(f"SELECT id, transcript_path, {session_day()} FROM sessions"
                         " WHERE project = ? AND folder_identity IS NULL",
                         (name,)).fetchall()
     if before is not None:
@@ -792,7 +875,8 @@ def attribute_sessions(conn, name, folder, before=None,
 
         def precedes(path, date):
             if Path(path).exists():
-                ts = parse_ts(head_scan(Path(path))[1])
+                with open(path, "rb") as f:
+                    ts = parse_ts(head_scan(f)[1])
                 return ts is not None and ts < before
             # ponytail: the bucket is the local day (ADR-0014) except for a
             # transcript already gone at the v5 migration, which kept its
@@ -820,55 +904,42 @@ REAUDIT_SHARE = 0.25
 
 def invalidate_grown(conn, work_dir):
     """Ticket #29's straddle case, widened to resumed sessions by #73: a
-    transcript that grew since sync still carries caches and substrate from
-    the smaller prefix.
+    transcript that grew since sync still carries caches from the smaller
+    prefix. The derived tables need nothing here since ticket #87: a grown
+    session is due for every deriver and re-derived whole.
 
-    Substrate and audit are split, because prefix semantics only ever
-    applied to one of them. `usage`/`tool_events`/`command_grains` are
-    mechanical facts carrying their own timestamps, so they are **always**
-    topped up, whatever the session's status — before #73 a `done` session
-    was skipped outright and every resumed session's tail was lost for good
-    (26.2M tokens across 17 sessions when it was found). The audit entry
-    stays prefix-semantic (CONTEXT.md): a model-written summary is fairly
-    "as of" its run, and it is rewritten only once REAUDIT_SHARE of the
-    current transcript is unseen.
+    The audit entry stays prefix-semantic (CONTEXT.md): a model-written
+    summary is fairly "as of" its run, and it is rewritten only once
+    REAUDIT_SHARE of the current transcript is unseen. That share is
+    measured against `audited_size`, not `size`: `size` moves to the high-water
+    on every growth, so measuring against it would reset the gap on every
+    run and a session resumed in small increments would drift forever
+    without ever tripping the threshold. The extract reads the parent
+    alone, so a subagent appearing or growing never rewrites the audit.
 
-    That share is measured against `audited_size`, not `size`: topping up
-    substrate moves `size` to the disk, so measuring against it would reset
-    the gap on every run and a session resumed in small increments would
-    drift forever without ever tripping the threshold.
+    A transcript that *shrank* is left alone — pruning means unknown. So is
+    a *live* one: the what-pass would not take it this run anyway.
 
-    A transcript that *shrank* is left alone — pruning means unknown, and
-    rescanning would overwrite what we still hold with less.
-
-    A *live* transcript is left alone too (ticket #76). The wipe is only
-    half a top-up: `fill_substrate` skips a live session (ticket #29), so
-    wiping one would end the run with zero substrate rows for it. Waiting
-    a run costs nothing — the tail is still on disk.
-
-    A session with a subagent transcript unseen or grown since its scan is a
-    session that grew (issue #13) — the same path backfills subagents of
-    sessions synced before they were ingested. Only the substrate follows:
-    the re-audit share is measured on the parent transcript alone, so a
-    subagent appearing or growing never rewrites the audit."""
-    rows = conn.execute("SELECT id, transcript_path, size, status, audited_size,"
-                        " skipped_records FROM sessions").fetchall()
-    for sid, path, size, status, audited, scanned in rows:
-        p = Path(path)
-        if not p.exists() or size is None or _is_live(path):
+    v2 (issue #79, ADR-0039 §7): growth and the share are measured on the
+    parent's captured bytes, the registry high-water, which `size` now
+    holds. A transcript pruned after capture can still be re-audited from
+    its records."""
+    # a compacted session's records are gone: its standing entry is the
+    # lasting output (ADR-0034), never rewritten from a tail
+    compacted = {s for (s,) in conn.execute(
+        "SELECT DISTINCT session_id FROM records_index WHERE provenance='compacted'")}
+    rows = conn.execute("SELECT s.id, s.transcript_path, s.size, s.status,"
+                        " s.audited_size, t.high_water"
+                        " FROM sessions s JOIN transcripts t ON t.session_id = s.id"
+                        " AND t.agent_id IS NULL").fetchall()
+    for sid, path, size, status, audited, now in rows:
+        if size is None or now <= size or (Path(path).exists() and _is_live(path)):
             continue
-        now = p.stat().st_size
-        if now <= size and not (scanned is not None
-                                and _subagents_grew(conn, sid, path)):
-            continue
-        for table in SUBSTRATE_TABLES:
-            conn.execute(f"DELETE FROM {table} WHERE session_id=?", (sid,))
-        conn.execute("UPDATE sessions SET skipped_records=NULL, size=?"
-                     " WHERE id=?", (now, sid))
-        reaudit = (status == "done" and audited is not None
+        conn.execute("UPDATE sessions SET size=? WHERE id=?", (now, sid))
+        reaudit = (status == "done" and sid not in compacted
+                   and audited is not None and now > audited
                    and (now - audited) / now >= REAUDIT_SHARE)
-        # the extract reads the parent alone: subagent-only growth leaves it
-        if (status != "done" and now > size) or reaudit:
+        if status != "done" or reaudit:
             for f in [*(Path(work_dir) / "extracts").glob(f"{sid}.*"),
                       *(Path(work_dir) / PROMPT_VERSION).glob(f"{sid}.*")]:
                 f.unlink()
@@ -877,14 +948,181 @@ def invalidate_grown(conn, work_dir):
     conn.commit()
 
 
-def _subagents_grew(conn, sid, path):
-    """Any subagent transcript on disk that the scan has not recorded, or
-    that is larger than recorded. One that shrank or vanished is left alone
-    — pruning means unknown, never less (ADR-0013)."""
-    known = dict(conn.execute("SELECT agent_id, size FROM subagent_transcripts"
-                              " WHERE session_id=?", (sid,)))
-    return any(aid not in known or p.stat().st_size > known[aid]
-               for aid, p in subagent_transcripts(path))
+# The records index (ADR-0031 §3, ticket #86), the first deriver: each
+# record's type, uuid and timestamp. Bump the version to rebuild its `raw`
+# rows from the raw store.
+RECORDS_INDEX_VERSION = 1
+RECORDS_INDEX_REQUIRES = tuple((t, k) for t in ("user", "assistant")
+                               for k in ("type", "uuid", "timestamp"))
+UNPARSEABLE = 5  # breakage condition: a stored record that is not a JSON object
+
+
+def index_records(conn, sid, records):
+    """Records-index rows for one session from its raw records, given as
+    [(agent_id, byte_offset, line bytes)]. A line that is not a JSON object
+    is indexed nowhere and writes one open condition-5 breakage for the
+    session (ADR-0037 §6): capture stores complete lines only, so any such
+    line is a breakage, with no floor."""
+    bad = False
+    for aid, offset, line in records:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            r = None
+        if not isinstance(r, dict):
+            bad = True
+            continue
+        vals = [v if isinstance(v, str) else None
+                for v in (r.get("type"), r.get("uuid"), r.get("timestamp"))]
+        conn.execute("INSERT INTO records_index (session_id, agent_id, byte_offset,"
+                     " type, uuid, timestamp, provenance) VALUES (?, ?, ?, ?, ?, ?, 'raw')",
+                     (sid, aid, offset, *vals))
+    if bad and not conn.execute("SELECT 1 FROM breakage WHERE acknowledged_at IS NULL"
+                                " AND condition=? AND session_id=?",
+                                (UNPARSEABLE, sid)).fetchone():
+        conn.execute("INSERT INTO breakage (at, tier, condition, source, session_id,"
+                     " derivers) VALUES (?, 'problem', ?, 'derivation', ?, 'records_index')",
+                     (stamp(), UNPARSEABLE, sid))
+
+
+def derive(conn, name, version, fn):
+    """The deriver loop (ADR-0031 §6, ticket #86) for the deriver `fn`,
+    whose table is `name`. A session is due when its newest raw rowid
+    exceeds the one stored at its last derivation; its `raw` rows are
+    deleted and re-derived from all its raw records, parent and subagents
+    together, in one transaction. A failure rolls back that session alone
+    and leaves it due; the loop carries on, then raises naming each failed
+    session, so the run stays errored while one does (ADR-0038 §4). State
+    is keyed `name@version`: a bump finds no state, clears the old, and so
+    rebuilds every session through this same loop, `v1` and `compacted`
+    rows untouched."""
+    key = f"{name}@{version}"
+    conn.execute("DELETE FROM deriver_state WHERE deriver GLOB ? AND deriver != ?",
+                 (f"{name}@*", key))
+    conn.commit()
+    done = dict(conn.execute("SELECT session_id, raw_rowid FROM deriver_state"
+                             " WHERE deriver=?", (key,)))
+    failed = []
+    for sid, top in conn.execute("SELECT session_id, MAX(rowid) FROM raw_records"
+                                 " GROUP BY session_id").fetchall():
+        if top <= done.get(sid, 0):
+            continue
+        try:
+            conn.execute(f"DELETE FROM {name} WHERE session_id=? AND provenance='raw'",
+                         (sid,))
+            fn(conn, sid, [(aid, off, zlib.decompress(line)) for aid, off, line in
+                           conn.execute("SELECT agent_id, byte_offset, line FROM raw_records"
+                                        " WHERE session_id=? AND rowid <= ?"
+                                        " ORDER BY ifnull(agent_id, ''), byte_offset",
+                                        (sid, top)).fetchall()])
+            conn.execute("INSERT OR REPLACE INTO deriver_state (deriver, session_id,"
+                         " raw_rowid) VALUES (?, ?, ?)", (key, sid, top))
+            conn.commit()
+        except NotSynced:
+            conn.rollback()  # no sessions row yet: stays due, derives next run
+        except Exception as e:
+            conn.rollback()
+            failed.append(f"{sid}: {type(e).__name__}: {e}")
+    if failed:
+        raise RuntimeError(f"{name} failed on {len(failed)} session(s): "
+                           + "; ".join(failed))
+
+
+def derivers():
+    """Every deriver over the raw store as (table, version, fn), the records
+    index first. Read at call time, so a version bump takes effect at once."""
+    return [("records_index", RECORDS_INDEX_VERSION, index_records),
+            ("usage", USAGE_VERSION, derive_usage),
+            ("tool_events", TOOL_EVENTS_VERSION, derive_tool_events),
+            ("command_grains", COMMAND_GRAINS_VERSION, derive_command_grains),
+            ("field_histogram", FIELD_HISTOGRAM_VERSION, derive_field_histogram)]
+
+
+# The field contract (issue #15, ADR-0037 §3): the union of what every
+# reader of the raw records declares it requires present — the derivers
+# and the what-pass's extract. The drift guard checks exactly these keys,
+# and a thinned key's row names the readers that declared it.
+DECLARED = {"records_index": RECORDS_INDEX_REQUIRES, "usage": USAGE_REQUIRES,
+            "tool_events": TOOL_EVENTS_REQUIRES,
+            "command_grains": COMMAND_GRAINS_REQUIRES,
+            "field_histogram": FIELD_HISTOGRAM_REQUIRES, "extract": extract.REQUIRES}
+FIELD_CONTRACT = tuple(dict.fromkeys(k for keys in DECLARED.values() for k in keys))
+
+# The OTel histogram (ADR-0037 §4): per session.id, attribute-key counts per
+# (service.name, service.version, event name) from otel_events. Never on the
+# raw store or compacted, so it has no provenance; a version bump rebuilds
+# every session. Each reader of otel_events declares the (event, attribute)
+# pairs it requires present, as the raw-store readers do above.
+OTEL_HISTOGRAM_VERSION = 1
+OTEL_DECLARED = {
+    # serve.py's latency panel (where view)
+    "latency": (("api_request", "model"), ("api_request", "duration_ms")),
+    # serve.py's reliability panel (where view)
+    "reliability": (("api_error", "model"), ("api_retries_exhausted", "model"),
+                    ("api_retries_exhausted", "total_retry_duration_ms"),
+                    ("mcp_server_connection", "server_name"),
+                    ("mcp_server_connection", "status"),
+                    ("mcp_server_connection", "duration_ms")),
+    # serve.py's token source (ADR-0033 §4): every token panel for a session
+    # OTel saw; agent_id is absent on main-session requests, so undeclared
+    "tokens": (("api_request", "input_tokens"), ("api_request", "output_tokens"),
+               ("api_request", "cache_read_tokens"), ("api_request", "cache_creation_tokens"),
+               ("api_request", "model")),
+    # serve.py's hook panel (ADR-0033 §7)
+    "hooks": (("hook_execution_complete", "hook_event"),
+              ("hook_execution_complete", "total_duration_ms")),
+    # the input-side token cross-check (ADR-0033 §5)
+    "cross-check": (("api_request", "input_tokens"), ("api_request", "cache_read_tokens"),
+                    ("api_request", "cache_creation_tokens"),
+                    ("api_request", "query_source")),
+}
+
+
+def derive_otel_histogram(conn):
+    """The OTel histogram deriver: a session is due when its newest
+    otel_events id exceeds the one stored at its last derivation (deriver
+    state `otel_histogram@<version>`, the id in raw_rowid). Events with no
+    session are outside it."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='otel_events'").fetchone():
+        return  # the listener never ran against this store
+    key = f"otel_histogram@{OTEL_HISTOGRAM_VERSION}"
+    if conn.execute("DELETE FROM deriver_state WHERE deriver GLOB 'otel_histogram@*'"
+                    " AND deriver != ?", (key,)).rowcount:
+        conn.execute("DELETE FROM otel_histogram")  # a bump rebuilds every session
+    done = dict(conn.execute("SELECT session_id, raw_rowid FROM deriver_state"
+                             " WHERE deriver=?", (key,)))
+    for sid, top in conn.execute("SELECT session_id, MAX(id) FROM otel_events"
+                                 " WHERE session_id IS NOT NULL GROUP BY 1").fetchall():
+        if top <= done.get(sid, 0):
+            continue
+        counts = {}
+        for name, attrs in conn.execute("SELECT event_name, attributes FROM otel_events"
+                                        " WHERE session_id=? AND id <= ?", (sid, top)):
+            a = json.loads(attrs)
+            c = counts.setdefault((a.get("service.name") or "",
+                                   a.get("service.version") or "", name or ""), {})
+            for k in ("*", *a):
+                c[k] = c.get(k, 0) + 1
+        conn.execute("DELETE FROM otel_histogram WHERE session_id=?", (sid,))
+        conn.executemany("INSERT INTO otel_histogram (session_id, service_name,"
+                         " service_version, event_name, key, n) VALUES (?, ?, ?, ?, ?, ?)",
+                         [(sid, *g, k, n) for g, c in counts.items() for k, n in c.items()])
+        conn.execute("INSERT OR REPLACE INTO deriver_state (deriver, session_id,"
+                     " raw_rowid) VALUES (?, ?, ?)", (key, sid, top))
+        conn.commit()
+
+
+def any_due(conn):
+    """Whether any session is still due for any deriver — the drift guard's
+    gate (ADR-0038 §3): a half-derived store would trip it falsely."""
+    tops = conn.execute("SELECT session_id, MAX(rowid) FROM raw_records"
+                        " GROUP BY session_id").fetchall()
+    for name, version, _ in derivers():
+        done = dict(conn.execute("SELECT session_id, raw_rowid FROM deriver_state"
+                                 " WHERE deriver=?", (f"{name}@{version}",)))
+        if any(top > done.get(sid, 0) for sid, top in tops):
+            return True
+    return False
 
 
 def _vkey(v):
@@ -903,7 +1141,39 @@ def version_histogram(conn):
     return h
 
 
-def check_drift(conn, at, records, skipped, notify=False):
+def _pair(h, baseline, count):
+    """The comparison (ADR-0020 §2): the newest version of `h` with
+    MIN_RECORDS units against the nearest earlier one, none below the
+    acknowledged baseline. Returns (old, new, share); new is None when
+    there is nothing to compare."""
+    versions = sorted((v for v in h if count(h[v]) >= MIN_RECORDS
+                       and _vkey(v) >= _vkey(baseline)), key=_vkey)
+    if len(versions) < 2:
+        return None, None, None
+    old, new = versions[-2:]
+
+    def share(v, scope, key):
+        s = h[v].get(scope, {})
+        return s.get(key, 0) / s["*"] if s.get("*", 0) >= MIN_RECORDS else None
+    return old, new, share
+
+
+def _thinned(share, old, new, declared):
+    """Condition 1 over every declared (scope, key): (scope.key, old share,
+    new share, the readers that declared it)."""
+    readers = {}
+    for name, keys in declared.items():
+        for k in keys:
+            readers.setdefault(k, []).append(name)
+    out = []
+    for (scope, key), names in readers.items():
+        a, b = share(old, scope, key), share(new, scope, key)
+        if a is not None and b is not None and a > THINNED_BEFORE and b < THINNED_AFTER:
+            out.append((f"{scope}.{key}", a, b, ", ".join(names)))
+    return out
+
+
+def check_drift(conn, at, notify=False):
     """The schema-drift guard (issue #15, ADR-0020): a histogram delta
     between record versions, never a version pin. The newest version with
     MIN_RECORDS records is compared with the nearest earlier one that has
@@ -915,43 +1185,40 @@ def check_drift(conn, at, records, skipped, notify=False):
        since may be thin;
     2. a top-level key absent under the comparison version present in >50%
        of a record type's units under the newest — *informational*,
-       upstream added something, the rows cannot be wrong;
-    3. this run's skipped share exceeds SPIKE× the median of the last
-       SPIKE_WINDOW runs — *problem*; the one per-run condition, because a
-       parse failure is a run-time event. Runs under MIN_RUN_RECORDS
-       neither trip nor enter the baseline.
+       upstream added something, the rows cannot be wrong.
+
+    Condition 3, the run's skipped share, is retired (ADR-0037 §6): the
+    scan it measured is gone. Its rows stay as history.
+
+    The OTel histogram is compared the same way per service, against
+    OTEL_DECLARED, under condition 1 only (ADR-0037 §4); its rows carry
+    source 'otel' and the service in each version. A thinned key's row
+    names the readers that declared it; *since* is the earliest day of any
+    session whose histogram holds the new version.
 
     One breakage row per trip — except that the keys added under one version
     pair are one row (issue #30), its key the sorted list and its share the
     lowest — deduplicated against the open rows, carrying the two versions,
-    the key, the shares and the first session day under the newest version. Ingest never halts: this runs after the substrate
-    fill and the run carries on. A macOS notification for conditions 1 and
-    3 only, when `notify` — a notification always means a decision is
-    needed. Returns the rows written."""
+    the key, the shares and the first session day under the newest version.
+    Ingest never halts: this runs after derivation and the run carries on.
+    A macOS notification for condition 1 only, when `notify` — a
+    notification always means a decision is needed. Returns the rows
+    written."""
     h = version_histogram(conn)
     baseline = max((v for (v,) in conn.execute(
         "SELECT new_version FROM breakage WHERE acknowledged_at IS NOT NULL"
-        " AND new_version IS NOT NULL")), key=_vkey, default="")
-    versions = sorted((v for v in h if record_count(h[v]) >= MIN_RECORDS
-                       and _vkey(v) >= _vkey(baseline)), key=_vkey)
+        " AND new_version IS NOT NULL AND ifnull(source, '') != 'otel'")),
+        key=_vkey, default="")
     trips = []
-    if len(versions) >= 2:
-        old, new = versions[-2:]
-        # ponytail: `since` reads sessions.cli_version, the head-scan version
-        # — a session opened under the old CLI and resumed under the new one
-        # is missed, so the day can run late (or read '?'). Query the
-        # histogram by session for the exact day if that ever matters.
-        since = conn.execute("SELECT MIN(date) FROM sessions WHERE cli_version=?",
+    old, new, share = _pair(h, baseline, record_count)
+    if new:
+        # ADR-0037 §2: the earliest day of any session whose histogram holds
+        # the new version — a session resumed under it included
+        since = conn.execute(f"SELECT MIN({session_day()}) FROM sessions WHERE id IN"
+                             " (SELECT session_id FROM field_histogram WHERE version=?)",
                              (new,)).fetchone()[0]
-
-        def share(v, scope, key):
-            s = h[v].get(scope, {})
-            return s.get(key, 0) / s["*"] if s.get("*", 0) >= MIN_RECORDS else None
-
-        for scope, key in FIELD_CONTRACT:
-            a, b = share(old, scope, key), share(new, scope, key)
-            if a is not None and b is not None and a > THINNED_BEFORE and b < THINNED_AFTER:
-                trips.append(("problem", 1, old, new, f"{scope}.{key}", a, b, since))
+        trips += [("problem", 1, old, new, k, a, b, since, None, d)
+                  for k, a, b, d in _thinned(share, old, new, DECLARED)]
         added = {}
         for scope in h[new]:
             if "." in scope:
@@ -962,24 +1229,30 @@ def check_drift(conn, at, records, skipped, notify=False):
                     added[f"{scope}.{key}"] = b
         if added:  # issue #30: a release adds several keys at once — one row
             trips.append(("informational", 2, old, new, ", ".join(sorted(added)),
-                          0.0, min(added.values()), since))
-    if records >= MIN_RUN_RECORDS:
-        prior = [s / r for r, s in conn.execute(
-            "SELECT records, skipped FROM scan_runs ORDER BY at DESC LIMIT ?",
-            (SPIKE_WINDOW,))]
-        mine = skipped / records
-        # ponytail: a median of zero makes any skipped record a spike — real
-        # corpora skip ~20% (attachment, mode, … records), so it never is.
-        # And a spiked run enters the window like any other, so a new
-        # normal stops tripping after ~4 runs; the open row stays until
-        # acknowledged, so the alarm is never silently lost.
-        if prior and mine > SPIKE * statistics.median(prior):
-            trips.append(("problem", 3, None, None, None,
-                          statistics.median(prior), mine, None))
-        conn.execute("INSERT OR REPLACE INTO scan_runs (at, records, skipped)"
-                     " VALUES (?, ?, ?)", (at, records, skipped))
+                          0.0, min(added.values()), since, None, None))
+    # The OTel histogram, per service (each has its own version series),
+    # condition 1 only: an added attribute on a documented interface is noise.
+    acked = [v for (v,) in conn.execute(
+        "SELECT new_version FROM breakage WHERE acknowledged_at IS NOT NULL"
+        " AND source='otel'")]
+    for (svc,) in conn.execute("SELECT DISTINCT service_name FROM otel_histogram").fetchall():
+        oh = {}
+        for v, e, k, n in conn.execute("SELECT service_version, event_name, key, SUM(n)"
+                                       " FROM otel_histogram WHERE service_name=?"
+                                       " GROUP BY 1, 2, 3", (svc,)):
+            oh.setdefault(v, {}).setdefault(e, {})[k] = n
+        base = max((v.removeprefix(f"{svc} ") for v in acked if v.startswith(f"{svc} ")),
+                   key=_vkey, default="")
+        old, new, share = _pair(oh, base, lambda es: sum(e.get("*", 0) for e in es.values()))
+        if new:
+            since = conn.execute(f"SELECT MIN({session_day()}) FROM sessions WHERE id IN"
+                                 " (SELECT session_id FROM otel_histogram"
+                                 " WHERE service_name=? AND service_version=?)",
+                                 (svc, new)).fetchone()[0]
+            trips += [("problem", 1, f"{svc} {old}", f"{svc} {new}", k, a, b, since,
+                       "otel", d) for k, a, b, d in _thinned(share, old, new, OTEL_DECLARED)]
     written = []
-    for tier, cond, old, new, key, a, b, since in trips:
+    for tier, cond, old, new, key, a, b, since, source, derivers in trips:
         # Condition 2 dedups on the version pair: a key first seen on a later
         # run joins nothing, the open row is the operator's one judgement.
         if conn.execute("SELECT 1 FROM breakage WHERE acknowledged_at IS NULL"
@@ -988,27 +1261,95 @@ def check_drift(conn, at, records, skipped, notify=False):
             continue
         cur = conn.execute(
             "INSERT INTO breakage (at, tier, condition, old_version, new_version,"
-            " key, old_share, new_share, since) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (at, tier, cond, old, new, key, a, b, since))
+            " key, old_share, new_share, since, source, derivers)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (at, tier, cond, old, new, key, a, b, since, source, derivers))
         written.append(dict(zip(BREAKAGE_COLS, (cur.lastrowid, at, tier, cond, old,
-                                                new, key, a, b, since))))
+                                                new, key, a, b, since, None, derivers))))
     conn.commit()
-    loud = [r for r in written if r["condition"] in (1, 3)]
+    loud = [r for r in written if r["condition"] == 1]
     if notify and loud:
         _notify(f"{len(loud)} breakage(s) — {breakage_text(loud[0])}")
     return written
 
 
+# The cross-check (ADR-0033 §5, frozen there): OTel requests that never reach
+# the transcript. A new side source trips the check; add it here, in code.
+SIDE_REQUESTS = ("prompt_suggestion", "generate_session_title", "web_search_tool",
+                 "web_fetch_apply", "away_summary", "agent_summary")
+CROSS_CHECK_FLOOR = 50   # shared requests a day needs before it is compared
+CROSS_CHECK_GAP = 0.05   # absolute gap, against OTel, that trips condition 4
+CROSS_CHECK = 4
+
+
+def cross_check(conn, at):
+    """Condition 4 (ADR-0033 §5): per completed local day, OTel input-side
+    tokens (side requests excluded) against the transcript's, over sessions
+    both sources saw that day. A gap above CROSS_CHECK_GAP writes one *problem* row
+    for that day. A day that has a row, open or acknowledged, is never
+    checked again, so acknowledging closes that day and shifts nothing
+    else. Returns the rows written."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='otel_events'").fetchone():
+        return []
+    deny = ", ".join("?" * len(SIDE_REQUESTS))
+    tok = lambda k: f"ifnull(CAST(json_extract(attributes, '$.{k}') AS INTEGER), 0)"
+    # per (day, session): a day compares only sessions both sources saw that
+    # day, so a listener outage drops a session rather than tripping the day
+    transcript = {(d, s): t for d, s, t in conn.execute(
+        f"SELECT {day_sql('at')}, session_id, SUM(input_tokens + cache_read_input_tokens"
+        " + cache_creation_input_tokens) FROM usage WHERE at IS NOT NULL GROUP BY 1, 2")}
+    otel = {}
+    for d, s, n, o in conn.execute(
+            f"SELECT {day_sql('timestamp')}, session_id, COUNT(*), SUM({tok('input_tokens')}"
+            f" + {tok('cache_read_tokens')} + {tok('cache_creation_tokens')})"
+            " FROM otel_events WHERE event_name='api_request' AND timestamp IS NOT NULL"
+            f" AND ifnull(json_extract(attributes, '$.query_source'), '') NOT IN ({deny})"
+            " GROUP BY 1, 2", SIDE_REQUESTS):
+        if (d, s) in transcript:
+            day = otel.setdefault(d, [0, 0, 0])
+            day[0] += n
+            day[1] += o
+            day[2] += transcript[d, s]
+    done = {d for (d,) in conn.execute("SELECT day FROM breakage WHERE condition=?",
+                                       (CROSS_CHECK,))}
+    written = []
+    for day, (n, o, t) in otel.items():
+        if day >= local_day(at) or day in done or n < CROSS_CHECK_FLOOR or not o:
+            continue
+        gap = (t - o) / o
+        if abs(gap) <= CROSS_CHECK_GAP:
+            continue
+        r = {"at": at, "tier": "problem", "condition": CROSS_CHECK,
+             "key": "input-side tokens", "new_share": gap, "day": day,
+             "source": "cross-check"}
+        r["id"] = conn.execute(f"INSERT INTO breakage ({', '.join(r)}) VALUES"
+                               f" ({', '.join('?' * len(r))})", tuple(r.values())).lastrowid
+        written.append(r)
+    conn.commit()
+    return written
+
+
 def breakage_text(r):
     """One breakage row as one line — the banner's and the notification's."""
+    if r["condition"] == UNPARSEABLE:  # written by the records index (#86)
+        return (f"session {r['session_id']} holds a stored record that is not JSON;"
+                f" the rows derived from it may be thin — seen {r['at'][:10]}")
+    if r["condition"] == 6:  # written by the capture hook (#84)
+        return (f"session {r['session_id']}'s transcript no longer matches what"
+                f" was captured; capture of it stopped — seen {r['at'][:10]}")
+    if r["condition"] == CROSS_CHECK:
+        return (f"input-side tokens on {r['day']}: transcripts {r['new_share']:+.1%}"
+                " against OTel over sessions both saw — a source has moved, or a"
+                " new side-request source belongs on the denylist")
     if r["condition"] == 3:
         return (f"skipped records are {r['new_share']:.0%} of this run's, over {SPIKE}×"
                 f" the recent median {r['old_share']:.0%} — run {r['at'][:10]}")
     since = f"sessions since {r['since'] or '?'}"
     if r["condition"] == 1:
+        thin = f"; {r['derivers']} rows may be thin" if r.get("derivers") else ""
         return (f"{r['key']} present in {r['old_share']:.0%} of records under"
                 f" {r['old_version']}, {r['new_share']:.0%} under {r['new_version']}"
-                f" — {since}")
+                f" — {since}{thin}")
     keys = r["key"].split(", ")
     if len(keys) == 1:
         return (f"{r['key']} is new under {r['new_version']} ({r['new_share']:.0%} of"
@@ -1050,50 +1391,76 @@ def part_files(extracts_dir, session_id):
                   key=lambda p: int(re.search(r"part(\d+)", p.name)[1]))
 
 
-def extract_session(work_dir, session_id, transcript_path):
-    """Indexed extract + sidecar map (ADR-0002), via the frozen
-    cli/extract.py. Raises ExtractionFailed (retryable) if the subprocess
-    exits non-zero."""
+def parent_lines(conn, session_id):
+    """The parent transcript's captured bytes: its raw records (agent NULL)
+    in offset order, which rebuild the file prefix (ADR-0039 §3)."""
+    return b"".join(zlib.decompress(line) for (line,) in conn.execute(
+        "SELECT line FROM raw_records WHERE session_id=? AND agent_id IS NULL"
+        " ORDER BY byte_offset", (session_id,)))
+
+
+def run_extract(data, prefix):
+    """The frozen cli/extract.py over `data`, fed as its file: it reads
+    /dev/stdin exactly as it reads a transcript, so the extract and map are
+    the file-built ones byte for byte (issue #79). Raises ExtractionFailed
+    (retryable) if it exits non-zero."""
+    r = subprocess.run([sys.executable, str(REPO / "cli" / "extract.py"),
+                        "/dev/stdin", str(prefix)], input=data, capture_output=True)
+    if r.returncode != 0:
+        raise ExtractionFailed(r.stderr.decode(errors="replace").strip())
+
+
+def extract_session(conn, work_dir, session_id):
+    """Indexed extract + sidecar map (ADR-0002) from the parent's raw
+    records, cached in the work directory."""
     extracts_dir = Path(work_dir) / "extracts"
     prefix = extracts_dir / session_id
     if not Path(f"{prefix}.map.json").exists():
         extracts_dir.mkdir(parents=True, exist_ok=True)
-        r = subprocess.run([sys.executable, str(REPO / "cli" / "extract.py"),
-                            str(transcript_path), str(prefix)],
-                            capture_output=True, text=True)
-        if r.returncode != 0:
-            raise ExtractionFailed(r.stderr.strip())
+        run_extract(parent_lines(conn, session_id), prefix)
     return part_files(extracts_dir, session_id)
 
 
-def is_lost(work_dir, session_id, transcript_path):
-    """Ticket #78: nothing to read and nothing cached — no retry can ever
-    succeed. An explicit existence test, not inferred from ExtractionFailed,
-    which also covers unreadable/malformed files that remain retryable."""
-    return (not Path(transcript_path).exists()
+def is_lost(conn, work_dir, session_id):
+    """ADR-0015 as revised by issue #79: no parent raw records and no cached
+    extract — no retry can ever succeed. An explicit existence test, never
+    inferred from ExtractionFailed, which stays retryable. A pruned
+    transcript alone no longer loses a captured session."""
+    return (not conn.execute("SELECT 1 FROM raw_records WHERE session_id=?"
+                             " AND agent_id IS NULL LIMIT 1", (session_id,)).fetchone()
             and not (Path(work_dir) / "extracts" / f"{session_id}.map.json").exists())
+
+
+def held_live(conn, session_id):
+    """The what-pass live guard (issue #79): the session's newest raw record,
+    parent or subagent, was captured within the window, so its extract would
+    be mid-flight. Derivation has no guard."""
+    (at,) = conn.execute("SELECT MAX(captured_at) FROM raw_records"
+                         " WHERE session_id=?", (session_id,)).fetchone()
+    dt = parse_ts(at) if at else None
+    return dt is not None and time.time() - dt.timestamp() < LIVE_WINDOW_S
 
 
 def classify_and_extract(conn, work_dir):
     """The greedy pass ahead of the model loop (ticket #78): every selectable,
     quiet session is either marked `lost` or has its extract cached before a
-    single model call is made — so a transcript pruned after this point loses
-    nothing, and the backlog drains to `lost` on first contact with no
+    single model call is made — so compaction or pruning after this point
+    loses nothing, and the backlog drains to `lost` on first contact with no
     migration. ExtractionFailed is swallowed: the session stays retryable."""
     rows = conn.execute(
-        "SELECT s.id, s.transcript_path, a.session_id IS NOT NULL"
+        "SELECT s.id, a.session_id IS NOT NULL"
         " FROM sessions s LEFT JOIN audit a ON a.session_id = s.id"
         f" WHERE s.status IN {SELECTABLE_SQL}").fetchall()
-    for sid, path, audited in rows:
-        if _is_live(path):
+    for sid, audited in rows:
+        if held_live(conn, sid):
             continue
-        if is_lost(work_dir, sid, path):
-            # A re-audit (ADR-0013) that lost its transcript before the
+        if is_lost(conn, work_dir, sid):
+            # A re-audit (ADR-0013) that lost its records before the
             # rewrite keeps the standing entry: prefix-semantic, not lost.
             _mark(conn, sid, "done" if audited else "lost")
             continue
         try:
-            extract_session(work_dir, sid, path)
+            extract_session(conn, work_dir, sid)
         except ExtractionFailed:
             pass
 
@@ -1145,12 +1512,12 @@ def insert_results(conn, session, skip, md, what_version, model):
     version and model are parameters, not the module constants. The
     mechanical adr_count (ADR-0004) is computed onto the audit row here,
     at assemble time — NULL if the session's substrate isn't scanned yet
-    (the import path; fill_substrate stamps it on the next run)."""
+    (the import path; the tool-events deriver stamps it once it is)."""
     conn.execute(
         "INSERT OR REPLACE INTO audit"
-        " (session_id, project, date, skip, markdown, prompt_version, model, adr_count)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (session["id"], session["project"], session["date"], skip,
+        " (session_id, project, skip, markdown, prompt_version, model, adr_count)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (session["id"], session["project"], skip,
          None if skip else md, what_version, model, adr_count(conn, session["id"])))
 
 
@@ -1164,7 +1531,7 @@ def process_session(conn, work_dir, session, model_runner):
     # stale cached output under the new label.
     what_dir = Path(work_dir) / PROMPT_VERSION
     try:
-        parts = extract_session(work_dir, sid, session["transcript_path"])
+        parts = extract_session(conn, work_dir, sid)
     except ExtractionFailed:
         _mark(conn, sid, "partial")
         return
@@ -1220,11 +1587,11 @@ def refresh_narratives(conn, projects_dir, model_runner):
     for (project,) in conn.execute("SELECT DISTINCT project FROM sessions"
                                    " WHERE project IS NOT NULL ORDER BY 1").fetchall():
         # No valid declaration: no how-view, no narrative (#64). Asked via
-        # read_declaration, ADR-0011's one read location — a second
-        # `is_file()` here was a duplicate that could drift from it (#72).
-        # Still a short-circuit: how_data scans every event for the project,
-        # which a non-declaring project should not pay on every run.
-        if how.read_declaration(Path(projects_dir) / project)[0] != "valid":
+        # resolve_declaration (ADR-0032), the view's own resolution — a
+        # second check here could drift from it (#72). Still a short-circuit:
+        # how_data scans every event for the project, which a project
+        # without a valid declaration should not pay on every run.
+        if how.resolve_declaration(Path(projects_dir) / project)[0] != "valid":
             continue
         d = how.how_data(conn, project, projects_dir)
         if not d["runs"]:
@@ -1249,10 +1616,18 @@ def refresh_narratives(conn, projects_dir, model_runner):
         conn.commit()
 
 
+# The prompt carries transcript text, so the child gets no tools and no MCP,
+# and runs from an empty folder rather than the repo (no project settings,
+# permissions or CLAUDE.md). Fixed, not per call: each cwd is a projects folder.
+MODEL_CWD = Path(tempfile.gettempdir()) / "hindsight-model-cwd"
+MODEL_ARGS = ["claude", "-p", "--model", MODEL, "--tools", "", "--strict-mcp-config"]
+
+
 def default_model_runner(prompt):
+    MODEL_CWD.mkdir(exist_ok=True)
     try:
-        r = subprocess.run(["claude", "-p", "--model", MODEL], input=prompt,
-                            capture_output=True, text=True, timeout=CALL_TIMEOUT, cwd=REPO)
+        r = subprocess.run(MODEL_ARGS, input=prompt, capture_output=True, text=True,
+                           timeout=CALL_TIMEOUT, cwd=MODEL_CWD)
     except subprocess.TimeoutExpired:
         return None
     except FileNotFoundError:
@@ -1516,69 +1891,209 @@ def canonicalize_projects(conn):
     conn.commit()
 
 
+def raw_days():
+    """HINDSIGHT_RAW_DAYS (ADR-0034 §2): days of raw records kept past a
+    session's newest record, default 90, `0` forever. A negative or
+    non-numeric value raises: bad configuration stops deletion, never
+    triggers it, and never falls back to the default."""
+    v = os.environ.get("HINDSIGHT_RAW_DAYS", "90")
+    try:
+        days = int(v)
+    except ValueError:
+        days = -1
+    if days < 0:
+        raise ValueError(f"HINDSIGHT_RAW_DAYS={v!r} is not a whole number of"
+                         " days >= 0; nothing compacted")
+    return days
+
+
+def compact(conn, work_dir, report):
+    """Compaction (ADR-0034, ticket #92): delete the raw records of every
+    session whose newest record is older than the raw limit, unless a
+    current deriver still has it due or the what-pass holds it
+    pending/partial — those are counted as held. Per session, one
+    transaction: its raw records go, its `raw` derived rows (records index
+    included) become `compacted`, and its cached extract and part outputs
+    are deleted; the registry row and audit row stay. A session with no
+    timestamped record has no newest record and is kept. Fills `report`
+    with the active limit and the held count for the health row."""
+    days = raw_days()
+    report.update(raw_days=days, held=0)
+    if not days:
+        return
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    except OverflowError:
+        return  # a limit past the calendar's start: nothing is ever that old
+    tables = [name for name, _, _ in derivers()]
+    keys = [f"{name}@{version}" for name, version, _ in derivers()]
+    state = {(d, s): r for d, s, r in conn.execute(
+        "SELECT deriver, session_id, raw_rowid FROM deriver_state")}
+    status = dict(conn.execute("SELECT id, status FROM sessions"))
+    # an open rewrite breakage refers to the captured prefix: keep it
+    rewritten = {s for (s,) in conn.execute(
+        "SELECT session_id FROM breakage WHERE acknowledged_at IS NULL"
+        " AND condition=?", (REWRITTEN,))}
+    newest = {}
+    for sid, ts in conn.execute("SELECT session_id, timestamp FROM records_index"
+                                " WHERE timestamp IS NOT NULL"):
+        dt = parse_ts(ts)
+        if dt and (sid not in newest or dt > newest[sid]):
+            newest[sid] = dt
+    compacted, failed = 0, []
+    for sid, top in conn.execute("SELECT session_id, MAX(rowid) FROM raw_records"
+                                 " GROUP BY session_id").fetchall():
+        if sid not in newest or newest[sid] >= cutoff:
+            continue
+        if (status.get(sid) in SELECTABLE or sid in rewritten
+                or any(state.get((k, sid), 0) < top for k in keys)):
+            report["held"] += 1
+            continue
+        try:
+            conn.execute("DELETE FROM raw_records WHERE session_id=?", (sid,))
+            # the freed rowids are reused, so state naming them would read a
+            # resumed tail as derived; the next derivation deletes only `raw` rows
+            conn.execute("DELETE FROM deriver_state WHERE session_id=?"
+                         " AND deriver NOT GLOB 'otel_histogram@*'", (sid,))
+            for t in tables:
+                conn.execute(f"UPDATE {t} SET provenance='compacted'"
+                             " WHERE session_id=? AND provenance='raw'", (sid,))
+            # files cannot roll back, but they are rebuildable caches: a
+            # failure past here still leaves the raw records intact
+            for f in [*(Path(work_dir) / "extracts").glob(f"{sid}.*"),
+                      *(Path(work_dir) / PROMPT_VERSION).glob(f"{sid}.*")]:
+                f.unlink()
+            conn.commit()
+            compacted += 1
+        except Exception as e:
+            conn.rollback()
+            failed.append(f"{sid}: {type(e).__name__}: {e}")
+    if compacted:
+        conn.execute("PRAGMA incremental_vacuum").fetchall()
+    print(f"compaction: {compacted} session(s) compacted, {report['held']} held"
+          f" past the {days}-day raw limit")
+    if failed:
+        raise RuntimeError(f"compaction failed on {len(failed)} session(s): "
+                           + "; ".join(failed))
+
+
 def run_analysis(root=DEFAULT_TRANSCRIPTS, db_path=DEFAULT_DB,
                   work_dir=DEFAULT_WORK_DIR, model_runner=None,
                   claude_dir=DEFAULT_CLAUDE_DIR, projects_dir=DEFAULT_PROJECTS_DIR,
                   notify=False):
-    """`notify`: pop a macOS notification on a thin-rows breakage (issue
+    """One ordered job list, each job failing alone, single-flight (ADR-0038).
+
+    `notify`: pop a macOS notification on a thin-rows breakage (issue
     #15) — on from the command line, off by default so no test pops one."""
     model_runner = model_runner or default_model_runner
-    conn = init_db(db_path)
+    db_path = Path(db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    # The lock sits beside the db, which is Hindsight home unless --db moves
+    # it. Held by this process's open file, so a crash never leaves it held.
+    lock = open(db_path.parent / "analysis.lock", "w")
     try:
-        sync_sessions(conn, root)
-        redate_sessions(conn)
-        conn.commit()
-        # Identity fill, presence, then canonicalisation, ahead of everything
-        # that reads sessions.project — the model loop and narrative writer
-        # must see a rename already applied (ADR-0018).
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("analysis run already in progress; exiting", file=sys.stderr)
+            return
+        _run_jobs(root, db_path, work_dir, model_runner, claude_dir,
+                  projects_dir, notify)
+    finally:
+        lock.close()
+
+
+def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
+              notify):
+    conn = init_db(db_path)  # migration: a failure here runs nothing else
+    failed = {}
+
+    def job(name, fn):
+        try:
+            return fn()
+        except Exception as e:
+            conn.rollback()  # never let a later job's commit keep half of this one
+            failed[name] = f"{type(e).__name__}: {e}"
+            print(f"{name} failed: {e!r}", file=sys.stderr)
+
+    def bookkeeping():
+        # Sessions from the registry, identity fill, presence, then
+        # canonicalisation, ahead of everything that reads sessions.project
+        # — the model loop and narrative writer must see a rename already
+        # applied (ADR-0018).
+        sync_sessions(conn)
         fill_hook_identity(conn)
         observe_presence(conn, projects_dir)
         canonicalize_projects(conn)
+
+    def derivation():
         invalidate_grown(conn, work_dir)
-        records, skipped = fill_substrate(conn)
-        # The drift guard reads what the scan just wrote; ingest never
-        # halts on it — not on a trip, and not on a bug in the guard itself
-        # (the #77 rule: never trade mechanical fact for a nicety).
+        # Each deriver runs whatever the others did (ADR-0038 §3).
+        errors = []
+        for name, version, fn in derivers():
+            try:
+                derive(conn, name, version, fn)
+            except Exception as e:
+                errors.append(str(e))
         try:
-            check_drift(conn, datetime.now(timezone.utc).isoformat(), records,
-                        skipped, notify)
+            derive_otel_histogram(conn)
         except Exception as e:
-            print(f"drift guard failed: {e!r}", file=sys.stderr)
+            conn.rollback()
+            errors.append(f"otel_histogram: {type(e).__name__}: {e}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
+    def drift_guard():
+        if not any_due(conn):  # due sessions: a designed skip, never an error
+            check_drift(conn, datetime.now(timezone.utc).isoformat(), notify)
+
+    def cross_check_job():
+        if not any_due(conn):  # the same designed skip as the guard
+            rows = cross_check(conn, datetime.now(timezone.utc).isoformat())
+            if notify and rows:
+                _notify(f"{len(rows)} breakage(s) — {breakage_text(rows[0])}")
+
+    def what_pass():
         classify_and_extract(conn, work_dir)
         todo = conn.execute(
-            "SELECT id, project, transcript_path, date FROM sessions"
+            "SELECT id, project, transcript_path FROM sessions"
             f" WHERE status IN {SELECTABLE_SQL} ORDER BY id").fetchall()
         # ponytail: serial, one claude -p call at a time; parallelize if a
         # large run's wall-clock becomes the bottleneck — kept serial here
         # for a clean, testable limit-exhaustion pause boundary.
-        for sid, project, path, date in todo:
-            if _is_live(path):
+        for sid, project, path in todo:
+            if held_live(conn, sid):
                 continue  # live session: stays pending for the next run
-            session = {"id": sid, "project": project, "transcript_path": path, "date": date}
+            session = {"id": sid, "project": project, "transcript_path": path}
             try:
                 process_session(conn, work_dir, session, model_runner)
             except LimitExhausted:
-                paused = True
-                break  # designed pause — remaining sessions stay pending/partial
-        else:
-            paused = False
-        if not paused:  # the narrative pass would only hit the same limit
-            try:
-                refresh_narratives(conn, projects_dir, model_runner)
-            except LimitExhausted:
-                pass  # ledgers unchanged, so the next run retries
-            except Exception as e:
-                # Ticket #77: the narrative is a nicety with a designed
-                # fallback (the mechanical status, ADR-0012); the backstop
-                # and sunk-cost scans below are mechanical fact. Never trade
-                # the second for the first — nothing is stored, so the next
-                # run retries, exactly as a gate rejection does.
-                print(f"narrative pass failed: {e!r}", file=sys.stderr)
-        # Backstop after the session loop; mechanical only, so a limit
-        # pause never skips it.
-        capture_backstop(conn, claude_dir, projects_dir,
-                         datetime.now(timezone.utc).isoformat())
-        scan_sunk_cost(conn, claude_dir, projects_dir)
+                return True  # designed pause — remaining sessions stay pending/partial
+        return False
+
+    def narrative():
+        try:
+            refresh_narratives(conn, projects_dir, model_runner)
+        except LimitExhausted:
+            pass  # ledgers unchanged, so the next run retries
+
+    try:
+        job("sweep", lambda: sweep(conn, root))
+        job("project bookkeeping", bookkeeping)
+        job("derivation", derivation)
+        if "derivation" not in failed:  # a half-derived store trips the guard falsely
+            job("drift guard", drift_guard)
+            job("cross-check", cross_check_job)
+        paused = job("what-pass", what_pass)
+        if not paused:  # the narrative would only hit the same limit
+            job("how narrative", narrative)
+        job("backstop", lambda: capture_backstop(
+            conn, claude_dir, projects_dir, datetime.now(timezone.utc).isoformat()))
+        job("sunk-cost scan", lambda: scan_sunk_cost(conn, claude_dir, projects_dir))
+        report = {"raw_days": None, "held": None}
+        job("compaction", lambda: compact(conn, work_dir, report))
+        write_health(conn, "; ".join(f"{n}: {m}" for n, m in failed.items()) or None,
+                     source="analysis", detail=report)
     finally:
         conn.close()
 

@@ -3,9 +3,11 @@
 Per ADR-0010: the process trail is a mechanical date-ordered merge of
 command grains, skill invocations and file writes for one workspace
 project, with audit titles supplying the prose. Per ADR-0011: the process
-declaration is a strict hand-parsed YAML subset at line 1 of the project's
-`.claude/my-process.md`, three states (absent / invalid / valid), whole
-declaration rejected on any fault. The checker is deliberately dumb —
+declaration is a strict hand-parsed YAML subset, three states (absent /
+invalid / valid), whole declaration rejected on any fault. Per ADR-0032
+(#94) it is resolved: a root `local-process.md` decides, else the house
+master named under `## Process` in the user-level CLAUDE.md;
+`.claude/my-process.md` is never read. The checker is deliberately dumb —
 presence, first/last-seen per stage, off-script list — no order rules, no
 verdicts.
 
@@ -13,7 +15,9 @@ Output of how_data() (the greybox ticket consumes it directly):
   former:      [name]  names the folder carried before this one, oldest
                first (ADR-0018) — the header's "formerly …", rendered
                nowhere else; [] when never renamed
-  declaration: {state, error, stages}   error = "line N: reason" when invalid
+  declaration: {state, error, stages, source}   error = "line N: reason"
+               when invalid; source = "local-process.md" or
+               "house master <path>" — the view's source line
   trail:       [{at, session_id, kind, name, stage}]  date order;
                kind command|skill|write; stage None when unbucketed
   summary:     [{name, count, first_seen, last_seen}] per declared stage,
@@ -35,12 +39,13 @@ Output of how_data() (the greybox ticket consumes it directly):
 """
 import hashlib
 import json
+import re
 import sqlite3
 from collections import Counter
 from pathlib import Path
 
 from analyze import (DEFAULT_PROJECTS_DIR, MODEL, SKILL, STATUS_VERSION,
-                     audit_title, local_day)
+                     audit_title, local_day, session_day)
 from extract import FILE_TOOLS
 from substrate import former_names
 
@@ -58,6 +63,10 @@ OFF_SCRIPT = "off-script"
 # open sessions, they don't mark process steps. Applied only to events no
 # stage claimed, so a declaration that lists wayfinder under a stage still wins.
 SESSION_BOUNDARIES = ("clear", "model", "compact", "wayfinder")
+# ADR-0032: the pointer to the house master lives here; a module global so
+# tests point it at a synthetic file, never the operator's
+USER_CLAUDE_MD = Path.home() / ".claude" / "CLAUDE.md"
+LOCAL = "local-process.md"
 
 
 class DeclarationInvalid(Exception):
@@ -176,17 +185,53 @@ def parse_declaration(text):
         return "invalid", [], str(e)
 
 
-def read_declaration(root):
-    """The one location ADR-0011 reads. A missing file is absent; a file
-    that exists but can't be read is invalid — nothing hides."""
-    path = Path(root) / ".claude" / "my-process.md"
+def house_master(claude_md):
+    """-> (path, None), or (None, reason) naming claude_md. The pointer is
+    the first backticked token ending `my-process.md` under `## Process`,
+    `~` expanded; a relative one is read from claude_md's folder."""
+    try:
+        text = Path(claude_md).read_text()
+    except OSError as e:
+        return None, f"cannot read {claude_md}: {e.strerror}"
+    section = re.search(r"^## Process[ \t]*$(.*?)(?=^#{1,2} |\Z)", text, re.M | re.S)
+    if not section:
+        return None, f"no `## Process` heading in {claude_md}"
+    m = re.search(r"`([^`\n]*my-process\.md)`", section.group(1))
+    if not m:
+        return None, f"no `my-process.md` pointer under `## Process` in {claude_md}"
+    return Path(claude_md).parent / Path(m.group(1)).expanduser(), None
+
+
+def resolve_declaration(root, claude_md=None):
+    """-> (state, stages, error, source), ADR-0032. One winner: a root
+    local-process.md (trimmed `none` = absent, a fence at line 1, anything
+    else invalid), else the house master — unresolvable is invalid with its
+    path and reason, never absent. Nothing hides."""
+    try:
+        text = (Path(root) / LOCAL).read_text()
+    except FileNotFoundError:
+        text = None
+    except OSError as e:
+        return "invalid", [], f"line 0: cannot read {LOCAL}: {e.strerror}", LOCAL
+    if text is not None:
+        if text.strip() == "none":
+            return "absent", [], None, LOCAL
+        state, stages, error = parse_declaration(text)
+        if state == "absent":  # no fence at line 1, an empty file included
+            return "invalid", [], "line 1: expected `none` or a frontmatter fence", LOCAL
+        return state, stages, error, LOCAL
+    path, reason = house_master(claude_md or USER_CLAUDE_MD)
+    if reason:
+        return "invalid", [], f"house master: {reason}", "house master"
+    source = f"house master {path}"
     try:
         text = path.read_text()
-    except FileNotFoundError:
-        return "absent", [], None
     except OSError as e:
-        return "invalid", [], f"line 0: cannot read {path.name}: {e.strerror}"
-    return parse_declaration(text)
+        return "invalid", [], f"cannot read {source}: {e.strerror}", source
+    state, stages, error = parse_declaration(text)
+    if state != "valid":
+        return "invalid", [], f"{source}: {error or 'no frontmatter fence at line 1'}", source
+    return state, stages, None, source
 
 
 def stage_for(stages, kind, name):
@@ -352,13 +397,14 @@ def narrative(conn, project, d):
             "model": model, "stale": stale}
 
 
-def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR):
+def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR, claude_md=None):
     """The how-view blob for one project — see the module docstring for
     the shape. Declaration state drives the checker: without a valid
     declaration every event is unbucketed and summary/off_script are empty
     (the raw ungrouped trail, ADR-0010's degradation)."""
     root = Path(projects_dir) / project
-    state, stages, error = read_declaration(root)  # the live folder's (ADR-0018)
+    # the live folder's (ADR-0018); claude_md None = USER_CLAUDE_MD
+    state, stages, error, source = resolve_declaration(root, claude_md)
     former = former_names(conn, project)
     trail = _events(conn, project, [root, *(Path(projects_dir) / n for n in former)])
     for e in trail:
@@ -369,7 +415,7 @@ def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR):
     bounds = Counter(e["name"] for e in loose if is_boundary(e))
     sessions = {}
     for sid, date, md in conn.execute(
-            "SELECT s.id, s.date, a.markdown FROM sessions s"
+            f"SELECT s.id, {session_day('s')}, a.markdown FROM sessions s"
             " LEFT JOIN audit a ON a.session_id = s.id AND a.skip = 0"
             " WHERE s.project = ?", (project,)):
         sessions[sid] = {"date": date, "title": audit_title(md)}
@@ -378,7 +424,8 @@ def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR):
     return {
         "project": project,
         "former": former,
-        "declaration": {"state": state, "error": error, "stages": stages},
+        "declaration": {"state": state, "error": error, "stages": stages,
+                        "source": source},
         "trail": trail,
         "summary": [{"name": s["name"], **by_stage.get(
             s["name"], {"count": 0, "first_seen": None, "last_seen": None})}

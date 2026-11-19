@@ -21,15 +21,18 @@ import tempfile
 import time
 import unittest
 import unittest.mock
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import analyze
-import listener
 from analyze import LimitExhausted, run_analysis
+from sunk_cost import scan_sunk_cost as sunk_cost_scan
 from test_helpers import (DbHelpers, ENTRY_A, ENTRY_B, FIXTURE_TURNS,
                           MERGED_ENTRY, REFUSAL_MD, SKIP_MD, StubRunner,
-                          USAGE, _backdate, big_turns, rec, write_records,
-                          write_transcript)
+                          USAGE, _backdate, big_turns, captured_earlier,
+                          fire_capture, rec, session_start, settle_captures,
+                          write_records, write_transcript)
+
 
 
 class AnalyzeTest(DbHelpers, unittest.TestCase):
@@ -42,13 +45,14 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         self.work = base / "analysis"
         self.proj = self.root / "test-project"
 
-    def run_pipeline(self, model_runner):
+    def run_pipeline(self, model_runner, live=False):
         # Fixture backstop dirs (may not exist): the run must never touch
         # the real ~/.claude or project repos from a test.
         base = Path(self.tmp.name)
-        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                      model_runner=model_runner,
-                      claude_dir=base / "claude", projects_dir=base / "repos")
+        with contextlib.nullcontext() if live else captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=model_runner,
+                          claude_dir=base / "claude", projects_dir=base / "repos")
 
     def test_trivial_session_skip_and_idempotent_second_run(self):
         write_transcript(self.proj / "sess-trivial.jsonl",
@@ -248,21 +252,18 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         self.assertIn(FIXTURE_TURNS[2][1], stub.calls[-1],
                       "what-pass prompt built from stale truncated extract")
 
-    def test_live_session_left_pending_not_extracted(self):
-        """Ticket #29, the guard: a transcript still being written is not
-        extracted or substrate-scanned; the session waits for the next run."""
+    def test_session_captured_within_the_window_stays_pending(self):
+        """Issue #79's guard, judged from the records: a session whose newest
+        raw record was captured in the last 5 minutes is not extracted, even
+        though its file is quiet; once the capture is older it is audited."""
         path = self.proj / "sess-hot.jsonl"
-        write_transcript(path, FIXTURE_TURNS)
-        now = time.time()
-        os.utime(path, (now, now))  # still being written
-        self.run_pipeline(StubRunner([]))  # zero actions: no model call happens
+        write_transcript(path, FIXTURE_TURNS)  # file mtime is old
+        self.run_pipeline(StubRunner([]), live=True)  # captured now; no model call
 
         self.assertEqual(self.session_statuses()["sess-hot"], "pending")
         self.assertFalse(list((self.work / "extracts").glob("sess-hot.*")))
-        self.assertIsNone(self.rows(
-            "SELECT skipped_records FROM sessions")[0]["skipped_records"])
 
-        _backdate(path)  # session went quiet: next run processes it normally
+        settle_captures(self.db)
         self.run_pipeline(StubRunner([ENTRY_A]))
         self.assertEqual(self.session_statuses()["sess-hot"], "done")
 
@@ -320,23 +321,16 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         self.assertEqual(self.session_statuses()["sess-resume"], "done")
         self.assertEqual(self.audit_rows()["sess-resume"]["markdown"], ENTRY_A)
 
-    def test_live_resumed_session_keeps_its_substrate(self):
-        """Ticket #76: a `done` session resumed and still being written must
-        not be wiped. `fill_substrate` skips a live transcript (ticket #29),
-        so the wipe would leave the session with zero substrate rows for the
-        rest of the run — it waits instead, and tops up once quiet."""
+    def test_live_resumed_session_is_topped_up_without_waiting(self):
+        """Ticket #76's wipe is gone (ticket #87): derivation has no live
+        guard and re-derives the captured records whole, so a session still
+        being written is topped up in the same run, never left empty."""
         path = self._resume("sess-hotresume", [
             rec("assistant", "a1", "2026-08-01T10:10:00Z",
                 [{"type": "text", "text": "a bit more"}],
                 usage=USAGE, model="test-model", id="msg-1")])
         now = time.time()
         os.utime(path, (now, now))  # still being written
-        self.run_pipeline(StubRunner([]))
-        self.assertEqual(len(self.rows(
-            "SELECT * FROM usage WHERE session_id='sess-hotresume'")), 1,
-            "live session's substrate wiped with nothing left to refill it")
-
-        _backdate(path)  # went quiet: the next run tops it up
         self.run_pipeline(StubRunner([]))
         self.assertEqual(len(self.rows(
             "SELECT * FROM usage WHERE session_id='sess-hotresume'")), 2)
@@ -395,12 +389,14 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
                          "the extract read a subagent transcript")
 
         # the subagent grows: topped up again, still no model call
-        write_records(sub, [
-            {**rec("assistant", f"s{i}", f"2026-08-01T10:0{i}:08Z",
-                   [{"type": "text", "text": big}],
-                   usage=USAGE, model="test-model", id=f"msg-s{i}"),
-             "sessionId": "sess-sub", "agentId": "a1", "isSidechain": True}
-            for i in range(3)])
+        with sub.open("a") as f:
+            for i in range(1, 3):
+                f.write(json.dumps(
+                    {**rec("assistant", f"s{i}", f"2026-08-01T10:0{i}:08Z",
+                           [{"type": "text", "text": big}],
+                           usage=USAGE, model="test-model", id=f"msg-s{i}"),
+                     "sessionId": "sess-sub", "agentId": "a1", "isSidechain": True}) + "\n")
+        _backdate(sub)
         self.run_pipeline(StubRunner([]))
         self.assertEqual(self.rows("SELECT COUNT(*) n FROM usage"
                                    " WHERE agent_id='a1'")[0]["n"], 3)
@@ -451,32 +447,47 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         finally:
             conn.close()
 
-    def test_pruned_unextracted_session_is_lost_and_never_retried(self):
-        """Ticket #78: no transcript and no cached extract — terminal, not
-        retryable. The queue would otherwise never drain."""
-        write_transcript(self.proj / "sess-vanish.jsonl",
-                          [("user", "task"), ("assistant", "done")])
+    def _v1_session(self, sid):
+        """A session row carried over from v1 with no raw records: its
+        transcript was pruned before v2 ever captured it."""
         conn = analyze.init_db(self.db)
-        analyze.sync_sessions(conn, self.root)
+        conn.execute("INSERT INTO sessions (id, project, transcript_path, date,"
+                     " status) VALUES (?, 'p', ?, '2026-08-01', 'pending')",
+                     (sid, str(self.proj / f"{sid}.jsonl")))
+        conn.commit()
         conn.close()
-        (self.proj / "sess-vanish.jsonl").unlink()  # gone before extraction runs
 
+    def test_session_with_neither_records_nor_extract_is_lost_for_good(self):
+        """ADR-0015 as revised by issue #79: nothing captured and nothing
+        cached — terminal, never selected again."""
+        self._v1_session("sess-vanish")
         self.run_pipeline(StubRunner([]))  # no model call
         self.assertEqual(self.session_statuses()["sess-vanish"], "lost")
         self.assertNotIn("sess-vanish", self.audit_rows())
 
-        self.run_pipeline(StubRunner([]))  # never selected again
+        self.run_pipeline(StubRunner([]))
         self.assertEqual(self.session_statuses()["sess-vanish"], "lost")
 
-    def test_pruned_session_with_cached_extract_proceeds_to_model_pass(self):
-        write_transcript(self.proj / "sess-cached.jsonl",
-                          [("user", "task"), ("assistant", "done")])
-        conn = analyze.init_db(self.db)
-        analyze.sync_sessions(conn, self.root)
-        conn.close()
-        analyze.extract_session(self.work, "sess-cached",
-                                self.proj / "sess-cached.jsonl")
-        (self.proj / "sess-cached.jsonl").unlink()
+    def test_captured_session_with_its_transcript_pruned_is_audited_not_lost(self):
+        path = self.proj / "sess-pruned.jsonl"
+        write_transcript(path, FIXTURE_TURNS)
+        fire_capture(self.db, {"hook_event_name": "Stop", "transcript_path": str(path)})
+        path.unlink()  # retention takes the file before any run extracts it
+
+        settle_captures(self.db)
+        stub = StubRunner([ENTRY_A])
+        self.run_pipeline(stub)
+        self.assertEqual(self.session_statuses()["sess-pruned"], "done")
+        self.assertIn(FIXTURE_TURNS[2][1], stub.calls[0])
+
+    def test_session_without_records_but_with_a_cached_extract_is_audited(self):
+        src = Path(self.tmp.name) / "elsewhere" / "sess-cached.jsonl"
+        write_transcript(src, FIXTURE_TURNS)
+        (self.work / "extracts").mkdir(parents=True)
+        subprocess.run([sys.executable, str(analyze.REPO / "cli" / "extract.py"),
+                        str(src), str(self.work / "extracts" / "sess-cached")],
+                       check=True, capture_output=True)
+        self._v1_session("sess-cached")
 
         self.run_pipeline(StubRunner([ENTRY_A]))
         self.assertEqual(self.session_statuses()["sess-cached"], "done")
@@ -488,28 +499,80 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         conn.execute("INSERT INTO sessions (id, project, transcript_path, date,"
                      " status) VALUES ('sess-re', 'p', '/gone', '2026-08-01', 'pending')")
-        conn.execute("INSERT INTO audit (session_id, project, date, skip, markdown,"
-                     " prompt_version, model) VALUES ('sess-re', 'p', '2026-08-01',"
-                     " 0, ?, 'v', 'm')", (ENTRY_A,))
+        conn.execute("INSERT INTO audit (session_id, project, skip, markdown,"
+                     " prompt_version, model) VALUES ('sess-re', 'p', 0, ?, 'v', 'm')",
+                     (ENTRY_A,))
         analyze.classify_and_extract(conn, self.work)
         self.assertEqual(dict(conn.execute("SELECT id, status FROM sessions")),
                          {"sess-re": "done"})
         conn.close()
 
-    def test_unextractable_transcript_stays_partial(self):
-        """ExtractionFailed on a path that exists is retryable — only
-        absence is terminal (ticket #78)."""
-        conn = analyze.init_db(self.db)
-        bad = self.proj / "sess-bad.jsonl"
-        bad.mkdir(parents=True)  # exists, but extract.py cannot read it
-        _backdate(bad)
-        conn.execute("INSERT INTO sessions (id, project, transcript_path, date,"
-                     " status) VALUES ('sess-bad', 'p', ?, '2026-08-01', 'partial')",
-                     (str(bad),))
-        analyze.classify_and_extract(conn, self.work)
-        self.assertEqual(dict(conn.execute("SELECT id, status FROM sessions")),
-                         {"sess-bad": "partial"})
-        conn.close()
+    def test_unextractable_records_stay_partial(self):
+        """ExtractionFailed is retryable — only absence is terminal (ticket
+        #78). A line that is not UTF-8 fails extract.py from the records as
+        it did from the file."""
+        path = self.proj / "sess-bad.jsonl"
+        write_transcript(path, FIXTURE_TURNS)
+        with path.open("ab") as f:
+            f.write(b'{"type": "user", "message": {"content": "\xff\xfe"}}\n')
+        _backdate(path)
+        self.run_pipeline(StubRunner([]))
+        self.assertEqual(self.session_statuses()["sess-bad"], "partial")
+
+    def test_raw_built_extract_and_map_equal_the_file_built_ones(self):
+        """Issue #79: the extract is built from the parent's raw records in
+        offset order and equals v1's, built from the file, byte for byte —
+        multi-part, non-ASCII, command boilerplate, a file-tool marker, a
+        malformed line and a subagent all included."""
+        path = self.proj / "sess-eq.jsonl"
+        write_transcript(path, big_turns() + [
+            ("user", "<command-name>/x</command-name>"),
+            ("assistant", "naïve café — 日本語 ✓")])
+        with path.open("a") as f:
+            f.write("not json at all\n")
+            f.write(json.dumps(rec("assistant", "t1", "2026-08-01T10:00:00Z", [
+                {"type": "tool_use", "name": "Edit", "input": {"file_path": "a.py"}}]))
+                    + "\n")
+        _backdate(path)
+        write_transcript(self.proj / "sess-eq" / "subagents" / "agent-s1.jsonl",
+                         [("assistant", "subagent text")])
+        self.run_pipeline(StubRunner([LimitExhausted()]))  # greedy pass caches it
+
+        v1 = Path(self.tmp.name) / "v1"
+        v1.mkdir()
+        subprocess.run([sys.executable, str(analyze.REPO / "cli" / "extract.py"),
+                        str(path), str(v1 / "sess-eq")], check=True, capture_output=True)
+        want = {p.name: p.read_bytes() for p in v1.iterdir()}
+        got = {p.name: p.read_bytes() for p in (self.work / "extracts").glob("sess-eq.*")}
+        self.assertGreater(len(want), 2, "fixture is not multi-part")
+        self.assertEqual(got, want)
+
+        # the local real-data check agrees on the same store
+        sys.path.insert(0, str(analyze.REPO / "eval"))
+        self.addCleanup(sys.path.remove, str(analyze.REPO / "eval"))
+        import extract_equivalence
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(extract_equivalence.main(["--db", str(self.db)]), 0)
+        self.assertIn("compared 1 session(s): 1 equal", out.getvalue())
+
+    def test_reaudit_share_is_measured_on_captured_bytes(self):
+        """Issue #79, ADR-0039 §7: growth the hook captured counts toward
+        REAUDIT_SHARE even once the transcript is pruned, and `size` and
+        the watermark are the registry high-water, never the file size."""
+        path = self._resume("sess-cap", [
+            rec("assistant", f"a{i}", f"2026-08-01T11:{i:02d}:00Z",
+                [{"type": "text", "text": "grew " * 8000}]) for i in range(1, 4)])
+        with path.open("a") as f:
+            f.write('{"type": "user", "partial')  # a line still being written
+        fire_capture(self.db, {"hook_event_name": "Stop", "transcript_path": str(path)})
+        captured = path.stat().st_size - len('{"type": "user", "partial')
+        path.unlink()
+
+        settle_captures(self.db)
+        self.run_pipeline(StubRunner([ENTRY_B]))
+        self.assertEqual(self.audit_rows()["sess-cap"]["markdown"], ENTRY_B)
+        [row] = self.rows("SELECT size, audited_size FROM sessions")
+        self.assertEqual(row, {"size": captured, "audited_size": captured})
 
     def test_greedy_extract_caches_every_session_before_first_model_call(self):
         """Ticket #78's race: a session behind a limit pause used to sit
@@ -536,6 +599,21 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         finally:
             analyze.subprocess.run = orig
 
+    def test_default_model_runner_has_no_tools_and_no_repo_cwd(self):
+        # Transcript text in the prompt must not be able to drive tools or
+        # inherit the repo's project permissions (security-preflight).
+        fake = subprocess.CompletedProcess([], 0, stdout="ok", stderr="")
+        with unittest.mock.patch.object(analyze.subprocess, "run", return_value=fake) as run:
+            self.assertEqual(analyze.default_model_runner("prompt"), "ok")
+        args, kw = run.call_args
+        cmd = args[0]
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "")
+        self.assertIn("--strict-mcp-config", cmd)
+        cwd = Path(kw["cwd"])
+        self.assertTrue(cwd.is_dir())
+        self.assertNotEqual(cwd.resolve(), analyze.REPO.resolve())
+        self.assertNotIn(analyze.REPO.resolve(), cwd.resolve().parents)
+
     def test_default_model_runner_missing_binary_pauses(self):
         # Ticket #84: no `claude` on PATH must pause the run like limit
         # exhaustion, not crash it with a FileNotFoundError traceback.
@@ -554,9 +632,9 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
 
 class FolderIdentityTest(DbHelpers, unittest.TestCase):
     """Sync fills a session's folder identity and attribution source from
-    its SessionStart hook row (ticket #4, ADR-0018), driven through the
-    analysis-run entrypoint over a fixture transcript root and the shared
-    otel_events table the listener also writes to."""
+    what the capture hook recorded at its SessionStart (ticket #4, ADR-0018,
+    ticket #84), driven through the capture hook and the analysis-run
+    entrypoint over a fixture transcript root."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -566,6 +644,8 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         self.db = base / "hindsight.db"
         self.work = base / "analysis"
         self.proj = self.root / "test-project"
+        self.folder = base / "repos" / "test-project"
+        self.folder.mkdir(parents=True)
 
     def run_pipeline(self, model_runner):
         base = Path(self.tmp.name)
@@ -573,35 +653,23 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
                       model_runner=model_runner,
                       claude_dir=base / "claude", projects_dir=base / "repos")
 
-    def seed_hook_row(self, sid, attributes_json):
-        conn = analyze.init_db(self.db)
-        conn.executescript(listener.SCHEMA)
-        conn.execute(
-            "INSERT INTO otel_events (event_name, session_id, timestamp, attributes)"
-            " VALUES ('hindsight.hook', ?, '2026-08-01T09:00:00Z', ?)",
-            (sid, attributes_json))
-        conn.commit()
-        conn.close()
-
     def identity_row(self, sid):
         return next(r for r in self.rows(
             "SELECT id, folder_identity, attribution_source FROM sessions")
             if r["id"] == sid)
 
-    def test_sync_fills_identity_and_source_from_session_start_row(self):
-        write_transcript(self.proj / "sess-id.jsonl",
-                          [("user", "add a feature"), ("assistant", "added")])
-        self.seed_hook_row(
-            "sess-id",
-            '{"hook.event": "SessionStart", "folder.identity": "424242"}')
+    def test_sync_fills_identity_and_source_from_session_start(self):
+        t = self.proj / "sess-id.jsonl"
+        write_transcript(t, [("user", "add a feature"), ("assistant", "added")])
+        session_start(self.db, t, self.folder)
 
         self.run_pipeline(StubRunner([ENTRY_A]))
 
         row = self.identity_row("sess-id")
-        self.assertEqual(row["folder_identity"], 424242)
+        self.assertEqual(row["folder_identity"], self.folder.stat().st_ino)
         self.assertEqual(row["attribution_source"], "hook")
 
-    def test_sync_leaves_session_name_only_without_a_hook_row(self):
+    def test_sync_leaves_session_name_only_without_a_session_start(self):
         write_transcript(self.proj / "sess-noid.jsonl",
                           [("user", "add a feature"), ("assistant", "added")])
 
@@ -613,49 +681,28 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
 
     def test_sync_falls_through_a_failed_session_start_firing_to_a_later_one(self):
         # A resumed session can fire SessionStart twice; the first firing's
-        # stat failed (no folder.identity), the second succeeded — the
-        # valid one must still be picked up, not hidden by the first.
-        write_transcript(self.proj / "sess-resumed.jsonl",
-                          [("user", "add a feature"), ("assistant", "added")])
-        conn = analyze.init_db(self.db)
-        conn.executescript(listener.SCHEMA)
-        conn.executemany(
-            "INSERT INTO otel_events (event_name, session_id, timestamp, attributes)"
-            " VALUES ('hindsight.hook', ?, ?, ?)",
-            [("sess-resumed", "2026-08-01T09:00:00Z",
-              '{"hook.event": "SessionStart"}'),
-             ("sess-resumed", "2026-08-01T09:05:00Z",
-              '{"hook.event": "SessionStart", "folder.identity": "99"}')])
-        conn.commit()
-        conn.close()
+        # stat failed, the second succeeded — the valid one must still be
+        # picked up, not hidden by the first.
+        t = self.proj / "sess-resumed.jsonl"
+        write_transcript(t, [("user", "add a feature"), ("assistant", "added")])
+        session_start(self.db, t, self.folder / "gone")
+        session_start(self.db, t, self.folder)
 
         self.run_pipeline(StubRunner([ENTRY_A]))
 
         row = self.identity_row("sess-resumed")
-        self.assertEqual(row["folder_identity"], 99)
+        self.assertEqual(row["folder_identity"], self.folder.stat().st_ino)
         self.assertEqual(row["attribution_source"], "hook")
 
-    def test_sync_ignores_non_session_start_hook_rows(self):
-        write_transcript(self.proj / "sess-stop.jsonl",
-                          [("user", "add a feature"), ("assistant", "added")])
-        self.seed_hook_row(
-            "sess-stop", '{"hook.event": "Stop", "hook.cpu_ms": 5}')
+    def test_sync_ignores_identity_on_other_events(self):
+        t = self.proj / "sess-stop.jsonl"
+        write_transcript(t, [("user", "add a feature"), ("assistant", "added")])
+        fire_capture(self.db, {"hook_event_name": "Stop", "transcript_path": str(t),
+                               "cwd": str(self.folder)})
 
         self.run_pipeline(StubRunner([ENTRY_A]))
 
         row = self.identity_row("sess-stop")
-        self.assertIsNone(row["folder_identity"])
-        self.assertIsNone(row["attribution_source"])
-
-    def test_sync_without_otel_table_leaves_session_name_only(self):
-        # Ticket #50: a db the listener has never touched has no otel
-        # tables at all — sync must not raise.
-        write_transcript(self.proj / "sess-nolistener.jsonl",
-                          [("user", "add a feature"), ("assistant", "added")])
-
-        self.run_pipeline(StubRunner([ENTRY_A]))
-
-        row = self.identity_row("sess-nolistener")
         self.assertIsNone(row["folder_identity"])
         self.assertIsNone(row["attribution_source"])
 
@@ -673,12 +720,90 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 9)
+                conn.execute("PRAGMA user_version").fetchone()[0], 12)
         finally:
             conn.close()
         row = self.identity_row("sess-old")
         self.assertIsNone(row["folder_identity"])
         self.assertIsNone(row["attribution_source"])
+
+
+class V10MigrationTest(DbHelpers, unittest.TestCase):
+    """Ticket #84 (ADR-0031, ADR-0039 §1): the v10 migration over a v9
+    database keeps every row, marks the derived rows `v1`, keeps the stored
+    session day, and sets incremental auto-vacuum."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.db = self.base / "hindsight.db"
+
+    def test_v9_rows_survive_and_derived_rows_are_v1(self):
+        conn = sqlite3.connect(self.db)
+        conn.executescript(analyze.SCHEMA)  # the v9 shape, but for audit.date
+        conn.executescript("""
+            ALTER TABLE audit ADD COLUMN date TEXT;  -- v9 had it; v11 drops it
+            INSERT INTO sessions (id, project, transcript_path, date, status,
+              skipped_records, audited_size)
+              VALUES ('s-v1', 'p', '/gone/s-v1.jsonl', '2026-08-01', 'done', 0, 10);
+            INSERT INTO audit (session_id, project, date, skip, markdown,
+              prompt_version, model) VALUES ('s-v1', 'p', '2026-08-01', 0,
+              '### Did', 'what-v3', 'm');
+            INSERT INTO tool_events (session_id, name, error_text)
+              VALUES ('s-v1', 'Edit', 'boom');
+            INSERT INTO usage (session_id, at, input_tokens, output_tokens,
+              cache_creation_input_tokens, cache_read_input_tokens)
+              VALUES ('s-v1', '2026-08-01T10:00:00Z', 1, 2, 3, 4);
+            INSERT INTO command_grains (session_id, command) VALUES ('s-v1', '/x');
+            INSERT INTO field_histogram (session_id, version, scope, key, n)
+              VALUES ('s-v1', '2.0', 'user', '*', 5);
+            INSERT INTO breakage (at, tier, condition, old_version, new_version,
+              key, old_share, new_share, since)
+              VALUES ('2026-08-02T00:00:00Z', 'problem', 1, '1.0', '2.0',
+              'user.x', 0.95, 0.1, '2026-08-01');
+            PRAGMA user_version = 9;
+        """)
+        conn.close()
+
+        run_analysis(root=self.base / "projects", db_path=self.db,
+                     work_dir=self.base / "analysis", model_runner=StubRunner([]),
+                     claude_dir=self.base / "claude", projects_dir=self.base / "repos")
+
+        for table in ("tool_events", "usage", "command_grains", "field_histogram"):
+            with self.subTest(table=table):
+                self.assertEqual(self.rows(f"SELECT provenance FROM {table}"),
+                                 [{"provenance": "v1"}])
+        self.assertEqual(self.rows("SELECT error_text FROM tool_events"),
+                         [{"error_text": "boom"}])
+        self.assertEqual(self.rows("SELECT date, status, audited_size FROM sessions"),
+                         [{"date": "2026-08-01", "status": "done", "audited_size": 10}])
+        self.assertEqual(len(self.audit_rows()), 1)
+        conn = sqlite3.connect(self.db)
+        try:
+            self.assertNotIn("date", {r[1] for r in conn.execute("PRAGMA table_info(audit)")})
+        finally:
+            conn.close()
+        self.assertEqual(self.rows(
+            "SELECT condition, key, old_share, new_share, since, source, session_id"
+            " FROM breakage"),
+            [{"condition": 1, "key": "user.x", "old_share": 0.95, "new_share": 0.1,
+              "since": "2026-08-01", "source": None, "session_id": None}])
+        conn = sqlite3.connect(self.db)
+        try:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
+            self.assertEqual(conn.execute("PRAGMA auto_vacuum").fetchone()[0], 2)
+            self.assertIsNone(conn.execute("SELECT 1 FROM sqlite_master"
+                                           " WHERE name='scan_runs'").fetchone())  # v12
+            for table in ("raw_records", "transcripts", "records_index",
+                          "deriver_state", "otel_histogram"):
+                with self.subTest(table=table):
+                    self.assertEqual(
+                        conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT source FROM health").fetchall(),
+                             [("analysis",)], "the run writes its own row, nothing else")
+        finally:
+            conn.close()
 
 
 def sha(text):
@@ -941,7 +1066,7 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 9)
+                conn.execute("PRAGMA user_version").fetchone()[0], 12)
             row = conn.execute("SELECT folder_identity, name, present"
                                " FROM project_presence").fetchone()
         finally:
@@ -966,29 +1091,19 @@ class IdentityFixture(DbHelpers):
 
     def run_pipeline(self, model_runner):
         base = Path(self.tmp.name)
-        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                      model_runner=model_runner,
-                      claude_dir=base / "claude", projects_dir=self.repos)
-
-    def seed_hook_row(self, sid, identity):
-        conn = analyze.init_db(self.db)
-        conn.executescript(listener.SCHEMA)
-        conn.execute(
-            "INSERT INTO otel_events (event_name, session_id, timestamp, attributes)"
-            " VALUES ('hindsight.hook', ?, '2026-08-01T09:00:00Z', ?)",
-            (sid, json.dumps({"hook.event": "SessionStart",
-                              "folder.identity": str(identity)})))
-        conn.commit()
-        conn.close()
+        with captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=model_runner,
+                          claude_dir=base / "claude", projects_dir=self.repos)
 
     def open_session(self, folder_name, sid, date="2026-08-01T10:00:00Z"):
         """A session opened with cwd = repos/folder_name — the transcript
         directory Claude Code encodes it under and the hook's stamped
         identity are both the folder's *live* state at this instant, exactly
-        as sync_sessions/hook_folder_identity see it for real."""
-        write_transcript(self.root / folder_name / f"{sid}.jsonl",
-                          [("user", "do work"), ("assistant", "done")], date=date)
-        self.seed_hook_row(sid, (self.repos / folder_name).stat().st_ino)
+        as sync_sessions sees it for real."""
+        t = self.root / folder_name / f"{sid}.jsonl"
+        write_transcript(t, [("user", "do work"), ("assistant", "done")], date=date)
+        session_start(self.db, t, self.repos / folder_name)
 
     def identity_of(self):
         return {r["id"]: (r["folder_identity"], r["attribution_source"])
@@ -1014,8 +1129,8 @@ class RenameTest(IdentityFixture, unittest.TestCase):
         narrative pass makes no call — the one call in the second run is
         the new session's what-pass."""
         import how
-        (self.repos / "old-name" / ".claude").mkdir(parents=True)
-        (self.repos / "old-name" / ".claude" / "my-process.md").write_text(
+        (self.repos / "old-name").mkdir(parents=True)
+        (self.repos / "old-name" / "local-process.md").write_text(
             "---\nstages:\n  - name: Build\n    skills: [tdd]\n---\n")
         self.open_session("old-name", "sess-1")
         self.run_pipeline(StubRunner([ENTRY_A]))
@@ -1184,7 +1299,7 @@ class AttributeTest(IdentityFixture, unittest.TestCase):
     identity on the next run, no operator needed."""
 
     def sync_name_only(self, folder_name, *sids_and_dates):
-        """Transcripts under folder_name with no hook rows — pre-hook history
+        """Transcripts under folder_name with no SessionStart — pre-hook history
         — synced by one pipeline run. Returns the folder's live inode."""
         (self.repos / folder_name).mkdir(exist_ok=True)
         for sid, date in sids_and_dates:
@@ -1331,13 +1446,13 @@ class AttributeTest(IdentityFixture, unittest.TestCase):
         self.assertIn("1 session", out.getvalue())
 
     def test_hook_row_that_landed_after_sync_fills_on_the_next_run(self):
-        """The hook-row race (#5's review): sync ran before the listener
-        stored the SessionStart row. The per-run fill catches it; a session
-        with no hook row at all stays name-only."""
+        """The hook-row race (#5's review): sync ran before the capture
+        hook recorded the SessionStart identity. The per-run fill catches
+        it; a session with no identity recorded stays name-only."""
         ident = self.sync_name_only("proj", ("s-raced", "2026-08-01T10:00:00Z"),
                                     ("s-prehook", "2026-08-01T11:00:00Z"))
         self.assertEqual(self.identity_of()["s-raced"], (None, None))
-        self.seed_hook_row("s-raced", ident)
+        session_start(self.db, self.root / "proj" / "s-raced.jsonl", self.repos / "proj")
         self.run_pipeline(StubRunner([]))
         self.assertEqual(self.identity_of(), {"s-raced": (ident, "hook"),
                                               "s-prehook": (None, None)})
@@ -1388,24 +1503,230 @@ class ZoneTest(DbHelpers, unittest.TestCase):
         self.assertEqual(os.environ["TZ"], "America/New_York")  # untouched
         self.assertEqual(analyze.local_day(self.EVE), "2026-08-28")
 
-    def test_run_redates_stored_session_days_under_the_effective_zone(self):
-        """`sessions.date` is the one stored bucket. A zone change would
-        leave it a day off its own usage bars forever, so every run
-        re-derives it from the transcript head; a vanished transcript keeps
-        the date it has (a guess is not a re-derivation)."""
-        write_transcript(self.root / "p" / "sess-eve.jsonl",
-                          [("user", "hi"), ("assistant", "yo")], date=self.EVE)
+    def test_raw_session_dates_from_its_earliest_record_v1_keeps_its_day(self):
+        """Ticket #86 (ADR-0031 §5): a `raw` session stores no day; every
+        view reads the stored day, else the local day of the earliest
+        records-index timestamp, parent and subagents together, bucketed
+        at read under HINDSIGHT_TZ. A `v1` session keeps its stored day."""
         base = Path(self.tmp.name)
-        run = lambda: run_analysis(  # noqa: E731
-            root=self.root, db_path=self.db, work_dir=base / "analysis",
-            model_runner=StubRunner([SKIP_MD, SKIP_MD]),
-            claude_dir=base / "claude", projects_dir=base / "repos")
-        run()
-        self.assertEqual(self.rows("SELECT date FROM sessions")[0]["date"], "2026-08-28")
+        parent = self.root / "p" / "sess-eve.jsonl"
+        write_records(parent, [rec("user", "u0", "2026-08-29T05:00:00Z", "hi")])
+        write_records(parent.with_suffix("") / "subagents" / "agent-x.jsonl",
+                      [rec("user", "x0", self.EVE, "sub")])
+        write_records(self.root / "p" / "sess-old.jsonl",
+                      [rec("user", "o0", self.EVE, "old")])
+        conn = analyze.init_db(self.db)
+        conn.execute("INSERT INTO sessions (id, project, transcript_path, date, status)"
+                     " VALUES ('sess-old', 'p', 'x', '2026-08-01', 'done')")
+        conn.commit()
+        conn.close()
+        run_analysis(root=self.root, db_path=self.db, work_dir=base / "analysis",
+                     model_runner=StubRunner([SKIP_MD]),
+                     claude_dir=base / "claude", projects_dir=base / "repos")
+        self.assertIsNone(self.rows("SELECT date FROM sessions WHERE id='sess-eve'")[0]["date"])
+        day = lambda: {r["id"]: r["d"] for r in self.rows(  # noqa: E731
+            f"SELECT s.id, {analyze.session_day('s')} AS d FROM sessions s")}
+        self.assertEqual(day(), {"sess-eve": "2026-08-28", "sess-old": "2026-08-01"})
         self.pin("Asia/Tokyo")
-        run()
-        self.assertEqual(self.rows("SELECT date FROM sessions")[0]["date"], "2026-08-29")
-        self.assertEqual(self.rows("SELECT date FROM audit")[0]["date"], "2026-08-29")
+        self.assertEqual(day(), {"sess-eve": "2026-08-29", "sess-old": "2026-08-01"})
+
+
+class SweepDeriveTest(DbHelpers, unittest.TestCase):
+    """Ticket #86 (ADR-0031 §5-6, ADR-0033 §1, ADR-0037 §6): the sweep
+    catches up what no firing captured, sessions are known from the
+    registry, and the deriver loop builds the records index from the raw
+    store, driven through the analysis run."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.db = base / "hindsight.db"
+        self.proj = self.root / "test-project"
+
+    def run_pipeline(self, model_runner=None):
+        base = Path(self.tmp.name)
+        with contextlib.redirect_stderr(io.StringIO()):
+            run_analysis(root=self.root, db_path=self.db, work_dir=base / "analysis",
+                         model_runner=model_runner or StubRunner([SKIP_MD] * 10),
+                         claude_dir=base / "claude", projects_dir=base / "repos")
+
+    def patch(self, name, value):
+        orig = getattr(analyze, name)
+        setattr(analyze, name, value)
+        self.addCleanup(setattr, analyze, name, orig)
+
+    def write(self, sid, n, start=0):
+        write_records(self.proj / f"{sid}.jsonl",
+                      [rec("user", f"{sid}-{i}", f"2026-08-01T10:00:{i:02}Z", f"turn {i}")
+                       for i in range(start, start + n)])
+
+    def append(self, path, *lines):
+        with open(path, "a") as f:
+            f.writelines(line + "\n" for line in lines)
+        _backdate(path)
+
+    def stored(self, sid, agent=None):
+        import zlib
+        return b"".join(zlib.decompress(r["line"]) for r in self.rows(
+            "SELECT line FROM raw_records WHERE session_id=? AND agent_id IS ?"
+            " ORDER BY byte_offset", (sid, agent)))
+
+    def index(self, sid):
+        return self.rows("SELECT agent_id, byte_offset, type, uuid, timestamp, provenance"
+                         " FROM records_index WHERE session_id=? ORDER BY byte_offset",
+                         (sid,))
+
+    def test_transcript_with_no_firing_is_captured_by_the_sweep(self):
+        self.write("sess-a", 2)
+        sub = self.proj / "sess-a" / "subagents" / "agent-x1.jsonl"
+        write_records(sub, [rec("user", "x-0", "2026-08-01T10:00:05Z", "sub")])
+        hooked = self.proj / "sess-h.jsonl"
+        write_records(hooked, [rec("user", "h-0", "2026-08-01T11:00:00Z", "hi")])
+        fire_capture(self.db, {"hook_event_name": "Stop", "transcript_path": str(hooked)})
+        self.append(hooked, json.dumps(rec("user", "h-1", "2026-08-01T11:00:01Z", "more")))
+
+        self.run_pipeline()
+
+        for sid, agent, path in (("sess-a", None, self.proj / "sess-a.jsonl"),
+                                 ("sess-a", "x1", sub), ("sess-h", None, hooked)):
+            with self.subTest(sid=sid, agent=agent):
+                self.assertEqual(self.stored(sid, agent), path.read_bytes())
+                self.assertEqual(self.rows(
+                    "SELECT high_water FROM transcripts WHERE session_id=?"
+                    " AND agent_id IS ?", (sid, agent)), [{"high_water": path.stat().st_size}])
+        self.assertEqual(self.rows("SELECT id, project FROM sessions ORDER BY id"),
+                         [{"id": "sess-a", "project": "test-project"},
+                          {"id": "sess-h", "project": "test-project"}])
+        self.assertEqual(sorted(r["uuid"] for r in self.index("sess-a")),
+                         ["sess-a-0", "sess-a-1", "x-0"])
+
+    def test_grown_session_is_rederived_whole_and_an_unchanged_one_is_not_touched(self):
+        self.write("sess-a", 2)
+        self.write("sess-b", 2)
+        self.run_pipeline()
+        conn = sqlite3.connect(self.db)
+        conn.execute("UPDATE records_index SET type='tampered'")
+        conn.commit()
+        conn.close()
+        self.append(self.proj / "sess-a.jsonl",
+                    json.dumps(rec("assistant", "sess-a-2", "2026-08-01T10:01:00Z", "x")))
+
+        self.run_pipeline()
+
+        self.assertEqual([(r["type"], r["uuid"], r["provenance"]) for r in self.index("sess-a")],
+                         [("user", "sess-a-0", "raw"), ("user", "sess-a-1", "raw"),
+                          ("assistant", "sess-a-2", "raw")])
+        self.assertEqual({r["type"] for r in self.index("sess-b")}, {"tampered"})
+
+    def test_a_deriver_raising_on_one_session_leaves_it_due_and_derives_the_others(self):
+        self.write("sess-a", 2)
+        self.write("sess-b", 2)
+        real = analyze.index_records
+
+        def poisoned(conn, sid, records):
+            if sid == "sess-a":
+                raise ValueError("poison")
+            return real(conn, sid, records)
+
+        self.patch("index_records", poisoned)
+        self.run_pipeline()
+        self.assertEqual(self.index("sess-a"), [])
+        self.assertEqual(len(self.index("sess-b")), 2)
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertIn("derivation", health["error_text"])
+        self.assertIn("sess-a", health["error_text"])
+
+        analyze.index_records = real
+        self.run_pipeline()
+        self.assertEqual(len(self.index("sess-a")), 2)
+
+    def test_records_index_version_bump_rebuilds_raw_rows_only(self):
+        self.write("sess-a", 2)
+        self.run_pipeline()
+        conn = sqlite3.connect(self.db)
+        conn.execute("DELETE FROM records_index WHERE byte_offset=0")
+        conn.executemany("INSERT INTO records_index (session_id, byte_offset, type,"
+                         " provenance) VALUES (?, ?, 'old', ?)",
+                         [("sess-a", 99999, "v1"), ("sess-gone", 0, "compacted")])
+        conn.commit()
+        conn.close()
+        self.run_pipeline()
+        self.assertEqual(len(self.index("sess-a")), 2, "an unchanged session was re-derived")
+
+        self.patch("RECORDS_INDEX_VERSION", analyze.RECORDS_INDEX_VERSION + 1)
+        self.run_pipeline()
+
+        self.assertEqual([(r["byte_offset"] == 0, r["provenance"]) for r in self.index("sess-a")],
+                         [(True, "raw"), (False, "raw"), (False, "v1")])
+        self.assertEqual([(r["type"], r["provenance"]) for r in self.index("sess-gone")],
+                         [("old", "compacted")])
+
+    def test_an_unparseable_stored_line_writes_one_condition_5_breakage(self):
+        path = self.proj / "sess-bad.jsonl"
+        write_records(path, [rec("user", "u0", "2026-08-01T10:00:00Z", "hi"),
+                             "{not json", "[1, 2]"])
+        self.run_pipeline()
+        self.append(path, "also not json")
+        self.run_pipeline()
+
+        rows = self.rows("SELECT tier, session_id, acknowledged_at FROM breakage"
+                         " WHERE condition=5")
+        self.assertEqual(rows, [{"tier": "problem", "session_id": "sess-bad",
+                                 "acknowledged_at": None}])
+        self.assertEqual([r["uuid"] for r in self.index("sess-bad")], ["u0"])
+        [row] = self.rows(f"SELECT {', '.join(analyze.BREAKAGE_COLS)} FROM breakage")
+        self.assertIn("sess-bad", analyze.breakage_text(row))
+
+    def test_a_non_utf8_line_still_gets_its_condition_5_row_and_others_derive(self):
+        self.write("sess-bad", 1)
+        with open(self.proj / "sess-bad.jsonl", "ab") as f:
+            f.write(b"\xff\xfe not utf-8\n")
+        _backdate(self.proj / "sess-bad.jsonl")
+        self.write("sess-ok", 2)
+
+        self.run_pipeline()
+
+        self.assertEqual(self.rows("SELECT session_id FROM breakage WHERE condition=5"),
+                         [{"session_id": "sess-bad"}])
+        self.assertEqual([r["uuid"] for r in self.index("sess-bad")], ["sess-bad-0"])
+        self.assertEqual(len(self.index("sess-ok")), 2)
+        self.assertEqual(self.rows("SELECT id FROM sessions WHERE skipped_records IS NULL"), [])
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertNotIn("derivation", health["error_text"] or "")
+
+    def test_a_directory_named_like_a_transcript_is_not_swept(self):
+        (self.proj / "s1.jsonl").mkdir(parents=True)
+        self.write("sess-ok", 2)
+
+        self.run_pipeline()
+
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertNotIn("sweep", health["error_text"] or "")
+
+    @unittest.skipIf(os.geteuid() == 0, "chmod(0) does not stop root reading")
+    def test_an_unreadable_transcript_path_fails_the_sweep_alone(self):
+        self.write("s1", 1)
+        (self.proj / "s1.jsonl").chmod(0)
+        self.addCleanup((self.proj / "s1.jsonl").chmod, 0o644)
+        self.write("sess-ok", 2)
+
+        self.run_pipeline()
+
+        self.assertEqual(self.stored("sess-ok"), (self.proj / "sess-ok.jsonl").read_bytes())
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertIn("sweep", health["error_text"])
+        self.assertIn("s1.jsonl", health["error_text"])
+
+    def test_v11_drops_the_audit_date(self):
+        self.run_pipeline()
+        conn = sqlite3.connect(self.db)
+        try:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
+            self.assertNotIn("date", {r[1] for r in conn.execute("PRAGMA table_info(audit)")})
+        finally:
+            conn.close()
 
 
 class NarrativeTest(DbHelpers, unittest.TestCase):
@@ -1419,13 +1740,13 @@ class NarrativeTest(DbHelpers, unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "h.db"
         self.projects = Path(self.tmp.name) / "projects"
-        (self.projects / "p" / ".claude").mkdir(parents=True)
-        (self.projects / "p" / ".claude" / "my-process.md").write_text(
+        (self.projects / "p").mkdir(parents=True)
+        (self.projects / "p" / "local-process.md").write_text(
             "---\nstages:\n  - name: Build\n    skills: [tdd]\n---\n")
         self.conn = analyze.init_db(self.db)
         self.conn.execute("INSERT INTO sessions (id, project, transcript_path, date, status)"
                           " VALUES ('s1', 'p', '/x', '2026-08-16', 'done')")
-        self.conn.execute("INSERT INTO audit VALUES ('s1', 'p', '2026-08-16', 0,"
+        self.conn.execute("INSERT INTO audit VALUES ('s1', 'p', 0,"
                           " '### Ship OTLP listener and wire telemetry', 'what-v2', 'm', 0)")
         for i in range(3):
             self.conn.execute("INSERT INTO tool_events (session_id, name, at, consumer_type,"
@@ -1462,7 +1783,7 @@ class NarrativeTest(DbHelpers, unittest.TestCase):
             self.assertEqual(self.stored(), [], bad)
 
     def test_undeclared_project_skipped_without_a_call(self):
-        (self.projects / "p" / ".claude" / "my-process.md").unlink()
+        (self.projects / "p" / "local-process.md").unlink()   # the master decides
         analyze.refresh_narratives(self.conn, self.projects,
                                    lambda p: self.fail("model called"))
         self.assertEqual(self.stored(), [])
@@ -1513,10 +1834,11 @@ class DriftTest(DbHelpers, unittest.TestCase):
 
     def run_pipeline(self, notify=False):
         base = Path(self.tmp.name)
-        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                      model_runner=StubRunner([SKIP_MD] * 20),
-                      claude_dir=base / "claude", projects_dir=base / "repos",
-                      notify=notify)
+        with captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=StubRunner([SKIP_MD] * 20),
+                          claude_dir=base / "claude", projects_dir=base / "repos",
+                          notify=notify)
 
     def open_rows(self):
         return self.rows("SELECT * FROM breakage WHERE acknowledged_at IS NULL ORDER BY id")
@@ -1527,9 +1849,11 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.run_pipeline(notify=True)
         rows = self.open_rows()
         self.assertEqual([(r["tier"], r["condition"], r["old_version"],
-                           r["new_version"], r["key"], r["since"]) for r in rows],
+                           r["new_version"], r["key"], r["since"], r["derivers"])
+                          for r in rows],
                          [("problem", 1, "2.1.1", "2.1.2", "assistant.message.usage",
-                           "2026-08-01")])
+                           "2026-08-01", "usage")])
+        self.assertIn("usage rows may be thin", analyze.breakage_text(rows[0]))
         self.assertGreater(rows[0]["old_share"], 0.9)
         self.assertLess(rows[0]["new_share"], 0.5)
         # the run completed: both sessions analysed, statuses untouched by it
@@ -1539,6 +1863,87 @@ class DriftTest(DbHelpers, unittest.TestCase):
         # the next run, same shape: no duplicate row
         self.run_pipeline()
         self.assertEqual(len(self.open_rows()), 1)
+
+    def test_a_key_two_derivers_read_names_both(self):
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2", strip=("id",))
+        self.run_pipeline()
+        self.assertEqual([(r["key"], r["derivers"]) for r in self.open_rows()],
+                         [("assistant.message.id", "usage, tool_events")])
+
+    def test_resumed_session_dates_since_from_the_histogram(self):
+        """ADR-0037 §2: a session opened under 2.1.1 and resumed under 2.1.2
+        dates the breakage from its own first day, not from the sessions
+        whose head version is 2.1.2 (there are none)."""
+        self.corpus("old", "2.1.1")
+        recs = []
+        for i, (version, ts) in enumerate([("2.1.1", "2026-07-20T10:00:00Z")]
+                                          + [("2.1.2", "2026-08-03T10:00:00Z")] * 25):
+            a = {**rec("assistant", f"a{i}", ts, [{"type": "text", "text": "ok"}],
+                       model="m", id=f"m{i}"), "version": version}
+            recs += [{**rec("user", f"u{i}", ts, "go"), "version": version}, a]
+        write_records(self.root / "p" / "resumed.jsonl", recs)
+        self.run_pipeline()
+        self.assertEqual([(r["key"], r["since"]) for r in self.open_rows()],
+                         [("assistant.message.usage", "2026-07-20")])
+
+    def test_otel_thinned_attribute_is_a_problem_and_an_added_one_is_silent(self):
+        """ADR-0037 §4: per (service, version, event), condition 1 only."""
+        import listener
+        self.corpus("new", "2.1.1")  # gives the OTel session a day
+
+        def events(version, n, **attrs):
+            return {"resourceLogs": [{
+                "resource": {"attributes": [
+                    {"key": "service.name", "value": {"stringValue": "claude-code"}},
+                    {"key": "service.version", "value": {"stringValue": version}}]},
+                "scopeLogs": [{"logRecords": [{"attributes": [
+                    {"key": k, "value": {"stringValue": v}} for k, v in
+                    {"event.name": "api_request", "session.id": "new", **attrs}.items()]}
+                    for _ in range(n)]}]}]}
+
+        listener.init_db(self.db)
+        conn = sqlite3.connect(self.db)
+        with conn:
+            listener.ingest_logs(events("2.1.1", 25, model="m", duration_ms="5"), conn)
+            listener.ingest_logs(events("2.1.2", 25, model="m", speed="fast"), conn)
+        conn.close()
+        self.run_pipeline(notify=True)
+        rows = self.open_rows()
+        self.assertEqual([(r["tier"], r["condition"], r["source"], r["key"],
+                           r["old_version"], r["new_version"], r["since"])
+                          for r in rows],
+                         [("problem", 1, "otel", "api_request.duration_ms",
+                           "claude-code 2.1.1", "claude-code 2.1.2", "2026-08-01")])
+        self.assertTrue(rows[0]["derivers"])
+        self.assertEqual(len(self.notified), 1)
+
+    def test_guard_skips_while_a_session_is_due_and_the_run_stays_ok(self):
+        """ADR-0038 §3: a record captured after derivation (a hook firing
+        mid-run) leaves its session due; the guard skips as designed, the
+        health row stays ok, and the next run checks."""
+        self.corpus("old", "2.1.1")
+        self.corpus("new", "2.1.2", strip=("usage",))
+        late = self.root / "p" / "old.jsonl"
+        real = analyze.derive
+
+        def then_a_firing(conn, name, version, fn):
+            real(conn, name, version, fn)
+            if name == "field_histogram" and not getattr(then_a_firing, "fired", False):
+                then_a_firing.fired = True
+                with late.open("a") as f:
+                    f.write(json.dumps(rec("user", "late", "2026-08-01T11:00:00Z", "x")) + "\n")
+                analyze.capture(conn, late)
+
+        analyze.derive = then_a_firing
+        self.addCleanup(setattr, analyze, "derive", real)
+        self.run_pipeline()
+        self.assertEqual(self.open_rows(), [])
+        [health] = self.rows("SELECT error_text FROM health WHERE source='analysis'")
+        self.assertIsNone(health["error_text"])
+
+        self.run_pipeline()
+        self.assertEqual([r["condition"] for r in self.open_rows()], [1])
 
     def test_same_shape_under_a_new_version_is_quiet(self):
         self.corpus("old", "2.1.1")
@@ -1568,25 +1973,6 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.corpus("new", "2.1.2", pairs=5, strip=("usage",))  # 10 < MIN_RECORDS
         self.run_pipeline()
         self.assertEqual(self.open_rows(), [])
-
-    def test_skipped_spike_trips_once_and_a_run_within_baseline_does_not(self):
-        n = analyze.MIN_RUN_RECORDS
-        self.corpus("r1", "2.1.1", pairs=n // 2, junk=n // 10)   # ~9% skipped
-        self.run_pipeline(notify=True)
-        self.assertEqual(self.open_rows(), [])          # no prior run: no baseline
-        self.corpus("r2", "2.1.1", pairs=n // 2, junk=n)          # 50% skipped
-        self.run_pipeline(notify=True)
-        rows = self.open_rows()
-        self.assertEqual([(r["tier"], r["condition"]) for r in rows], [("problem", 3)])
-        self.assertEqual(len(self.notified), 1)
-        self.corpus("r3", "2.1.1", pairs=n // 2, junk=n // 10)   # back in baseline
-        self.run_pipeline(notify=True)
-        self.assertEqual(len(self.open_rows()), 1)
-        self.assertEqual(len(self.notified), 1)
-        # a tiny run neither trips nor enters the baseline
-        self.corpus("r4", "2.1.1", pairs=5, junk=50)
-        self.run_pipeline()
-        self.assertEqual(len(self.rows("SELECT * FROM scan_runs")), 3)
 
     def test_acknowledge_closes_the_row_and_moves_the_baseline(self):
         self.corpus("old", "2.1.1")
@@ -1630,16 +2016,119 @@ class DriftTest(DbHelpers, unittest.TestCase):
         self.corpus("new", "2.1.2", strip=("usage",))
         self.run_pipeline()
         bid = self.open_rows()[0]["id"]
-        r = subprocess.run([sys.executable, str(analyze.REPO / "cli" / "analyze.py"),
-                            "acknowledge-breakage", str(bid), "--db", str(self.db)],
-                           capture_output=True, text=True)
-        self.assertEqual(r.returncode, 0, r.stderr)
+        # the CLI's main(argv) in-process; exit codes surface as SystemExit
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            analyze.main(["acknowledge-breakage", str(bid), "--db", str(self.db)])
+        self.assertEqual(err.getvalue(), "")
         self.assertEqual(self.open_rows(), [])
-        r = subprocess.run([sys.executable, str(analyze.REPO / "cli" / "analyze.py"),
-                            "acknowledge-breakage", "99", "--db", str(self.db)],
-                           capture_output=True, text=True)
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("no open breakage row 99", r.stderr)
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as err, \
+                self.assertRaises(SystemExit) as exit_:
+            analyze.main(["acknowledge-breakage", "99", "--db", str(self.db)])
+        self.assertEqual(exit_.exception.code, 1)
+        self.assertIn("no open breakage row 99", err.getvalue())
+
+
+class CrossCheckTest(DbHelpers, unittest.TestCase):
+    """The input-side token cross-check (ADR-0033 §5, issue #89): per
+    completed local day, OTel against transcripts over sessions both saw."""
+
+    setUp = DriftTest.setUp
+    run_pipeline = DriftTest.run_pipeline
+    open_rows = DriftTest.open_rows
+
+    def session(self, days, sid="s", n=50):
+        """`n` assistant requests per day, each `per` input tokens; the
+        cache halves are fixed so the input-side sum is what is compared."""
+        recs = []
+        for day, per in days.items():
+            for i in range(n):
+                ts = f"{day}T15:00:00Z"
+                recs += [rec("user", f"{day}u{i}", ts, "go"),
+                         rec("assistant", f"{day}a{i}", ts, [{"type": "text", "text": "ok"}],
+                             model="m", id=f"{day}m{i}",
+                             usage={"input_tokens": per, "output_tokens": 1,
+                                    "cache_creation_input_tokens": 30,
+                                    "cache_read_input_tokens": 40})]
+        write_records(self.root / "p" / f"{sid}.jsonl", recs)
+
+    def otel(self, day, n, per=100, sid="s", query_source=None):
+        """`n` api_request events on `day`, each `per` input-side tokens."""
+        import listener
+        attrs = {"event.name": "api_request", "session.id": sid,
+                 "event.timestamp": f"{day}T15:00:00Z", "input_tokens": str(per - 70),
+                 "cache_read_tokens": "40", "cache_creation_tokens": "30"}
+        if query_source:
+            attrs["query_source"] = query_source
+        listener.init_db(self.db)
+        conn = sqlite3.connect(self.db)
+        with conn:
+            listener.ingest_logs({"resourceLogs": [{"scopeLogs": [{"logRecords": [
+                {"attributes": [{"key": k, "value": {"stringValue": v}}
+                                for k, v in attrs.items()]}] * n}]}]}, conn)
+        conn.close()
+
+    def cross_rows(self):
+        return [(r["tier"], r["day"]) for r in self.open_rows() if r["condition"] == 4]
+
+    def test_a_6_percent_gap_writes_one_row_and_4_percent_none(self):
+        # OTel 100 a request; transcripts 94 (6% short) and 96 (4% short)
+        self.session({"2026-08-01": 94 - 70, "2026-08-02": 96 - 70})
+        self.otel("2026-08-01", 50)
+        self.otel("2026-08-02", 50)
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [("problem", "2026-08-01")])
+        self.assertIn("2026-08-01", analyze.breakage_text(self.open_rows()[0]))
+        self.run_pipeline()  # one row per day, never a second
+        self.assertEqual(self.cross_rows(), [("problem", "2026-08-01")])
+
+    def test_a_day_under_the_floor_and_the_current_day_are_never_checked(self):
+        today = time.strftime("%Y-%m-%d")
+        self.session({"2026-08-01": 24, today: 24}, n=49)
+        self.otel("2026-08-01", 49)
+        self.otel(today, 49)
+        self.otel(today, 1)  # today clears the floor; it is still not checked
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [])
+
+    def test_denylisted_side_requests_are_excluded_and_a_new_side_source_trips(self):
+        self.session({"2026-08-01": 30})  # 100 a request: matches OTel exactly
+        self.otel("2026-08-01", 50)
+        for source in ("prompt_suggestion", "generate_session_title", "web_search_tool",
+                       "web_fetch_apply", "away_summary", "agent_summary"):
+            self.otel("2026-08-01", 5, per=1000, query_source=source)
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [])
+        self.otel("2026-08-01", 5, per=1000, query_source="brand_new_side_request")
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [("problem", "2026-08-01")])
+
+    def test_a_session_the_listener_missed_that_day_is_left_out(self):
+        # t has transcript usage on 08-01 but OTel only on 08-02 (listener
+        # down on 08-01): 08-01 compares s alone, which agrees
+        self.session({"2026-08-01": 30}, sid="s")
+        self.session({"2026-08-01": 30, "2026-08-02": 30}, sid="t")
+        self.otel("2026-08-01", 50, sid="s")
+        self.otel("2026-08-02", 50, sid="t")
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [])
+
+    def test_acknowledging_closes_that_day_and_shifts_no_baseline(self):
+        self.session({"2026-08-01": 24})
+        self.otel("2026-08-01", 50)
+        self.run_pipeline()
+        [row] = self.open_rows()
+        conn = sqlite3.connect(self.db)
+        self.assertTrue(analyze.acknowledge_breakage(conn, row["id"]))
+        conn.close()
+        # a later day drifts by the same 6%: still a trip at the frozen
+        # threshold, and the acknowledged day stays closed
+        self.session({"2026-08-01": 24, "2026-08-02": 24})
+        self.otel("2026-08-02", 50)
+        self.run_pipeline()
+        self.assertEqual(self.cross_rows(), [("problem", "2026-08-02")])
+        self.assertEqual(len(self.rows("SELECT 1 FROM breakage WHERE condition=4")), 2)
 
 
 class SectionDrift(unittest.TestCase):
@@ -1650,6 +2139,314 @@ class SectionDrift(unittest.TestCase):
     def test_active_what_prompt_names_every_section(self):
         for name in analyze.SECTIONS:
             self.assertIn(f"**{name}:**", analyze.WHAT_PROMPT)
+
+
+class CompactionTest(DbHelpers, unittest.TestCase):
+    """Compaction at the raw limit (ADR-0034, ADR-0038 §1, ticket #92)."""
+
+    OLD = "2026-08-01T10:00:00Z"  # past a 90-day limit from any run after 2026-10-30
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.db = base / "hindsight.db"
+        self.work = base / "analysis"
+        self.proj = self.root / "test-project"
+
+    def write(self, sid, ts):
+        write_records(self.proj / f"{sid}.jsonl", [
+            rec("user", f"{sid}-0", ts, "do the thing"),
+            rec("assistant", f"{sid}-1", ts, [{"type": "text", "text": "done"}],
+                id=f"m-{sid}", model="claude-x", usage=USAGE)])
+
+    def run_pipeline(self, days, runner):
+        base = Path(self.tmp.name)
+        with unittest.mock.patch.dict(os.environ, {"HINDSIGHT_RAW_DAYS": days}), \
+                captured_earlier(), contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                         model_runner=runner, claude_dir=base / "claude",
+                         projects_dir=base / "repos")
+
+    def raw(self, sid):
+        return self.rows("SELECT rowid FROM raw_records WHERE session_id=?", (sid,))
+
+    def provenance(self, sid):
+        return {t: [r["provenance"] for r in self.rows(
+                    f"SELECT provenance FROM {t} WHERE session_id=?", (sid,))]
+                for t in ("records_index", "usage")}
+
+    def health(self):
+        [row] = self.rows("SELECT * FROM health WHERE source='analysis'")
+        return row, json.loads(row["detail"])
+
+    def caches(self, sid):
+        return [*self.work.glob(f"extracts/{sid}.*"),
+                *self.work.glob(f"{analyze.PROMPT_VERSION}/{sid}.*")]
+
+    def test_a_done_session_past_the_limit_is_compacted_and_its_rows_survive(self):
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        self.write("sess-old", self.OLD)
+        self.write("sess-new", recent.replace("+00:00", "Z"))
+        self.run_pipeline("90", StubRunner([ENTRY_A, ENTRY_A]))
+
+        self.assertEqual(self.raw("sess-old"), [])
+        self.assertTrue(self.raw("sess-new"))
+        self.assertEqual(self.provenance("sess-old"),
+                         {"records_index": ["compacted"] * 2, "usage": ["compacted"]})
+        self.assertEqual(self.provenance("sess-new"),
+                         {"records_index": ["raw"] * 2, "usage": ["raw"]})
+        self.assertEqual(self.caches("sess-old"), [])
+        self.assertTrue(self.caches("sess-new"))
+        self.assertIn("sess-old", self.audit_rows())
+        self.assertEqual(self.session_statuses()["sess-old"], "done")
+        self.assertEqual(self.rows(
+            f"SELECT {analyze.session_day('s')} AS day FROM sessions s WHERE id='sess-old'"),
+            [{"day": "2026-08-01"}])
+        row, detail = self.health()
+        self.assertIsNone(row["error_text"])
+        self.assertEqual(detail, {"raw_days": 90, "held": 0})
+
+        # The transcript is still on disk: the sweep must not capture it
+        # again, and a deriver version bump must leave its rows frozen.
+        bump = analyze.USAGE_VERSION
+        analyze.USAGE_VERSION = bump + 1
+        self.addCleanup(setattr, analyze, "USAGE_VERSION", bump)
+        self.run_pipeline("90", StubRunner([]))
+
+        self.assertEqual(self.raw("sess-old"), [])
+        self.assertEqual(self.provenance("sess-old"),
+                         {"records_index": ["compacted"] * 2, "usage": ["compacted"]})
+        self.assertEqual(self.provenance("sess-new")["usage"], ["raw"])
+
+    def test_a_due_or_pending_session_past_the_limit_is_held_and_reported(self):
+        self.write("sess-a", self.OLD)  # audited, but a deriver still has it due
+        self.write("sess-b", self.OLD)  # derived, but the what-pass paused on it
+        real = analyze.derive_usage
+
+        def poisoned(conn, sid, records):
+            if sid == "sess-a":
+                raise ValueError("poison")
+            return real(conn, sid, records)
+
+        analyze.derive_usage = poisoned
+        self.addCleanup(setattr, analyze, "derive_usage", real)
+        self.run_pipeline("90", StubRunner([ENTRY_A, LimitExhausted("limit")]))
+
+        self.assertEqual(self.session_statuses(), {"sess-a": "done", "sess-b": "pending"})
+        self.assertTrue(self.raw("sess-a"))
+        self.assertTrue(self.raw("sess-b"))
+        self.assertEqual(self.provenance("sess-b")["records_index"], ["raw"] * 2)
+        row, detail = self.health()
+        self.assertNotIn("compaction", row["error_text"])
+        self.assertEqual(detail, {"raw_days": 90, "held": 2})
+
+    def test_zero_never_compacts_and_a_bad_value_compacts_nothing_and_errors(self):
+        self.write("sess-a", self.OLD)
+        self.run_pipeline("0", StubRunner([ENTRY_A]))
+        self.assertTrue(self.raw("sess-a"))
+        row, detail = self.health()
+        self.assertIsNone(row["error_text"])
+        self.assertEqual(detail, {"raw_days": 0, "held": 0})
+
+        for bad in ("-1", "abc"):
+            with self.subTest(bad=bad):
+                self.run_pipeline(bad, StubRunner([]))
+                self.assertTrue(self.raw("sess-a"))
+                row, detail = self.health()
+                self.assertIn("compaction", row["error_text"])
+                self.assertIn("HINDSIGHT_RAW_DAYS", row["error_text"])
+                self.assertEqual(row["failing_since"] is not None, True)
+                self.assertEqual(detail, {"raw_days": None, "held": None})
+
+        self.run_pipeline("90", StubRunner([]))  # the same session was eligible all along
+        self.assertEqual(self.raw("sess-a"), [])
+
+    def test_a_large_limit_never_compacts(self):
+        self.write("sess-a", self.OLD)
+        for days in ("1000000", "999999999", "10000000000"):
+            with self.subTest(days=days):
+                self.run_pipeline(days, StubRunner([ENTRY_A]))
+                self.assertTrue(self.raw("sess-a"))
+                row, detail = self.health()
+                self.assertIsNone(row["error_text"])
+                self.assertEqual(detail, {"raw_days": int(days), "held": 0})
+
+    def test_a_compacted_session_resumed_keeps_its_audit_entry(self):
+        old = [rec("user", "r-0", self.OLD, "do the thing"),
+               rec("assistant", "r-1", self.OLD, [{"type": "text", "text": "done"}],
+                   id="m-r", model="claude-x", usage=USAGE)]
+        write_records(self.proj / "sess-r.jsonl", old)
+        self.run_pipeline("90", StubRunner([ENTRY_A]))
+        self.assertEqual(self.raw("sess-r"), [])
+        before = self.audit_rows()["sess-r"]
+
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        tail = [rec("user", f"r-{i}", recent.replace("+00:00", "Z"), "more " * 20)
+                for i in range(2, 8)]
+        write_records(self.proj / "sess-r.jsonl", old + tail)
+        runner = StubRunner([ENTRY_B])
+        self.run_pipeline("90", runner)
+
+        self.assertEqual(runner.calls, [])
+        self.assertEqual(self.audit_rows()["sess-r"], before)
+        self.assertEqual(self.session_statuses()["sess-r"], "done")
+
+    def test_a_compacted_session_resumed_with_a_short_tail_derives_the_tail_once(self):
+        # raw_records reuses the rowids compaction freed: a tail shorter than
+        # the compacted records lands at or below the session's old state
+        old = [rec("user", f"t-{i}", self.OLD, "go") if i % 2 == 0 else
+               rec("assistant", f"t-{i}", self.OLD, [{"type": "text", "text": "ok"}],
+                   id=f"m-t{i}", model="claude-x", usage=USAGE) for i in range(10)]
+        write_records(self.proj / "sess-t.jsonl", old)
+        self.run_pipeline("90", StubRunner([ENTRY_A]))
+        self.assertEqual(self.raw("sess-t"), [])
+        frozen = self.rows("SELECT * FROM usage WHERE session_id='sess-t'")
+        self.assertEqual(len(frozen), 5)
+
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        recent = recent.replace("+00:00", "Z")
+        tail = [rec("user", "t-10", recent, "more"),
+                rec("assistant", "t-11", recent, [{"type": "text", "text": "ok"}],
+                    id="m-t11", model="claude-x", usage=USAGE)]
+        write_records(self.proj / "sess-t.jsonl", old + tail)
+        for _ in range(3):
+            self.run_pipeline("90", StubRunner([]))
+
+            self.assertEqual(len(self.raw("sess-t")), 2)  # recent: not yet past the limit
+            self.assertEqual(self.rows("SELECT * FROM usage WHERE session_id='sess-t'"
+                                       " AND provenance='compacted'"), frozen)
+            self.assertEqual(self.rows("SELECT message_id FROM usage WHERE session_id="
+                                       "'sess-t' AND provenance='raw'"),
+                             [{"message_id": "m-t11"}])
+            self.assertEqual(self.provenance("sess-t")["records_index"],
+                             ["compacted"] * 10 + ["raw"] * 2)
+
+    def test_a_session_with_an_open_rewrite_breakage_is_held(self):
+        records = [rec("user", "w-0", self.OLD, "do the thing"),
+                   rec("assistant", "w-1", self.OLD, [{"type": "text", "text": "done"}],
+                       id="m-w", model="claude-x", usage=USAGE)]
+        write_records(self.proj / "sess-w.jsonl", records)
+        self.run_pipeline("0", StubRunner([ENTRY_A]))
+        records[1]["message"]["content"][0]["text"] = "DONE"
+        records.append(rec("user", "w-2", self.OLD, "and more"))  # grown, so capture checks
+        write_records(self.proj / "sess-w.jsonl", records)
+        self.run_pipeline("90", StubRunner([]))
+
+        self.assertTrue(self.rows("SELECT 1 FROM breakage WHERE condition=6"
+                                  " AND session_id='sess-w' AND acknowledged_at IS NULL"))
+        self.assertTrue(self.raw("sess-w"))
+        self.assertEqual(self.health()[1], {"raw_days": 90, "held": 1})
+
+
+class JobListTest(DbHelpers, unittest.TestCase):
+    """The analysis run as an ordered job list (ADR-0038, ticket #85): each
+    job fails alone, one `analysis` health row, single-flight."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = base / "projects"
+        self.db = base / "hindsight.db"
+        self.work = base / "analysis"
+        self.claude = base / "claude"
+        self.claude.mkdir()
+        (self.claude / "CLAUDE.md").write_text("# rules")
+        self.repos = base / "repos"
+        self.repos.mkdir()
+        write_transcript(self.root / "test-project" / "sess-a.jsonl",
+                          [("user", "task a"), ("assistant", "done a")])
+
+    def run_pipeline(self, model_runner):
+        with captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=model_runner,
+                          claude_dir=self.claude, projects_dir=self.repos)
+
+    def patch(self, name, fn):
+        orig = getattr(analyze, name)
+        setattr(analyze, name, fn)
+        self.addCleanup(setattr, analyze, name, orig)
+
+    def health(self):
+        return self.rows("SELECT * FROM health WHERE source='analysis'")
+
+    def test_failing_job_runs_the_rest_and_errors_the_row_naming_it(self):
+        self.patch("capture_backstop",
+                   lambda *a: (_ for _ in ()).throw(TypeError("bad shape")))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.run_pipeline(StubRunner([ENTRY_A]))
+        self.assertEqual(self.session_statuses()["sess-a"], "done")
+        self.assertTrue(self.rows("SELECT * FROM sunk_cost"),
+                        "the sunk-cost scan never ran after the backstop failed")
+        [row] = self.health()
+        self.assertIsNotNone(row["last_error"])
+        self.assertIsNone(row["last_success"])
+        self.assertEqual(row["failing_since"], row["last_error"])
+        self.assertTrue(row["last_error"].endswith("Z"))
+        self.assertIn("backstop", row["error_text"])
+        self.assertIn("bad shape", row["error_text"])
+        self.assertNotIn("sunk-cost", row["error_text"])
+
+    def test_migration_failure_runs_nothing_else(self):
+        self.db.write_bytes(b"not a database" * 100)
+        stub = StubRunner([ENTRY_A])
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.run_pipeline(stub)
+        self.assertEqual(stub.calls, [])
+        self.assertFalse(self.work.exists(), "a job ran after the migration failed")
+
+    def test_limit_pause_skips_the_narrative_and_leaves_the_row_ok(self):
+        narratives = []
+        self.patch("refresh_narratives", lambda *a: narratives.append(a))
+        self.run_pipeline(StubRunner([LimitExhausted("usage limit reached")]))
+        self.assertEqual(narratives, [])
+        [row] = self.health()
+        self.assertIsNotNone(row["last_success"])
+        self.assertTrue(row["last_success"].endswith("Z"))
+        self.assertIsNone(row["last_error"])
+        self.assertIsNone(row["failing_since"])
+
+    def test_success_after_an_error_clears_failing_since(self):
+        self.patch("scan_sunk_cost",
+                   lambda *a: (_ for _ in ()).throw(OSError("gone")))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.run_pipeline(StubRunner([ENTRY_A]))
+        analyze.scan_sunk_cost = sunk_cost_scan
+        self.run_pipeline(StubRunner([]))
+        [row] = self.health()
+        self.assertIsNotNone(row["last_success"])
+        self.assertIsNone(row["failing_since"])
+
+    def test_second_run_while_one_holds_the_lock_exits_at_once(self):
+        import threading
+        started, release = threading.Event(), threading.Event()
+
+        def blocking_runner(prompt):
+            started.set()
+            release.wait(30)
+            return ENTRY_A
+
+        first = threading.Thread(target=self.run_pipeline, args=(blocking_runner,))
+        first.start()
+        self.addCleanup(first.join)
+        self.addCleanup(release.set)
+        self.assertTrue(started.wait(30), "the first run never reached the model")
+        second = StubRunner([])
+        err = io.StringIO()
+        t0 = time.monotonic()
+        with contextlib.redirect_stderr(err):
+            self.run_pipeline(second)  # returns: exit 0 from the CLI
+        self.assertLess(time.monotonic() - t0, 5)
+        self.assertEqual(second.calls, [])
+        self.assertEqual(len(err.getvalue().strip().splitlines()), 1)
+        self.assertEqual(self.health(), [], "the second run wrote a health row")
+        release.set()
+        first.join()
+        self.assertEqual(len(self.health()), 1)
 
 
 if __name__ == "__main__":

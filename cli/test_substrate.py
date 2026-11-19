@@ -3,18 +3,22 @@ driven through the analysis-run entrypoint: tool_events/usage/command_grains
 filled at sync time, consumer classification, dedup, the mechanical ADR
 count, and the substrate-touching db migrations.
 """
+import contextlib
+import io
 import json
-import os
+import re
 import sqlite3
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import analyze
 from analyze import run_analysis
 from test_helpers import (DbHelpers, ENTRY_A, ENTRY_B, REFUSAL_MD,
-                          StubRunner, USAGE, _backdate, rec, write_records)
+                          StubRunner, USAGE, _backdate, captured_earlier, rec,
+                          write_records)
 
 
 class SubstrateTest(DbHelpers, unittest.TestCase):
@@ -32,18 +36,19 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
 
     def sync_and_fill(self):
         """The sync stage alone — substrate fill needs no model passes."""
-        conn = analyze.init_db(self.db)
-        try:
-            analyze.sync_sessions(conn, self.root)
-            analyze.fill_substrate(conn)
-        finally:
-            conn.close()
+        with contextlib.redirect_stderr(io.StringIO()):
+            run_analysis(root=self.root, db_path=self.db,
+                         work_dir=Path(self.tmp.name) / "analysis",
+                         model_runner=StubRunner([analyze.LimitExhausted()]),
+                         claude_dir=Path(self.tmp.name) / "claude",
+                         projects_dir=Path(self.tmp.name) / "repos")
 
     def run_pipeline(self, model_runner):
         base = Path(self.tmp.name)
-        run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
-                      model_runner=model_runner,
-                      claude_dir=base / "claude", projects_dir=base / "repos")
+        with captured_earlier():
+            run_analysis(root=self.root, db_path=self.db, work_dir=self.work,
+                          model_runner=model_runner,
+                          claude_dir=base / "claude", projects_dir=base / "repos")
 
     def test_sync_fills_tool_events_paired_by_id_and_usage(self):
         write_records(self.root / "proj-a" / "sess-tools.jsonl", [
@@ -565,11 +570,10 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         self.assertEqual(self.rows("SELECT error_text FROM tool_events"
                                    " WHERE tool_use_id='tu-s'")[0]["error_text"],
                          "### Error\nTimeoutError: skill took too long")
-        subs = self.rows("SELECT * FROM subagent_transcripts")
+        subs = self.rows("SELECT * FROM transcripts WHERE agent_id IS NOT NULL")
         self.assertEqual([(s["session_id"], s["agent_id"]) for s in subs],
                          [("sess-par", "abc123")])
         self.assertTrue(subs[0]["path"].endswith("agent-abc123.jsonl"))
-        self.assertEqual(subs[0]["size"], Path(subs[0]["path"]).stat().st_size)
         self.assertEqual(self.rows("SELECT skipped_records FROM sessions")[0]
                          ["skipped_records"], 1)
 
@@ -583,26 +587,13 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         self._parent_and_subagent("sess-self", parent=False)
         self.sync_and_fill()
         self.assertEqual(self.rows("SELECT * FROM usage"), [])
-        self.assertEqual(self.rows("SELECT * FROM subagent_transcripts"), [])
         self.assertEqual(self.rows("SELECT * FROM sessions"), [])
-
-    def test_fresh_subagent_transcript_holds_the_parent_live(self):
-        """The live-session guard covers the parent when any of its subagent
-        transcripts is fresh — scanning then would cache a truncated agent."""
-        path = self._parent_and_subagent()
-        sub = path.parent / "sess-par" / "subagents" / "agent-abc123.jsonl"
-        now = time.time()
-        os.utime(sub, (now, now))
-        self.sync_and_fill()
-        self.assertIsNone(self.rows("SELECT skipped_records FROM sessions")[0]
-                          ["skipped_records"])
-        self.assertEqual(self.rows("SELECT * FROM usage"), [])
 
     def test_command_grain_migration_rescans_scanned_sessions(self):
         """Ticket #61: a pre-#61 db (user_version 2) has every scanned
-        session whose transcript survives rescanned on init_db — command
-        grains appear, and refilled tool_events heal any truncated tail
-        (#59) — while a vanished transcript keeps its old rows."""
+        session whose transcript survives rescanned — since ticket #87 by
+        the derivers in the next run — so command grains appear, while a
+        vanished transcript keeps its old rows."""
         write_records(self.root / "proj-a" / "sess-v2.jsonl", [
             rec("user", "u0", "2026-08-01T10:00:00Z",
                 "<command-name>/tdd</command-name>\n"
@@ -626,7 +617,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn.commit()
         conn.close()
 
-        analyze.init_db(self.db).close()  # the migration itself must refill
+        self.sync_and_fill()
         grains = self.rows("SELECT command FROM command_grains"
                            " WHERE session_id='sess-v2'")
         self.assertEqual([g["command"] for g in grains], ["/tdd"])
@@ -639,15 +630,15 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 9)
+                conn.execute("PRAGMA user_version").fetchone()[0], 12)
         finally:
             conn.close()
 
     def test_error_text_migration_adds_column_and_rescans(self):
         """ADR-0027 / ticket #32: a v8 db gains tool_events.error_text and
         every scanned session whose transcript survives is rescanned with
-        the text filled (the v8 wipe-and-refill); a vanished transcript
-        keeps its rows with text NULL — counted, not captured. Ends at 9."""
+        the text filled (by the derivers since ticket #87); a vanished
+        transcript keeps its rows with text NULL — counted, not captured."""
         live = self.root / "proj-a" / "sess-v8.jsonl"
         write_records(live, [
             rec("user", "u0", "2026-08-01T10:00:00Z", "task"),
@@ -673,7 +664,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn.commit()
         conn.close()
 
-        analyze.init_db(self.db).close()  # the migration itself must refill
+        self.sync_and_fill()
         rows = {r["session_id"]: r for r in self.rows(
             "SELECT session_id, is_error, error_text FROM tool_events")}
         self.assertEqual((rows["sess-v8"]["is_error"], rows["sess-v8"]["error_text"]),
@@ -683,12 +674,12 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         self.assertEqual(len(self.rows("SELECT * FROM tool_events")), 2)
         conn = sqlite3.connect(self.db)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 9)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
         finally:
             conn.close()
-        # the sniff runs once: a second init_db neither wipes nor refills
+        # an unchanged session is never re-derived: a second run leaves it
         ids = [r["id"] for r in self.rows("SELECT id FROM tool_events ORDER BY id")]
-        analyze.init_db(self.db).close()
+        self.sync_and_fill()
         self.assertEqual([r["id"] for r in self.rows(
             "SELECT id FROM tool_events ORDER BY id")], ids)
 
@@ -703,35 +694,6 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         self.assertEqual(analyze.local_day(None), "")
         self.assertEqual(analyze.local_day("not a timestamp"), "not a time")
 
-    def test_local_day_migration_redates_stored_session_days(self):
-        """Ticket #74: `sessions.date` is a stored bucket, so migration 5
-        re-derives it from the transcript head rather than converting a day
-        that has lost its clock time. A vanished transcript keeps its
-        UTC date — a guess is not a re-derivation."""
-        live = self.root / "proj-a" / "sess-eve.jsonl"
-        write_records(live, [rec("user", "u0", "2026-08-29T00:13:55.057Z", "hi")])
-        conn = analyze.init_db(self.db)
-        conn.execute("INSERT INTO sessions (id, project, transcript_path,"
-                     " date, status) VALUES ('sess-eve', 'proj-a', ?,"
-                     " '2026-08-29', 'done')", (str(live),))
-        conn.execute("INSERT INTO sessions (id, project, transcript_path,"
-                     " date, status) VALUES ('sess-gone', 'proj-a',"
-                     " '/nowhere/g.jsonl', '2026-08-29', 'done')")
-        conn.execute("INSERT INTO audit (session_id, date, skip,"
-                     " prompt_version, model) VALUES"
-                     " ('sess-eve', '2026-08-29', 1, 'what-v1', 'm')")
-        conn.execute("PRAGMA user_version = 4")  # pre-#74 db
-        conn.commit()
-        conn.close()
-
-        analyze.init_db(self.db).close()
-        dates = {r["id"]: r["date"] for r in self.rows(
-            "SELECT id, date FROM sessions")}
-        self.assertEqual(dates["sess-eve"], "2026-08-28")
-        self.assertEqual(dates["sess-gone"], "2026-08-29")
-        self.assertEqual(self.rows("SELECT date FROM audit")[0]["date"],
-                         "2026-08-28")
-
     def test_migration_sniffs_run_once_per_db(self):
         """Ticket #50: PRAGMA user_version gates the migration sniffs — a
         table named `runs` created after the first init_db survives later
@@ -744,7 +706,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 9)
+                conn.execute("PRAGMA user_version").fetchone()[0], 12)
             tables = {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("runs", tables)
@@ -779,16 +741,15 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 9)
+                conn.execute("PRAGMA user_version").fetchone()[0], 12)
         finally:
             conn.close()
 
     def test_migration_backfills_grains_where_transcript_survives(self):
-        """A pre-#42 db: init_db adds the grain columns, resets the scanned
-        marker (dropping stale substrate rows) wherever the transcript
-        survives, and refills in the same call (ticket #50) — no
-        caller-dependent wipe-to-refill window; a session whose transcript
-        vanished keeps its old rows, grain columns NULL."""
+        """A pre-#42 db: init_db adds the grain columns; the derivers replace
+        the stale rows wherever the transcript survives, in the one
+        transaction that writes the new ones (ticket #87); a session whose
+        transcript vanished keeps its old rows, grain columns NULL."""
         write_records(self.root / "proj-a" / "sess-live.jsonl", [
             rec("user", "u0", "2026-08-01T10:00:00Z", "task"),
             rec("assistant", "a1", "2026-08-01T10:00:01Z",
@@ -827,8 +788,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn.commit()
         conn.close()
 
-        # no explicit fill_substrate: the migration itself must refill
-        analyze.init_db(self.db).close()
+        self.sync_and_fill()
 
         live_rows = self.rows(
             "SELECT * FROM tool_events WHERE session_id='sess-live'")
@@ -839,6 +799,205 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
                          [("Bash", None)])
         self.assertEqual(self.rows("SELECT skipped_records FROM sessions"
                                    " WHERE id='sess-gone'")[0]["skipped_records"], 2)
+
+
+class DeriverTest(DbHelpers, unittest.TestCase):
+    """Ticket #87 (ADR-0031 §6-7, ADR-0037 §3): usage, tool events, command
+    grains and the field histogram are derivers over the raw store, driven
+    through the analysis run; `v1` rows stay frozen beside them."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.root = self.base / "projects"
+        self.db = self.base / "hindsight.db"
+        write_records(self.root / "proj-a" / "sess-raw.jsonl", [
+            rec("user", "u0", "2026-08-01T10:00:00Z",
+                "<command-name>/tdd</command-name>\n<command-message>tdd</command-message>"),
+            rec("assistant", "a1", "2026-08-01T10:00:05Z",
+                [{"type": "tool_use", "id": "t1", "name": "Bash",
+                  "input": {"command": "ls"}}],
+                usage=USAGE, model="m-1", id="msg-1", ),
+        ])
+
+    def run_pipeline(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            run_analysis(root=self.root, db_path=self.db,
+                         work_dir=self.base / "analysis",
+                         model_runner=StubRunner([analyze.LimitExhausted()]),
+                         claude_dir=self.base / "claude", projects_dir=self.base / "repos")
+
+    def frozen_session(self, sid, path):
+        """A v1 session's rows in every derived table, as the v10 migration
+        left them (provenance defaults to 'v1')."""
+        conn = analyze.init_db(self.db)
+        conn.execute("INSERT INTO sessions (id, project, transcript_path, date, status,"
+                     " skipped_records) VALUES (?, 'proj-a', ?, '2026-07-01', 'done', 0)",
+                     (sid, str(path)))
+        conn.execute("INSERT INTO tool_events (session_id, tool_use_id, name)"
+                     " VALUES (?, 't-old', 'Read')", (sid,))
+        conn.execute("INSERT INTO usage (session_id, message_id, input_tokens,"
+                     " output_tokens, cache_creation_input_tokens,"
+                     " cache_read_input_tokens) VALUES (?, 'm-old', 1, 1, 1, 1)", (sid,))
+        conn.execute("INSERT INTO command_grains (session_id, command) VALUES (?, '/old')",
+                     (sid,))
+        conn.execute("INSERT INTO field_histogram (session_id, version, scope, key, n)"
+                     " VALUES (?, '1.0', 'user', '*', 1)", (sid,))
+        conn.commit()
+        conn.close()
+
+    def by_provenance(self, sid):
+        return {t: sorted(r["provenance"] for r in self.rows(
+                    f"SELECT provenance FROM {t} WHERE session_id=?", (sid,)))
+                for t in ("tool_events", "usage", "command_grains")}
+
+    def test_derived_rows_are_raw_and_a_tool_events_bump_rebuilds_them_only(self):
+        self.frozen_session("sess-gone", "/nowhere/sess-gone.jsonl")
+        self.run_pipeline()
+        self.assertEqual(self.by_provenance("sess-raw"),
+                         {"tool_events": ["raw"], "usage": ["raw"], "command_grains": ["raw"]})
+        conn = sqlite3.connect(self.db)
+        conn.execute("UPDATE tool_events SET name='tampered'")
+        conn.commit()
+        conn.close()
+
+        version = analyze.TOOL_EVENTS_VERSION
+        analyze.TOOL_EVENTS_VERSION = version + 1
+        self.addCleanup(setattr, analyze, "TOOL_EVENTS_VERSION", version)
+        self.run_pipeline()
+
+        names = {(r["session_id"], r["name"], r["provenance"]) for r in self.rows(
+            "SELECT session_id, name, provenance FROM tool_events")}
+        self.assertEqual(names, {("sess-raw", "Bash", "raw"),
+                                 ("sess-gone", "tampered", "v1")})
+
+    def test_a_surviving_v1_session_is_rederived_raw_never_doubled(self):
+        """v1 rows are frozen because nothing remains to re-derive them from;
+        once the session's transcript is captured, it does."""
+        path = self.root / "proj-a" / "sess-raw.jsonl"
+        self.frozen_session("sess-raw", path)
+        self.run_pipeline()
+        self.assertEqual(self.by_provenance("sess-raw"),
+                         {"tool_events": ["raw"], "usage": ["raw"], "command_grains": ["raw"]})
+        self.assertEqual([r["name"] for r in self.rows("SELECT name FROM tool_events")],
+                         ["Bash"])
+        self.assertEqual({r["provenance"] for r in self.rows(
+            "SELECT provenance FROM field_histogram")}, {"raw"})
+
+    def test_a_session_first_captured_while_bookkeeping_fails_derives_next_run(self):
+        """No `sessions` row yet is not 'derived': the session stays due and
+        derives once bookkeeping succeeds, not only when the transcript grows."""
+        with unittest.mock.patch.object(analyze, "sync_sessions",
+                                        side_effect=RuntimeError("boom")):
+            self.run_pipeline()
+        self.run_pipeline()
+        self.assertEqual(self.by_provenance("sess-raw"),
+                         {"tool_events": ["raw"], "usage": ["raw"], "command_grains": ["raw"]})
+        self.assertEqual(self.rows("SELECT skipped_records FROM sessions"
+                                   " WHERE id='sess-raw'")[0]["skipped_records"], 0)
+
+    def test_an_uncaptured_parent_with_captured_subagents_is_stamped(self):
+        """SessionStart's identity write leaves a parent row at high_water 0;
+        sync_sessions gives it no `sessions` row, so it must not read as
+        NotSynced, or the session stays due and the drift guard never runs."""
+        sub = self.root / "proj-a" / "sess-new" / "subagents" / "agent-ag1.jsonl"
+        write_records(sub, [rec("assistant", "s1", "2026-08-01T10:00:06Z",
+                                [{"type": "text", "text": "sub"}],
+                                usage=USAGE, model="m-1", id="msg-s")])
+        conn = analyze.init_db(self.db)
+        conn.execute("INSERT INTO transcripts (session_id, agent_id, path)"
+                     " VALUES ('sess-new', NULL, ?)",
+                     (str(self.root / "proj-a" / "sess-new.jsonl"),))
+        conn.commit()
+        conn.close()
+        with unittest.mock.patch.object(analyze, "check_drift") as drift:
+            self.run_pipeline()
+        drift.assert_called_once()
+        self.assertTrue(self.rows("SELECT 1 FROM deriver_state"
+                                  " WHERE session_id='sess-new'"))
+
+    def frozen_subagent(self, sid, aid):
+        """A v1 subagent's rows beside its parent's, and its v1 registry row."""
+        conn = analyze.init_db(self.db)
+        conn.execute("INSERT INTO subagent_transcripts (session_id, agent_id, path, size)"
+                     " VALUES (?, ?, '/nowhere', 1)", (sid, aid))
+        conn.execute("INSERT INTO tool_events (session_id, agent_id, tool_use_id, name)"
+                     " VALUES (?, ?, 't-sub', 'Grep')", (sid, aid))
+        conn.execute("INSERT INTO usage (session_id, agent_id, message_id, input_tokens,"
+                     " output_tokens, cache_creation_input_tokens,"
+                     " cache_read_input_tokens) VALUES (?, ?, 'm-sub', 1, 1, 1, 1)",
+                     (sid, aid))
+        conn.execute("INSERT INTO command_grains (session_id, agent_id, command)"
+                     " VALUES (?, ?, '/sub')", (sid, aid))
+        conn.commit()
+        conn.close()
+
+    def by_agent(self, sid):
+        return {t: sorted((r["a"], r["provenance"]) for r in self.rows(
+                    f"SELECT ifnull(agent_id,'') a, provenance FROM {t}"
+                    " WHERE session_id=?", (sid,)))
+                for t in ("tool_events", "usage", "command_grains")}
+
+    def test_parent_only_captured_keeps_the_subagents_v1_rows(self):
+        """ADR-0039 §9: the subagent's transcript was pruned before capture,
+        so its v1 rows are all that is left of it."""
+        path = self.root / "proj-a" / "sess-raw.jsonl"
+        self.frozen_session("sess-raw", path)
+        self.frozen_subagent("sess-raw", "ag1")
+        self.run_pipeline()
+        self.assertEqual(self.by_agent("sess-raw"),
+                         {t: [("", "raw"), ("ag1", "v1")]
+                          for t in ("tool_events", "usage", "command_grains")})
+        self.assertIn("v1", {r["provenance"] for r in self.rows(
+            "SELECT provenance FROM field_histogram")})
+
+    def test_subagent_only_captured_keeps_the_parents_v1_rows(self):
+        """ADR-0039 §9, the other way round: the parent was pruned, its
+        subagent captured."""
+        self.root.joinpath("proj-a", "sess-raw.jsonl").unlink()
+        sub = self.root / "proj-a" / "sess-old" / "subagents" / "agent-ag1.jsonl"
+        write_records(sub, [rec("assistant", "s1", "2026-08-01T10:00:06Z",
+                                [{"type": "tool_use", "id": "t9", "name": "Bash",
+                                  "input": {"command": "ls"}}],
+                                usage=USAGE, model="m-1", id="msg-s")])
+        self.frozen_session("sess-old", self.root / "proj-a" / "sess-old.jsonl")
+        self.frozen_subagent("sess-old", "ag1")
+        self.run_pipeline()
+        self.assertEqual(self.by_agent("sess-old"),
+                         {"tool_events": [("", "v1"), ("ag1", "raw")],
+                          "usage": [("", "v1"), ("ag1", "raw")],
+                          "command_grains": [("", "v1")]})
+        self.assertIn("v1", {r["provenance"] for r in self.rows(
+            "SELECT provenance FROM field_histogram")})
+
+    def test_views_render_the_same_on_a_mixed_raw_and_v1_store(self):
+        sub = self.root / "proj-a" / "sess-raw" / "subagents" / "agent-ag1.jsonl"
+        write_records(sub, [rec("assistant", "s1", "2026-08-01T10:00:06Z",
+                                [{"type": "text", "text": "sub"}],
+                                usage=USAGE, model="m-1", id="msg-s")])
+        self.frozen_session("sess-gone", "/nowhere/sess-gone.jsonl")
+        self.run_pipeline()
+        import serve
+        conn = sqlite3.connect(self.db)
+        try:
+            pages = lambda: [serve.render(v, conn, "p=proj-a", self.base / "repos")  # noqa: E731
+                             for v in ("where", "what", "how")]
+            # the token source count behind the wcov line is the one thing
+            # usage provenance may change (#90): every number else is equal
+            label = lambda ps: [re.sub(r'"src": \{[^}]*\}', "", p) for p in ps]  # noqa: E731
+            mixed = pages()
+            conn.execute("UPDATE tool_events SET provenance='v1'")
+            conn.execute("UPDATE usage SET provenance='v1'")
+            conn.execute("UPDATE command_grains SET provenance='v1'")
+            flipped = pages()
+            self.assertNotEqual(flipped, mixed)   # the label does follow provenance
+            self.assertEqual(label(flipped), label(mixed))
+            self.assertEqual(serve.subagent_counts(conn), {"sess-raw": 1})
+        finally:
+            conn.close()
+        self.assertIn("ls", mixed[0])
+        self.assertIn("Read", mixed[0])
 
 
 def shaped(version, i, extra=None):
@@ -867,12 +1026,12 @@ class FieldHistogramTest(DbHelpers, unittest.TestCase):
         self.db = base / "hindsight.db"
 
     def sync_and_fill(self):
-        conn = analyze.init_db(self.db)
-        try:
-            analyze.sync_sessions(conn, self.root)
-            analyze.fill_substrate(conn)
-        finally:
-            conn.close()
+        with contextlib.redirect_stderr(io.StringIO()):
+            run_analysis(root=self.root, db_path=self.db,
+                         work_dir=Path(self.tmp.name) / "analysis",
+                         model_runner=StubRunner([analyze.LimitExhausted()]),
+                         claude_dir=Path(self.tmp.name) / "claude",
+                         projects_dir=Path(self.tmp.name) / "repos")
 
     def hist(self):
         conn = analyze.init_db(self.db)
@@ -901,27 +1060,23 @@ class FieldHistogramTest(DbHelpers, unittest.TestCase):
                          {"text": 3, "tool_use": 3})
         self.assertEqual(h["2.1.1"]["user.message.content.tool_result"]["content"], 3)
 
-    def test_rescan_leaves_counts_equal_to_a_fresh_scan(self):
-        """A schema-bump rescan and a growth top-up both wipe per session,
-        so the summed histogram never double-counts."""
+    def test_rebuild_leaves_counts_equal_to_a_fresh_scan(self):
+        """A version-bump rebuild and a growth re-derive both replace the
+        session's rows whole, so the summed histogram never double-counts."""
         write_records(self.root / "p" / "s1.jsonl",
                       [r for i in range(4) for r in shaped("2.1.1", i)])
         self.sync_and_fill()
         fresh = self.hist()
-        conn = analyze.init_db(self.db)
-        analyze._reset_scanned(conn)         # the schema-bump path
-        analyze.fill_substrate(conn)
-        conn.close()
+        version = analyze.FIELD_HISTOGRAM_VERSION
+        analyze.FIELD_HISTOGRAM_VERSION = version + 1
+        self.addCleanup(setattr, analyze, "FIELD_HISTOGRAM_VERSION", version)
+        self.sync_and_fill()
         self.assertEqual(self.hist(), fresh)
-        # growth: the transcript gains two pairs; the top-up rescans whole
         with (self.root / "p" / "s1.jsonl").open("a") as f:
             for r in [r for i in range(4, 6) for r in shaped("2.1.1", i)]:
                 f.write(json.dumps(r) + "\n")
         _backdate(self.root / "p" / "s1.jsonl")
-        conn = analyze.init_db(self.db)
-        analyze.invalidate_grown(conn, self.tmp.name)
-        analyze.fill_substrate(conn)
-        conn.close()
+        self.sync_and_fill()
         self.assertEqual(analyze.record_count(self.hist()["2.1.1"]), 12)
 
 

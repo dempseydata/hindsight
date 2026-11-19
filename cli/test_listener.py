@@ -20,6 +20,7 @@ import unittest
 from pathlib import Path
 
 import listener
+from analyze import init_db
 
 REPO = Path(__file__).resolve().parent.parent
 REAL_CAPTURES = REPO / "local-data" / "otel-capture"
@@ -131,6 +132,35 @@ class ListenerTest(unittest.TestCase):
         self.assertEqual(row[0], "tool_decision")
         self.assertEqual(row[2], "2026-08-01T14:30:16.543Z")
         self.assertEqual(json.loads(row[3])["decision"], "accept")
+
+    def resource_payload(self, sid, resource_attrs, **record_attrs):
+        body = logs_payload(*[log_record("api_request", sid, **record_attrs)] * 3)
+        body["resourceLogs"][0]["resource"]["attributes"] = resource_attrs
+        return body
+
+    def stored_attrs(self, sid):
+        db = sqlite3.connect(self.db)
+        try:
+            return [json.loads(a) for (a,) in db.execute(
+                "SELECT attributes FROM otel_events WHERE session_id=?", (sid,))]
+        finally:
+            db.close()
+
+    def test_malformed_resource_attribute_keeps_the_records(self):
+        self.post("/v1/logs", self.resource_payload(
+            "sess-badres", [{"value": {"stringValue": "no key"}}]))
+        self.assertEqual(len(self.stored_attrs("sess-badres")), 3)
+
+    def test_service_name_and_version_stamped_record_attributes_win(self):
+        self.post("/v1/logs", self.resource_payload("sess-res", [
+            {"key": "service.name", "value": {"stringValue": "claude-code"}},
+            {"key": "service.version", "value": {"stringValue": "2.1.2"}},
+            {"key": "host.arch", "value": {"stringValue": "arm64"}}],
+            **{"service.name": "from-record"}))
+        a = self.stored_attrs("sess-res")[0]
+        self.assertEqual((a["service.name"], a["service.version"]),
+                         ("from-record", "2.1.2"))
+        self.assertNotIn("host.arch", a)
 
     def test_metrics_payload_persists(self):
         status, body = self.post("/v1/metrics", METRICS_PAYLOAD, chunked=True)
@@ -288,6 +318,48 @@ class ListenerTest(unittest.TestCase):
         db.close()
         self.assertEqual(n, 1)
         self.assertEqual(mode, "wal")
+
+
+class HealthRowTest(unittest.TestCase):
+    """#93: the listener writes its health row on ingest success and on error,
+    into a store the analysis run has migrated."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = Path(tmp.name) / "hindsight.db"
+        init_db(self.db).close()
+        server = listener.make_server(port=0, db_path=self.db)
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                         daemon=True).start()  # a short poll: shutdown waits one
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.port = server.server_address[1]
+
+    post = ListenerTest.post
+
+    def row(self):
+        db = sqlite3.connect(self.db)
+        db.row_factory = sqlite3.Row
+        try:
+            return dict(db.execute("SELECT * FROM health WHERE source='listener'").fetchone())
+        finally:
+            db.close()
+
+    def test_success_then_error_then_success(self):
+        self.post("/v1/logs", logs_payload(log_record()))
+        h = self.row()
+        self.assertTrue(h["last_success"].endswith("Z"))
+        self.assertIsNone(h["last_error"])
+
+        self.post("/v1/logs", b"{not json", raw=True)
+        h = self.row()
+        self.assertTrue(h["last_error"].endswith("Z"))
+        self.assertIn("/v1/logs", h["error_text"])
+        self.assertEqual(h["failing_since"], h["last_error"])
+
+        self.post("/v1/metrics", METRICS_PAYLOAD)
+        self.assertIsNone(self.row()["failing_since"])
 
 
 if __name__ == "__main__":

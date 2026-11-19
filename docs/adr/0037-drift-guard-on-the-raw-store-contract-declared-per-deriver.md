@@ -1,6 +1,6 @@
 # ADR-0037: The drift guard sits on the raw store: the histogram is a deriver, the contract is declared per deriver, and OTel gets its own histogram
 
-**Date:** 2026-11-16 · **Status:** accepted · **Amends:** ADR-0020 · **Decides:** issue #76 (map #59, v2 audit core)
+**Date:** 2026-11-16 · **Status:** accepted, amended by ADR-0039 (§1: scan_runs dropped in v12) · **Amends:** ADR-0020 · **Decides:** issue #76 (map #59, v2 audit core)
 
 ## Context
 

@@ -1,6 +1,6 @@
 # ADR-0032: Process resolution — a root `local-process.md` deviates from the house master; the master declares every house layout
 
-**Date:** 2026-11-13 · **Status:** accepted · **Amends:** ADR-0011 (container) · **Decides:** issue #63 (map #59, v2 audit core)
+**Date:** 2026-11-13 · **Status:** accepted, amended by issue #98 (Consequences) · **Amends:** ADR-0011 (container) · **Decides:** issue #63 (map #59, v2 audit core)
 
 ## Context
 
@@ -35,5 +35,6 @@ The workspace as of 2026-11-13: one project already holds a `local-process.md` r
 
 - When this is built, the frontmatter is deleted from every `.claude/my-process.md` copy. The master's frontmatter stops being "the private-layout default" and becomes the house declaration for all layouts, and its sync note changes to match.
 - Projects whose declaration differs from the master move it to a root `local-process.md`. These are three of the four declaring projects, plus hindsight for `eval/` under Build and the plugin layout's `skills/` and `cli/` unless the master takes them.
+  *Amended 2026-11-19 (issue #98):* the master took them. Its frontmatter lists `background/ideation/`, `background/definition/`, `background/design/`, `cli/`, `skills/` and `eval/`, so hindsight resolves from the house master, and the draft `local-process.md` from #94 was dropped (2304326). A `local-process.md` exists only to replace the house process for its project alone. It is never a copy of the master, and never a patch to the master's paths: a missing house layout path is added to the master. That hindsight's own paths stage under the master is not tested: the master lives outside the repo, and tests pin the user-level CLAUDE.md away.
 - Every project without a local file gets the master, non-dev folders included. A folder that should have no how-view needs `none` written, or its view will be all off-script.
 - The declaration states of ADR-0011 stand. *Absent* now means `none`. *Invalid* also covers an unresolvable master.

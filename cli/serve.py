@@ -43,8 +43,8 @@ render beneath calls; OTEL-fed sparks shade the pre-coverage region.
 Pricing/cost columns are never rendered (ADR-0003).
 
 How-view (ticket #65, ADR-0010/0011/0012): one declaring project at a time
-(`?p=`; the selector lists projects whose `.claude/my-process.md` exists —
-absent declaration = no view), rendered server-side with no script: the
+(`?p=`; the selector lists projects whose resolved declaration is not
+absent — `local-process.md` reading `none` = no view, ADR-0032), rendered server-side with no script: the
 status card (model-written Built / Reversed / Now from `status_narrative`,
 marked stale when its ledger hash no longer matches the live ledger, the
 mechanical line when absent) over the phase runs newest first, beside the
@@ -70,8 +70,8 @@ from pathlib import Path
 # already resolve cli/ — no path insert needed (the #50 shadowing lesson).
 import how
 from analyze import (DEFAULT_PROJECTS_DIR, DEFAULT_DB, LOST, REPO,  # noqa: E402 — one authority on paths
-                     BREAKAGE_COLS, SECTIONS, audit_title, breakage_text, day_sql,
-                     local_day)
+                     BREAKAGE_COLS, SECTIONS, SIDE_REQUESTS, audit_title, breakage_text,
+                     day_sql, local_day, session_day)
 from score import BOUNDS  # noqa: E402 — narrative group names; eval/ on sys.path via analyze
 
 TOKENS_CSS = REPO / "design" / "tokens.css"
@@ -96,6 +96,31 @@ def open_db(db_path):
     # timeout covers the brief checkpoint lock and a db no writer has
     # switched yet, where it means "wait for the write" instead of a 500.
     return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
+
+
+def tok_sql(conn):
+    """A `tok` CTE in usage's columns plus `src` and `side` (ADR-0033 §4):
+    a session's tokens from OTel api_request when OTel saw it, else its
+    usage rows labelled with their provenance — never mixed in a session.
+    The OTel attributes read are declared in analyze.OTEL_DECLARED."""
+    usage = ("SELECT session_id, at, input_tokens, output_tokens,"
+             " cache_creation_input_tokens, cache_read_input_tokens, model, agent_id,"
+             " provenance AS src, 0 AS side FROM usage")
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'otel_events'").fetchone():
+        return f"WITH tok AS ({usage})"
+    n = lambda k: f"ifnull(CAST(json_extract(attributes, '$.{k}') AS INTEGER), 0)"
+    side = ", ".join(f"'{q}'" for q in SIDE_REQUESTS)
+    return f"""WITH o AS (
+        SELECT session_id, timestamp AS at, {n('input_tokens')} AS input_tokens,
+               {n('output_tokens')} AS output_tokens,
+               {n('cache_creation_tokens')} AS cache_creation_input_tokens,
+               {n('cache_read_tokens')} AS cache_read_input_tokens,
+               json_extract(attributes, '$.model') AS model,
+               json_extract(attributes, '$.agent_id') AS agent_id, 'otel' AS src,
+               ifnull(json_extract(attributes, '$.query_source'), '') IN ({side}) AS side
+        FROM otel_events WHERE event_name = 'api_request' AND session_id IS NOT NULL),
+      tok AS (SELECT * FROM o UNION ALL {usage}
+              WHERE session_id NOT IN (SELECT session_id FROM o))"""
 
 
 def chip_rows(projects):
@@ -130,6 +155,11 @@ def hidden_projects(conn):
         "SELECT name FROM project_presence GROUP BY name HAVING MAX(present) = 0")}
 
 
+# condition 4 is the token cross-check (#89), 6 the capture hook's (#84);
+# every other condition is a transcript shape change
+HEADINGS = {4: "input-side tokens disagree", 6: "transcript rewritten"}
+
+
 def breakage_banner(conn):
     """The open breakage rows (issue #15) as one banner per row, on every
     view — it shows wherever the operator lands. Tier-coloured with the
@@ -147,26 +177,30 @@ def breakage_banner(conn):
     return "".join(
         f'<div class="breakage {r["tier"]}"><span class="o-badge'
         f' o-{"problem" if r["tier"] == "problem" else "ok"}">{r["tier"]}</span>'
-        f" <b>transcript shape changed</b> "
-        f"{html.escape(breakage_text(r))} · ingest continued; rows since may be"
-        f'{" thin" if r["tier"] == "problem" else " unaffected"}. '
-        f"<code>analyze.py acknowledge-breakage {r['id']}</code> to close</div>"
+        f" <b>{HEADINGS.get(r['condition'], 'transcript shape changed')}</b> "
+        f"{html.escape(breakage_text(r))} · "
+        + ("capture stopped appending for this session until resolved. "
+           if r["condition"] == 6 else  # the capture hook's (#84)
+           "ingest continued; rows since may be"
+           f'{" thin" if r["tier"] == "problem" else " unaffected"}. ')
+        + f"<code>analyze.py acknowledge-breakage {r['id']}</code> to close</div>"
         for r in rows)
 
 
 def header_data(conn):
+    tok = tok_sql(conn)
     days = [{"d": d, "p": p, "t": [i, o, cc, cr]} for d, p, i, o, cc, cr in
-            conn.execute(f"""
+            conn.execute(f"""{tok}
         SELECT {day_sql("u.at")}, s.project,
                SUM(u.input_tokens), SUM(u.output_tokens),
                SUM(u.cache_creation_input_tokens), SUM(u.cache_read_input_tokens)
-        FROM usage u JOIN sessions s ON s.id = u.session_id
+        FROM tok u JOIN sessions s ON s.id = u.session_id
         WHERE u.at IS NOT NULL GROUP BY 1, 2""")]
-    projects = list(conn.execute("""
+    projects = list(conn.execute(f"""{tok}
         SELECT s.project, COUNT(DISTINCT s.id),
                SUM(u.input_tokens + u.output_tokens
                    + u.cache_creation_input_tokens + u.cache_read_input_tokens)
-        FROM sessions s LEFT JOIN usage u ON u.session_id = s.id
+        FROM sessions s LEFT JOIN tok u ON u.session_id = s.id
         GROUP BY s.project"""))
     chips, tail = chip_rows(projects)
     # Hiding is chips-only: `tail`, the chart, the ledger, the league and the
@@ -182,11 +216,11 @@ def header_data(conn):
 
 def synced_through(conn):
     """Latest local day with data: a session's start day or a usage row's.
-    sessions.date is the *start* day, so a session crossing midnight (ticket
+    A session's day is its *start* day, so a session crossing midnight (ticket
     #50) or resumed days later puts usage past it — the label, the chart and
     the window presets must still reach that work."""
     return conn.execute(f"""
-        SELECT MAX(d) FROM (SELECT MAX(date) AS d FROM sessions
+        SELECT MAX(d) FROM (SELECT MAX({session_day()}) AS d FROM sessions
                             UNION ALL SELECT MAX({day_sql("at")}) FROM usage)
         """).fetchone()[0]
 
@@ -231,9 +265,12 @@ def parse_entry(md):
 
 def subagent_counts(conn):
     """{session_id: subagent transcripts filed under it} (issue #13) — the
-    mechanical count both views' "N subagents" read; sessions with none absent."""
-    return dict(conn.execute("SELECT session_id, COUNT(*) FROM subagent_transcripts"
-                             " GROUP BY session_id"))
+    mechanical count both views' "N subagents" read; sessions with none absent.
+    The registry knows them since ticket #87; v1's table keeps the rest."""
+    return dict(conn.execute(
+        "SELECT session_id, COUNT(*) FROM (SELECT session_id, agent_id FROM transcripts"
+        " WHERE agent_id IS NOT NULL UNION SELECT session_id, agent_id"
+        " FROM subagent_transcripts) GROUP BY session_id"))
 
 
 def what_data(conn):
@@ -262,11 +299,11 @@ def what_data(conn):
             GROUP BY session_id""")}
     subs = subagent_counts(conn)
     rows = []
-    for sid, project, date, skip, md, adr, pend, status in conn.execute("""
-            SELECT s.id, s.project, s.date, a.skip, a.markdown, a.adr_count,
+    for sid, project, date, skip, md, adr, pend, status in conn.execute(f"""
+            SELECT s.id, s.project, {session_day('s')}, a.skip, a.markdown, a.adr_count,
                    a.session_id IS NULL, s.status
             FROM sessions s LEFT JOIN audit a ON a.session_id = s.id
-            ORDER BY s.date DESC, s.rowid DESC"""):
+            ORDER BY 3 DESC, s.rowid DESC"""):
         r = {"id": sid, "p": project, "d": date, "skip": skip, "adr": adr}
         if sid in subs:
             r["sub"] = subs[sid]
@@ -348,26 +385,28 @@ def where_data(conn):
     # agent count, attributed to the session's first day like the sessions
     # tile beside it; absent when none.
     subs = subagent_counts(conn)
-    sess, sidx = [], {}
-    for sid, p, d, i, o, cc, cr in conn.execute(f"""
-            SELECT u.session_id, s.project, MIN({day_sql("u.at")}),
+    tok = tok_sql(conn)
+    sess, sidx, srcs = [], {}, Counter()
+    for sid, p, d, src, i, o, cc, cr in conn.execute(f"""{tok}
+            SELECT u.session_id, s.project, MIN({day_sql("u.at")}), MIN(u.src),
                    SUM(u.input_tokens), SUM(u.output_tokens),
                    SUM(u.cache_creation_input_tokens),
                    SUM(u.cache_read_input_tokens)
-            FROM usage u JOIN sessions s ON s.id = u.session_id
+            FROM tok u JOIN sessions s ON s.id = u.session_id
             GROUP BY u.session_id"""):
         sidx[sid] = len(sess)
+        srcs[src] += 1
         sess.append({"p": p, "d": d, "t": [i, o, cc, cr],
                      **({"na": subs[sid]} if sid in subs else {})})
     # subagent tokens at (day, project) grain — the same base as the header's
     # day rows the tiles sum, so the tile's share is a true ratio in any window
     subd = [{"d": d, "p": p, "t": [i, o, cc, cr]}
-            for d, p, i, o, cc, cr in conn.execute(f"""
+            for d, p, i, o, cc, cr in conn.execute(f"""{tok}
             SELECT {day_sql("u.at")}, s.project,
                    SUM(u.input_tokens), SUM(u.output_tokens),
                    SUM(u.cache_creation_input_tokens),
                    SUM(u.cache_read_input_tokens)
-            FROM usage u JOIN sessions s ON s.id = u.session_id
+            FROM tok u JOIN sessions s ON s.id = u.session_id
             WHERE u.agent_id IS NOT NULL GROUP BY 1, 2""")]
     cs = {}
     for ty, c, sid in conn.execute("""
@@ -379,12 +418,12 @@ def where_data(conn):
 
     models = [{"d": d, "p": p, "m": m.replace("claude-", ""), "n": n,
                "t": [i, o, cc, cr]}
-              for d, p, m, n, i, o, cc, cr in conn.execute(f"""
+              for d, p, m, n, i, o, cc, cr in conn.execute(f"""{tok}
             SELECT {day_sql("u.at")}, s.project, u.model, COUNT(*),
                    SUM(u.input_tokens), SUM(u.output_tokens),
                    SUM(u.cache_creation_input_tokens),
                    SUM(u.cache_read_input_tokens)
-            FROM usage u JOIN sessions s ON s.id = u.session_id
+            FROM tok u JOIN sessions s ON s.id = u.session_id
             WHERE u.model IS NOT NULL AND u.model != '<synthetic>'
             GROUP BY 1, 2, 3""")]
 
@@ -434,38 +473,38 @@ def where_data(conn):
                             "ex": ex,
                             "ms": _ms(a.get("total_retry_duration_ms")) if ex else None})
 
+    # hook timing from OTel (ADR-0033 §7): total_duration_ms is the firing's
+    # wall clock over all matching hooks; v1's hindsight.hook rows stay unread
     hooks = []
     for ts, attrs in conn.execute("""
             SELECT timestamp, attributes FROM otel_events
-            WHERE event_name = 'hindsight.hook'""") if has_otel else []:
+            WHERE event_name = 'hook_execution_complete'""") if has_otel else []:
         a = json.loads(attrs)
-        hooks.append({"d": local_day(ts),
-                      "ev": a.get("hook.event") or "unknown",
-                      "cpu": a.get("hook.cpu_ms"),
-                      "dur": a.get("hook.duration_ms")})
+        hooks.append({"d": local_day(ts), "ev": a.get("hook_event") or "?",
+                      "dur": _ms(a.get("total_duration_ms"))})
 
     sunk = [{"p": p, "cat": cat, "pl": pl, "name": n, "tok": t}
             for p, cat, pl, n, t in conn.execute(
                 "SELECT project, category, plugin, name, tokens "
                 "FROM sunk_cost")]
     med = {}
-    for p, v in conn.execute("""
+    for p, v in conn.execute(f"""{tok}
             SELECT s.project, f.v FROM sessions s JOIN (
               SELECT session_id, input_tokens + cache_read_input_tokens
                      + cache_creation_input_tokens v,
                      ROW_NUMBER() OVER (PARTITION BY session_id
                                         ORDER BY at) rn
-              FROM usage) f ON f.session_id = s.id AND f.rn = 1"""):
+              FROM tok WHERE NOT side) f ON f.session_id = s.id AND f.rn = 1"""):
         med.setdefault(p, []).append(v)
     medians = {p: {"med": int(statistics.median(v)), "n": len(v)}
                for p, v in med.items()}
 
     one = lambda sql: conn.execute(sql).fetchone()[0]
-    cov = {"usage_sessions": len(sess),
+    cov = {"usage_sessions": len(sess), "src": dict(srcs),
            "sessions": one("SELECT COUNT(*) FROM sessions"),
            "span": list(conn.execute(
-               f"SELECT MIN({day_sql('at')}), MAX({day_sql('at')})"
-               " FROM usage").fetchone()),
+               f"{tok} SELECT MIN({day_sql('at')}), MAX({day_sql('at')})"
+               " FROM tok").fetchone()),
            "otel": (local_day(one("SELECT MIN(timestamp) FROM otel_events"))
                     if has_otel else ""),
            "hook": min((h["d"] for h in hooks), default=None),
@@ -526,12 +565,12 @@ def _ms(v):
 
 
 def declaring_projects(conn, projects_dir):
-    """Selector entries: projects in the DB whose declaration file exists
-    (#64 addendum — absent = no view), busiest first."""
+    """Selector entries: projects in the DB whose resolved declaration is
+    not absent (#64 addendum, ADR-0032 — `none` = no view), busiest first."""
     return [p for (p,) in conn.execute(
         "SELECT project FROM sessions WHERE project IS NOT NULL"
         " GROUP BY project ORDER BY COUNT(*) DESC, project")
-        if (Path(projects_dir) / p / ".claude" / "my-process.md").is_file()]
+        if how.resolve_declaration(Path(projects_dir) / p)[0] != "absent"]
 
 
 def _hue(d, stage):
@@ -638,13 +677,14 @@ def _aside(d):
     """Stated-process panel (valid) or the invalidity banner; the trail
     tally closes both."""
     dec = d["declaration"]
+    # the source line (ADR-0032): whose declaration this is
+    source = f'<p class="note">process: <code>{html.escape(dec["source"])}</code></p>'
     tally = (f'<p class="note">{len(d["sessions"])} sessions · {len(d["trail"])} trail events'
              f" · {len({local_day(e['at']) for e in d['trail']})} active days</p>")
     if dec["state"] == "invalid":
         return (f'<div class="warn"><b>{_icon("alert-triangle")}Declaration invalid — ignored whole.</b>'
-                f"<br>{html.escape(dec['error'])}<br><code>.claude/my-process.md</code></div>"
-                + tally)
-    out = [f'<h2>{_icon("list-check")}Stated process</h2>']
+                f"<br>{html.escape(dec['error'])}</div>" + source + tally)
+    out = [f'<h2>{_icon("list-check")}Stated process</h2>', source]
     for s, agg in zip(dec["stages"], d["summary"]):
         mk = " · ".join(f"{k}: {', '.join(s[k])}" for k in how.MARKER_KEYS if s[k])
         if agg["count"]:
@@ -677,8 +717,8 @@ def how_html(conn, project, projects_dir):
     falls back to the busiest declaring project."""
     projects = declaring_projects(conn, projects_dir)
     if not projects:
-        return ("<p>No project declares a process — add a <code>stages:</code> fence at"
-                " line 1 of a project's <code>.claude/my-process.md</code> (ADR-0011).</p>")
+        return ("<p>No project declares a process — every project's root"
+                " <code>local-process.md</code> reads <code>none</code> (ADR-0032).</p>")
     unknown = ""
     if project not in projects:
         if project:
@@ -763,7 +803,8 @@ def render(view, conn, query="", projects_dir=DEFAULT_PROJECTS_DIR):
     else:
         data = header_data(conn)
         pretitle = f'synced through {data["synced"] or "never"} · {data["sessions"]} sessions'
-        desc = ("token usage from the transcript scan — days without data render as gaps;"
+        desc = ("token usage per session from OTel, else the transcript's — days without"
+                " data render as gaps;"
                 " pruned transcripts read unknown, never zero")
         actions = ('<div class="o-actions" id="ctl">window:'
                    + "".join(f' <button data-w="{w}">{w}</button>'

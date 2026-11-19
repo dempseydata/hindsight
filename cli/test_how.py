@@ -483,7 +483,8 @@ class Narrative(unittest.TestCase):
         n = how.narrative(self.conn, "proj", self.d)
         self.assertEqual(n, {"facts": {"Built": ["x"], "Reversed": [], "Now": ["y"]},
                              "written_day": "2026-08-05",
-                             "model": analyze.MODEL, "stale": False})
+                             "model": analyze.MODEL,
+                             "prompt_version": analyze.STATUS_VERSION, "stale": False})
 
     def test_stale_on_any_of_the_three_keys(self):
         h = how.ledger_hash(self.d)
@@ -505,6 +506,19 @@ class Narrative(unittest.TestCase):
         changed = [{**self.d["runs"][0], "titles": ["changed"]}, *self.d["runs"][1:]]
         self.assertNotEqual(how.ledger_hash(self.d),
                             how.ledger_hash({**self.d, "runs": changed}))
+
+    def test_adr_status_edit_rekeys_the_narrative(self):
+        """#96, ADR-0035 §3: the ADR headers are the narrative's second input,
+        so editing a status line makes the stored card stale."""
+        adr = self.root / "proj" / "docs" / "adr" / "0001-x.md"
+        adr.parent.mkdir(parents=True)
+        adr.write_text("# ADR-0001: X\n\n**Date:** 2026-08-01 · **Status:** accepted\n")
+        d = how.how_data(self.conn, "proj", self.root)
+        self.assertEqual([a["number"] for a in how.ledger(d)["adrs"]], ["ADR-0001"])
+        self.store(how.ledger_hash(d))
+        adr.write_text("# ADR-0001: X\n\n**Date:** 2026-08-01 · **Status:** superseded by ADR-0002\n")
+        self.assertTrue(how.narrative(self.conn, "proj",
+                                      how.how_data(self.conn, "proj", self.root))["stale"])
 
 
 

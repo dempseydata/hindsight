@@ -29,11 +29,11 @@ shell is reachable from the prompt. Calls are serial (a deliberate pause boundar
 
 | | |
 | --- | --- |
-| Trigger | End of each *unpaused* run, per project whose `.claude/my-process.md` declaration is valid and has ≥ 1 phase run; skipped when `(ledger_hash, STATUS_VERSION, MODEL)` already matches a stored row (`refresh_narratives`) |
-| Inputs the model may read | `{project, as_of, stages, runs: [{stage, start, end, titles}]}` — `how.ledger`; run titles are audit **titles** only. No transcript text, no file contents. Since #17 the ledger includes `off-script` runs (a label never in `stages`) and treats `/compact` as a session boundary, so the model now sees days spent outside the declared stages (ADR-0010 amended) |
-| Steering | `cli/prompts/status-v1.txt` + the ledger JSON appended (`score.ledger_prompt`) |
-| Hard guardrails | `score.parse` (JSON, fence-tolerant; non-JSON → skipped) then `score.contract`, floors M3–M6 (`eval/score.py`): every line shares ≥ 2 content words with the ledger; every line carries a date inside the run span; a `Now` line names the current stage and start day; the three groups are lists within `BOUNDS` (8/4/3), `Built` and `Now` non-empty. Same function as the eval — no second implementation |
-| Output contract | JSON `{"Built": [..], "Reversed": [..], "Now": [..]}` |
+| Trigger | End of each *unpaused* run, per project whose `.claude/my-process.md` declaration is valid and has ≥ 1 phase run; skipped when `(ledger_hash, STATUS_VERSION, MODEL)` — the hash over ledger plus ADR headers — already matches a stored row (`refresh_narratives`) |
+| Inputs the model may read | `{project, as_of, stages, runs: [{stage, start, end, titles}], adrs: [{number, date, title, status, touches}]}` — `how.ledger`; run titles are audit **titles** only, ADR headers are read mechanically from `<root>/docs/adr` (ADR-0035 §3). No transcript text, no other file contents. Since #17 the ledger includes `off-script` runs (a label never in `stages`) and treats `/compact` as a session boundary, so the model now sees days spent outside the declared stages (ADR-0010 amended) |
+| Steering | `cli/prompts/status-v2.txt` + the ledger and ADR headers JSON appended (`score.ledger_prompt`) |
+| Hard guardrails | `score.parse` (JSON, fence-tolerant; non-JSON → skipped) then `score.contract_v2`, floors M3–M6 (`eval/score.py`): every line shares ≥ 2 content words with the ledger (or with ADR titles when it names an ADR, every named ADR present); every date is in the run span or an ADR date — Superseded lines carry two, in order; a `Now` line names the current stage and start day; Standing 3–8, Superseded ≤ 6, Now 1–3, all lists. Same function as the eval — no second implementation |
+| Output contract | JSON `{"Standing": [..], "Superseded": [..], "Now": [..]}` (status-v2, ADR-0035) |
 | App-owned side effects | `INSERT OR REPLACE status_narrative(project, ledger_hash, narrative, prompt_version, model, generated_at)`. On rejection nothing is written: the last good row stays and renders **stale** (hash mismatch); with no row ever stored the view shows the mechanical status |
 | Failure handling | `LimitExhausted` → pass skipped, retried next run; any other exception prints `narrative pass failed` and the backstop / sunk-cost scans still run (#77) |
 
@@ -46,7 +46,7 @@ shell is reachable from the prompt. Calls are serial (a deliberate pause boundar
 
 | Set | Runner · manifest · scorer | Calls | Verdict |
 | --- | --- | --- | --- |
-| Status narrative (ADR-0012) | `eval/run.py` · `eval/cases.json` (6 frozen ledgers, incl. `content@2026-09-09` with off-script runs, #17) · `eval/score.py` M1–M6 | 6 × `claude -p`, `ThreadPoolExecutor(6)` | ACCEPT only if every case passes; must match-or-beat the recorded baseline |
+| Status narrative (ADR-0035) | `eval/run_v2.py` · `eval/status_v2_cases.json` (5 frozen ledgers + ADR headers, #95) · `eval/score.py` `score_v2` M1–M6 | 3 rounds × 5 × `claude -p`, `ThreadPoolExecutor(5)` | ACCEPT only if every case passes in all three rounds |
 | What-pass (ADR-0016) | `eval/what_run.py` · `eval/what_cases.json` (20 case ids; extracts under gitignored `local-data/eval/what/extracts/`) · `analyze.valid_entry` itself | 20 × `default_model_runner`, `ThreadPoolExecutor(4)` | ACCEPT only if every output passes the gate and every expected SKIP/entry holds |
 
 Outputs land under `local-data/eval/…/runs/<tag>/` (untracked). Both runners are the gate before any

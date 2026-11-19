@@ -3,7 +3,7 @@
 **Frozen 2026-11-19** (#95), **before any `status-v2` prompt was written**.
 Design settled in #73. Any edit to the `status-v2` prompt or its model pin
 runs this first and lands only on ACCEPT. The v1 set below is kept as the
-record, and it gates `status-v1` until #96 retires it.
+record; #96 retired `status-v1` from the live pass.
 
 ## What is scored
 
@@ -83,6 +83,45 @@ Outputs go to `local-data/eval/runs/<tag>/r1..r3/` (untracked).
 `StatusV2Cases`). A hand-written correct card for hindsight@live passes, with
 7 lines and 2/2 Superseded, so the floors can be reached. No model output
 existed when the set was frozen.
+
+## Record: `status-v2` — not accepted, parked for the operator (2026-11-19, #96)
+
+No case, anchor, floor or scorer line moved. Two confounds void every run
+before `v2-p6-sonnet-nohooks`:
+
+- **Leaked answers (`v2-p1` to `v2-p5`).** The prompt's examples quoted the
+  frozen set's anchors and titles ("so-what view", "npm link install", "close
+  OpenSpec", "content-first"). `test_status_prompt_carries_no_eval_answers`
+  now fails on any anchor, or on any four-word run of a case title or ADR
+  title, in the live prompt.
+- **Hook leak (`v2-p1` to `v2-p6-sonnet-clean`).** The operator's user-level
+  SessionStart hook reached every `claude -p` call. Fixed in 23e50f8
+  (`disableAllHooks`); the what-eval re-ran 20/20.
+
+| tag | model | passed | note |
+| --- | --- | --- | --- |
+| `v2-p1`..`v2-p4` | haiku | 6, 10, 10, 14 /15 | void: leaked answers, hook leak |
+| `v2-p4-sonnet`, `v2-p5-sonnet` | sonnet | 14, 15 /15 | void: same; p5's "ACCEPT" withdrawn |
+| `v2-p6-sonnet-clean` | sonnet | 11/15 | void: hook leak (a reply suffix, two empty calls) |
+| `v2-p6-sonnet-nohooks` | sonnet | 12/15 | first clean run; npm-link named by the wrong half of ADR-0010's title |
+| `v2-p7-haiku` | haiku | **14/15** | best clean run; thisisme r1 dropped a current-run title |
+| `v2-p7-sonnet` | sonnet | 10/15 | npm-link 0/3, one 300 s timeout |
+| `v2-p8-haiku` | haiku | 11/15 | a title-pass rule made Haiku over-eager; reverted |
+
+**Escalation tried and withdrawn.** Sonnet was pinned after `v2-p4` on
+confounded evidence. Clean runs of the same prompt put Haiku ahead (14 v 10),
+so the pin stays on Haiku.
+
+**Open for the operator.** Clean runs vary by more than any single prompt
+rule moves them, and ACCEPT needs all 15 calls. At a 1-in-15 failure rate
+that sweep is about a one-in-three draw. Whether the bar fits this model is
+the operator's call. Two eval-harness questions are also open:
+
+- `hindsight@live` timed out at 300 s twice with five calls in flight. The
+  live pass is serial.
+- `dates_in` reads "Mon D-D" as a second date.
+
+The prompt is left at `v2-p7`.
 
 ---
 

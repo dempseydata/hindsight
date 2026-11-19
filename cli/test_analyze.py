@@ -13,6 +13,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -627,6 +628,16 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         self.assertTrue(cwd.is_dir())
         self.assertNotEqual(cwd.resolve(), analyze.REPO.resolve())
         self.assertNotIn(analyze.REPO.resolve(), cwd.resolve().parents)
+
+    def test_default_model_runner_pins_the_model_it_is_given(self):
+        """#96: eval/run_v2.py compares models through the same restricted call."""
+        fake = subprocess.CompletedProcess([], 0, stdout="ok", stderr="")
+        with unittest.mock.patch.object(analyze.subprocess, "run", return_value=fake) as run:
+            analyze.default_model_runner("prompt")
+            analyze.default_model_runner("prompt", model="other-model")
+        pins = [c.args[0][c.args[0].index("--model") + 1] for c in run.call_args_list]
+        self.assertEqual(pins, [analyze.MODEL, "other-model"])
+        self.assertIn("--strict-mcp-config", run.call_args_list[1].args[0])
 
     def test_default_model_runner_missing_binary_pauses(self):
         # Ticket #84: no `claude` on PATH must pause the run like limit
@@ -1746,8 +1757,16 @@ class SweepDeriveTest(DbHelpers, unittest.TestCase):
 class NarrativeTest(DbHelpers, unittest.TestCase):
     """The status-narrative pass (ADR-0012, ticket #68): ledger-keyed,
     write-time gated by eval/score.py's contract floors, never on read."""
-    GOOD = json.dumps({"Built": ["Ship OTLP listener and wire telemetry (Aug 16)"],
-                       "Reversed": [], "Now": ["Build, since Aug 16: OTLP listener"]})
+    STANDING = ["Ship OTLP listener (Aug 16)", "Wire telemetry for the OTLP listener (Aug 16)",
+                "Build: OTLP listener and telemetry wired (Aug 16)"]
+    NOW = ["Build, since Aug 16: OTLP listener"]
+    GOOD = json.dumps({"Standing": STANDING, "Superseded": [], "Now": NOW})
+
+    def adr(self, status):
+        f = self.projects / "p" / "docs" / "adr" / "0001-otlp.md"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(f"# ADR-0001: OTLP listener ingest\n\n"
+                     f"**Date:** 2026-08-01 · **Status:** {status}\n")
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1776,23 +1795,52 @@ class NarrativeTest(DbHelpers, unittest.TestCase):
         calls = []
         runner = lambda p: calls.append(p) or self.GOOD
         analyze.refresh_narratives(self.conn, self.projects, runner)
-        self.assertEqual(self.stored(), [("p", self.GOOD, analyze.STATUS_VERSION, analyze.MODEL)])
+        self.assertEqual(self.stored(), [("p", self.GOOD, "status-v2", analyze.MODEL)])
         self.assertIn('"stage": "Build"', calls[0])
         analyze.refresh_narratives(self.conn, self.projects, runner)
         self.assertEqual(len(calls), 1)  # unchanged ledger: no second call
 
+    def test_adr_status_edit_regenerates_the_card(self):
+        """#96: the ADR headers ride in the prompt and the key — an edited
+        status line costs one call on the next run, an unedited one none."""
+        calls = []
+        runner = lambda p: calls.append(p) or self.GOOD
+        self.adr("accepted")
+        analyze.refresh_narratives(self.conn, self.projects, runner)
+        analyze.refresh_narratives(self.conn, self.projects, runner)
+        self.assertEqual(len(calls), 1)
+        self.assertIn('"number": "ADR-0001"', calls[0])
+        self.adr("superseded by ADR-0002")
+        analyze.refresh_narratives(self.conn, self.projects, runner)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("superseded by ADR-0002", calls[1])
+
+    def test_gated_out_card_keeps_the_last_good_row(self):
+        """#96: a card failing M3–M6 is not stored; the previous one stays."""
+        self.adr("accepted")
+        analyze.refresh_narratives(self.conn, self.projects, lambda p: self.GOOD)
+        self.adr("superseded by ADR-0002")
+        unknown_adr = json.dumps({"Standing": self.STANDING, "Now": self.NOW,
+                                  "Superseded": ["OTLP listener ingest (Aug 1) → ADR-0009 (Aug 16)"]})
+        analyze.refresh_narratives(self.conn, self.projects, lambda p: unknown_adr)
+        self.assertEqual(self.stored(), [("p", self.GOOD, "status-v2", analyze.MODEL)])
+
+    def test_superseded_line_tracing_to_an_adr_is_stored(self):
+        self.adr("accepted")
+        out = json.dumps({"Standing": self.STANDING, "Now": self.NOW, "Superseded": [
+            "ADR-0001 OTLP listener ingest (Aug 1) → wire telemetry (Aug 16)"]})
+        analyze.refresh_narratives(self.conn, self.projects, lambda p: out)
+        self.assertEqual(self.stored(), [("p", out, "status-v2", analyze.MODEL)])
+
     def test_refusal_and_off_contract_not_stored(self):
-        for bad in ("I don't see a ledger", '{"Built": ["OTLP listener, Aug 16"]}',
-                    json.dumps({"Built": ["Sunshine tomorrow"], "Reversed": [],
-                                "Now": ["Build, since Aug 16: listener"]}), None,
-                    # ticket #77: a null group — the shape the prompt invites,
-                    # since "nothing reversed" is the common case. Judged
-                    # off-contract, never raised.
-                    json.dumps({"Built": ["Ship OTLP listener and wire telemetry (Aug 16)"],
-                                "Reversed": None,
-                                "Now": ["Build, since Aug 16: OTLP listener"]}),
-                    json.dumps({"Built": "Ship OTLP listener (Aug 16)", "Reversed": [],
-                                "Now": ["Build, since Aug 16: OTLP listener"]})):
+        ok = {"Standing": self.STANDING, "Superseded": [], "Now": self.NOW}
+        for bad in ("I don't see a ledger", None,
+                    self.GOOD.replace("Standing", "Built"),                     # v1 shape
+                    json.dumps({**ok, "Standing": self.STANDING[:2]}),         # M6: < 3
+                    json.dumps({**ok, "Standing": ["Sunshine tomorrow", *self.STANDING[1:]]}),  # M3
+                    json.dumps({**ok, "Superseded": ["Ship OTLP listener (Aug 16)"]}),  # M4: one date
+                    json.dumps({**ok, "Superseded": None}),                    # #77: null group
+                    json.dumps({**ok, "Now": ["OTLP listener (Aug 16)"]})):    # M5
             analyze.refresh_narratives(self.conn, self.projects, lambda p: bad)
             self.assertEqual(self.stored(), [], bad)
 
@@ -1803,14 +1851,38 @@ class NarrativeTest(DbHelpers, unittest.TestCase):
         self.assertEqual(self.stored(), [])
 
     def test_eval_pin_matches_the_live_model(self):
-        cases = json.loads((analyze.REPO / "eval" / "cases.json").read_text())
+        cases = json.loads((analyze.REPO / "eval" / "status_v2_cases.json").read_text())
         self.assertEqual(cases["model"], analyze.MODEL)
+        what = json.loads((analyze.REPO / "eval" / "what_cases.json").read_text())
+        self.assertEqual(what["model"], analyze.MODEL)
 
     def test_limit_exhaustion_propagates(self):
         def runner(p):
             raise analyze.LimitExhausted("limit")
         with self.assertRaises(analyze.LimitExhausted):
             analyze.refresh_narratives(self.conn, self.projects, runner)
+
+    def test_status_prompt_carries_no_eval_answers(self):
+        """#96: v2-p1..p5 were void because the prompt's examples quoted the
+        frozen set's anchors and titles. No anchor, and no four-word run of a
+        case title or ADR title, may appear in the live prompt."""
+        cases = json.loads((analyze.REPO / "eval" / "status_v2_cases.json").read_text())["cases"]
+        words = lambda t: re.findall(r"[a-z0-9\-]+", t.lower())
+
+        def leaks(prompt):
+            p = f" {' '.join(words(prompt))} "
+            found = []
+            for c in cases.values():
+                anchors = [a for f in c["expected"] for a in f["anchors"]] + [
+                    f if isinstance(f, str) else f["anchor"] for f in c["forbidden"]]
+                found += [a for a in anchors if a and f" {' '.join(words(a))} " in p]
+                for t in [t for r in c["runs"] for t in r["titles"]] + [a["title"] for a in c["adrs"]]:
+                    w = words(t)
+                    found += [g for g in (" ".join(w[i:i + 4]) for i in range(len(w) - 3))
+                              if f" {g} " in p]
+            return found
+        self.assertEqual(leaks(analyze.STATUS_PROMPT), [])
+        self.assertTrue(leaks("e.g. close OpenSpec"))  # the check bites
 
 
 class DriftTest(DbHelpers, unittest.TestCase):

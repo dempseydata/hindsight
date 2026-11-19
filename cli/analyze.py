@@ -25,9 +25,10 @@ audit row at assemble time — "ADRs touched", never model-derived; NULL, not
 a false zero, when a session was never scanned.
 
 After the session loop the status-narrative pass runs (ADR-0012, ticket
-#68): per declaring project, the how-view run ledger (cli/how.py) is
-hashed, and when it, the prompt version or the model changed, one model
-call writes a Built/Reversed/Now fact list into `status_narrative` —
+#68): per declaring project, the how-view run ledger plus the project's
+ADR headers (cli/how.py, ADR-0035) is hashed, and when it, the prompt
+version or the model changed, one model call writes a Standing/Superseded/
+Now card into `status_narrative` (#96) —
 write-time gated by the eval's floors (eval/score.py), never on page load.
 
 Then the silent-change backstop runs (ticket #21):
@@ -198,7 +199,7 @@ BASELINE_KEY = "__baseline__"
 # eval/what_run.py. what-v2 carried the #19 ride-along repairs (firmer SKIP,
 # stated-rationale Decided lines), unmeasured by design.
 PROMPT_VERSION = "what-v3"
-STATUS_VERSION = "status-v1"  # the how-view status narrative (ADR-0012, #68)
+STATUS_VERSION = "status-v2"  # the how-view current-state card (ADR-0035, #96); v1 kept as the record
 # The ADR-0002 model pin. Was single-sourced from eval/corpus.json; the eval
 # harness retired with the why-pass (ADR-0006), so the pin lives here now.
 MODEL = "claude-haiku-4-5-20251001"
@@ -220,7 +221,7 @@ def what_prompt(extract, template=None):
 
 
 sys.path.insert(0, str(REPO / "eval"))
-from score import contract, ledger_prompt, parse  # noqa: E402  the eval's floors are the write-time gate
+from score import contract_v2, ledger_prompt, parse  # noqa: E402  the eval's floors are the write-time gate
 CALL_TIMEOUT = 300
 
 # ADR-0003 self-exclusion: hindsight's own claude -p analysis sessions are
@@ -273,8 +274,8 @@ CREATE TABLE IF NOT EXISTS tool_events (
 );
 CREATE TABLE IF NOT EXISTS status_narrative (
   project TEXT PRIMARY KEY,
-  ledger_hash TEXT NOT NULL,     -- sha256 of the run ledger it was written from
-  narrative TEXT NOT NULL,       -- {"Built": [...], "Reversed": [...], "Now": [...]}
+  ledger_hash TEXT NOT NULL,     -- sha256 of the run ledger plus ADR headers it was written from (#96)
+  narrative TEXT NOT NULL,       -- {"Standing": [...], "Superseded": [...], "Now": [...]} (v1: Built/Reversed/Now)
   prompt_version TEXT NOT NULL,
   model TEXT NOT NULL,
   generated_at TEXT NOT NULL
@@ -1571,13 +1572,14 @@ def process_session(conn, work_dir, session, model_runner):
 
 
 def refresh_narratives(conn, projects_dir, model_runner):
-    """The status-narrative pass (ADR-0012, ticket #68): one bounded fact
-    list per declaring project, synthesised from the run ledger alone and
-    stored in `status_narrative`. Runs after the session loop (the ledger
-    is made of audit titles) and only when the ledger's content, prompt
-    version or model has changed — so a quiet project costs nothing and a
+    """The status-narrative pass (ADR-0012, ticket #68; status-v2 per
+    ADR-0035, #96): one current-state card per declaring project, synthesised
+    from the run ledger plus the project's ADR headers and stored in
+    `status_narrative`. Runs after the session loop (the ledger
+    is made of audit titles) and only when the ledger's or ADR headers'
+    content, the prompt version or the model has changed — so a quiet project costs nothing and a
     page load never calls the model (ADR-0008). Write-time gate: the eval's
-    ground-truth-free floors (M3–M6, eval/score.py `contract`) — a refusal,
+    ground-truth-free floors (M3–M6, eval/score.py `contract_v2`) — a refusal,
     non-JSON or off-contract output is not stored; the previous narrative
     (if any) stays, its hash no longer matching, and the next run retries.
     LimitExhausted propagates to the caller's pause."""
@@ -1606,7 +1608,7 @@ def refresh_narratives(conn, projects_dir, model_runner):
             out = parse(text or "")
         except ValueError:
             continue
-        if not isinstance(out, dict) or not contract(d["runs"], out)[0]["ok"]:
+        if not isinstance(out, dict) or not contract_v2(d["runs"], d["adrs"], out)[0]["ok"]:
             continue
         conn.execute("INSERT OR REPLACE INTO status_narrative (project, ledger_hash,"
                      " narrative, prompt_version, model, generated_at)"
@@ -1622,15 +1624,14 @@ def refresh_narratives(conn, projects_dir, model_runner):
 MODEL_CWD = Path(tempfile.gettempdir()) / "hindsight-model-cwd"
 # disableAllHooks: the operator's own hooks (a plugin's SessionStart text) must
 # not steer the call; --bare would too, but drops subscription auth (ADR-0003)
-MODEL_ARGS = ["claude", "-p", "--model", MODEL, "--tools", "", "--strict-mcp-config",
-              "--settings", '{"disableAllHooks": true}']
+MODEL_FLAGS = ["--tools", "", "--strict-mcp-config", "--settings", '{"disableAllHooks": true}']
 
 
-def default_model_runner(prompt):
+def default_model_runner(prompt, model=MODEL):  # model: eval/run_v2.py's comparison override
     MODEL_CWD.mkdir(exist_ok=True)
     try:
-        r = subprocess.run(MODEL_ARGS, input=prompt, capture_output=True, text=True,
-                           timeout=CALL_TIMEOUT, cwd=MODEL_CWD)
+        r = subprocess.run(["claude", "-p", "--model", model, *MODEL_FLAGS], input=prompt,
+                           capture_output=True, text=True, timeout=CALL_TIMEOUT, cwd=MODEL_CWD)
     except subprocess.TimeoutExpired:
         print(f"model call timed out after {CALL_TIMEOUT}s", file=sys.stderr)
         return None

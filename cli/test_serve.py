@@ -5,6 +5,7 @@ from a server on an ephemeral port over a fixture DB, assert the chrome
 data and the read-only guarantee.
 """
 import http.client
+import json
 import os
 import re
 import sqlite3
@@ -462,6 +463,31 @@ class ServerTest(unittest.TestCase):
                 " question reopens.", header)
             self.assertIn("--o-stage-5", header)
             self.assertIn("-on weight", header)
+
+    def test_how_view_renders_the_three_current_state_groups(self):
+        """#96, ADR-0035: a status-v2 card renders Standing / Superseded /
+        Now, in that order, the Superseded line as written."""
+        conn = sqlite3.connect(self.db)
+        old = conn.execute("SELECT narrative, prompt_version FROM status_narrative"
+                           " WHERE project='big'").fetchone()
+        conn.execute("UPDATE status_narrative SET prompt_version='status-v2', narrative=?"
+                     " WHERE project='big'", (json.dumps({
+                         "Now": ["Build, since Aug 3: widget"],
+                         "Superseded": ["Grill widget plan (Aug 1) → widget shipped (Aug 3)"],
+                         "Standing": ["Widget shipped — Aug 3"]}),))
+        conn.commit()
+
+        def restore():
+            conn.execute("UPDATE status_narrative SET narrative=?, prompt_version=?"
+                         " WHERE project='big'", old)
+            conn.commit()
+            conn.close()
+        self.addCleanup(restore)
+        body = self.get("/how?p=big")[1]
+        heads = [body.index(f"<h3>{g}</h3>") for g in ("Standing", "Superseded", "Now")]
+        self.assertEqual(heads, sorted(heads))
+        self.assertNotIn("<h3>Built</h3>", body)
+        self.assertIn("Grill widget plan (Aug 1) → widget shipped (Aug 3)", body)
 
     def test_how_view_valid_stale_narrative(self):
         r, body = self.get("/how")                 # default: busiest declaring

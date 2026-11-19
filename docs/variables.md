@@ -25,8 +25,8 @@ Rotation "re-install" means re-running `/hindsight:ops install`, which rewrites 
 | Projects dir | `analyze.py`, `serve.py`, `attribute` — `--projects-dir` | server | `~/Documents/Claude`; every child with `.git` is captured, `.claude/my-process.md` read by the how-view | — | Git history of every project's `.claude/` |
 | Work dir | `analyze.py --work-dir` | server | `$CLAUDE_PLUGIN_DATA/analysis`, else `REPO/local-data/analysis` (`extracts/`, `what-v3/`) | — | Plain-text extracts and raw model output |
 | Backfill dir | `import_backfill.py --backfill-dir` | server | `REPO/local-data/backfill` | — | Same |
-| Model pin | `analyze.MODEL` (what, merge, status passes; stamped on every `audit`/narrative row); `eval/cases.json` and `eval/what_cases.json` `"model"` | server | constant `claude-haiku-4-5-20251001` in **three places** | change all three together, run `eval/` first | Drift between the copies makes the eval gate measure a different model than production |
-| Prompt versions | `analyze.PROMPT_VERSION` `what-v3`, `merge-v1`, `STATUS_VERSION` `status-v1` | server | constants → `cli/prompts/<v>.txt` | — | Recorded on every row; the what cache dir is keyed by version |
+| Model pin | `analyze.MODEL` (what, merge and status passes; stamped on every `audit`/narrative row); `eval/what_cases.json` and `eval/status_v2_cases.json` `"model"` | server | constant `claude-haiku-4-5-20251001` in **three places** | change all three together, run both evals first | Drift between the copies makes the eval gate measure a different model than production |
+| Prompt versions | `analyze.PROMPT_VERSION` `what-v3`, `merge-v1`, `STATUS_VERSION` `status-v2` | server | constants → `cli/prompts/<v>.txt` | — | Recorded on every row; the what cache dir is keyed by version |
 | Schema version | `analyze.init_db` `PRAGMA user_version` | server | `9` (v9 = `tool_events.error_text`, ADR-0027; v8 and v9 wipe and rescan every surviving transcript) | — | A downgrade is not supported |
 | `claude -p` timeout | `analyze.CALL_TIMEOUT`; `eval/run.py` literal | server | `300` s | — | — |
 | Subprocess timeouts | `git`, `claude --version` | server | `30` s | — | — |

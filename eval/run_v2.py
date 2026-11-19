@@ -2,7 +2,8 @@
 """Run the status-v2 eval (#73, #95): three consecutive rounds of every case
 through the pinned model, M1–M6 per case, each Superseded fact's hit rate.
 
-Usage: eval/run_v2.py PROMPT_FILE TAG     (outputs in local-data/eval/runs/TAG/rN/)
+Usage: eval/run_v2.py PROMPT_FILE TAG [MODEL]   (outputs in local-data/eval/runs/TAG/rN/)
+MODEL overrides the pin for a comparison run; ACCEPT counts only on the pin.
 The case's ledger plus ADR headers is appended as JSON. ACCEPT needs every
 case passing in all three rounds (15 calls).
 """
@@ -21,10 +22,10 @@ CASES = json.loads((REPO / "eval" / "status_v2_cases.json").read_text())
 ROUNDS = 3
 
 
-def run_case(prompt, cid, out_dir):
+def run_case(prompt, cid, out_dir, model):
     case = CASES["cases"][cid]
     sent = {k: case[k] for k in ("project", "as_of", "stages", "runs", "adrs")}
-    text = analyze.default_model_runner(ledger_prompt(prompt, sent)) or ""
+    text = analyze.default_model_runner(ledger_prompt(prompt, sent), model) or ""
     (out_dir / f"{cid}.json").write_text(text)
     try:
         out = parse(text)
@@ -35,14 +36,14 @@ def run_case(prompt, cid, out_dir):
 
 def main():
     prompt, tag = Path(sys.argv[1]).read_text(), sys.argv[2]
-    model = CASES["model"]
-    assert model == analyze.MODEL, (model, analyze.MODEL)  # the pin the call uses
+    assert CASES["model"] == analyze.MODEL, (CASES["model"], analyze.MODEL)  # the pin the call uses
+    model = sys.argv[3] if len(sys.argv) > 3 else analyze.MODEL
     outs, passed = {cid: [] for cid in CASES["cases"]}, 0
     for n in range(1, ROUNDS + 1):
         out_dir = REPO / "local-data" / "eval" / "runs" / tag / f"r{n}"
         out_dir.mkdir(parents=True, exist_ok=True)
         with ThreadPoolExecutor(5) as ex:
-            results = list(ex.map(lambda c: run_case(prompt, c, out_dir), CASES["cases"]))
+            results = list(ex.map(lambda c: run_case(prompt, c, out_dir, model), CASES["cases"]))
         for cid, out, s, detail in results:
             print(f"== r{n} {cid}"); print("\n".join(detail))
             print("SCORE", " ".join(f"{k}={v}" for k, v in s.items()))

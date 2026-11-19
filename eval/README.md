@@ -58,7 +58,8 @@ write-time gate #96 imports.
 The expected facts are #73's anchors, plus thisisme's two. #73 names no
 thisisme facts, only "the titles state the changes", so its pair is carried
 over from the v1 set's thisisme Reversed facts (OpenSpec closed; ordering
-inverted). For most cases M1 means only the Superseded half. Standing coverage
+inverted). The operator ratified the pair on 2026-11-19, before any model
+output. For most cases M1 means only the Superseded half. Standing coverage
 is not measured.
 
 Anchors are OR-substrings and cannot require both sides of a supersession. A

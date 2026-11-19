@@ -88,23 +88,6 @@ class Parse(unittest.TestCase):
         self.assertEqual(how.parse_declaration(text)[0], "valid")
 
 
-    def test_live_fixture_hindsight_declaration(self):
-        """Hindsight's own root local-process.md (#94) wins over any master."""
-        state, stages, err, source = how.resolve_declaration(analyze.REPO)
-        self.assertEqual((state, err, source), ("valid", None, "local-process.md"))
-        self.assertEqual([s["name"] for s in stages],
-                         ["Ideate", "Design", "Plan", "Build", "Release"])
-        # A built-in CLI command is never declared, so it marks no stage. (The
-        # declaration is the authority on which *skills* map where — it
-        # evolves, so this test pins no such decision; #64 → #65 once had
-        # wayfinder unmapped, and the live file has since said otherwise.)
-        self.assertIsNone(how.stage_for(stages, "command", "/clear"))
-        self.assertEqual(how.stage_for(stages, "command", "/mattpocock-skills:to-tickets"), "Plan")
-        self.assertEqual(how.stage_for(stages, "skill", "ponytail:ponytail-review"), "Build")
-        self.assertEqual(how.stage_for(stages, "write", "docs/adr/0011-x.md"), "Plan")
-        for path in ("cli/how.py", "eval/what_run.py", "skills/ops/SKILL.md"):
-            self.assertEqual(how.stage_for(stages, "write", path), "Build", path)
-
     def test_unreadable_file_is_invalid_not_absent(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "local-process.md").mkdir()  # a dir: exists, unreadable

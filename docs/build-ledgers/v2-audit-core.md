@@ -75,6 +75,7 @@ Contracts: ADR-0039.
 - #98 (2026-11-19): superseded. The draft was dropped (2304326) once the master took hindsight's paths; hindsight resolves from the house master (ADR-0032 amended).
 - #94: a relative pointer is read from the CLAUDE.md's folder; the `## Process` section ends at the next `#`/`##` heading; `source` is `local-process.md` or `house master <path>`; the selector lists every project not `absent` — ADR? no
 - handover security fix: the what-pass `claude -p` runs with `--tools "" --strict-mcp-config` from a fixed empty temp folder, not the repo; drops the project CLAUDE.md from the model's context; what-eval re-run through the new call, 20/20 ACCEPT (what-v3, Haiku 4.5) — ADR? no
+- hook isolation (found during #96, 2026-11-19): the operator's user-level hooks reached every `claude -p` call — a plugin's SessionStart text appended a reply suffix that broke a status-v2 output. The call now passes `--settings '{"disableAllHooks": true}'` (`--bare` would also skip hooks but drops subscription auth); a timed-out or failed call logs why. what-eval re-run through it, 20/20 ACCEPT (`what-v3-nohooks`) — ADR? no
 
 ## Blocked
 

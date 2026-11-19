@@ -1620,7 +1620,10 @@ def refresh_narratives(conn, projects_dir, model_runner):
 # and runs from an empty folder rather than the repo (no project settings,
 # permissions or CLAUDE.md). Fixed, not per call: each cwd is a projects folder.
 MODEL_CWD = Path(tempfile.gettempdir()) / "hindsight-model-cwd"
-MODEL_ARGS = ["claude", "-p", "--model", MODEL, "--tools", "", "--strict-mcp-config"]
+# disableAllHooks: the operator's own hooks (a plugin's SessionStart text) must
+# not steer the call; --bare would too, but drops subscription auth (ADR-0003)
+MODEL_ARGS = ["claude", "-p", "--model", MODEL, "--tools", "", "--strict-mcp-config",
+              "--settings", '{"disableAllHooks": true}']
 
 
 def default_model_runner(prompt):
@@ -1629,6 +1632,7 @@ def default_model_runner(prompt):
         r = subprocess.run(MODEL_ARGS, input=prompt, capture_output=True, text=True,
                            timeout=CALL_TIMEOUT, cwd=MODEL_CWD)
     except subprocess.TimeoutExpired:
+        print(f"model call timed out after {CALL_TIMEOUT}s", file=sys.stderr)
         return None
     except FileNotFoundError:
         # No `claude` on PATH — a machine state, not a session failure
@@ -1644,6 +1648,8 @@ def default_model_runner(prompt):
         # confirmed claude -p limit-exhaustion message if this false-positives.
         if "limit" in (r.stderr or "").lower():
             raise LimitExhausted(r.stderr.strip())
+        print(f"model call exited {r.returncode}: {(r.stderr or '').strip()[:200]}",
+              file=sys.stderr)
         return None
     return r.stdout
 

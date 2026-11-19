@@ -594,10 +594,21 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
             raise sp.TimeoutExpired(cmd="claude", timeout=1)
 
         analyze.subprocess.run = fake_run
+        err = io.StringIO()
         try:
-            self.assertIsNone(analyze.default_model_runner("prompt"))
+            with contextlib.redirect_stderr(err):
+                self.assertIsNone(analyze.default_model_runner("prompt"))
         finally:
             analyze.subprocess.run = orig
+        self.assertIn("timed out", err.getvalue())  # an empty result says why
+
+    def test_default_model_runner_failed_call_logs_its_exit(self):
+        fake = subprocess.CompletedProcess([], 2, stdout="", stderr="auth expired")
+        err = io.StringIO()
+        with unittest.mock.patch.object(analyze.subprocess, "run", return_value=fake), \
+                contextlib.redirect_stderr(err):
+            self.assertIsNone(analyze.default_model_runner("prompt"))
+        self.assertIn("exited 2: auth expired", err.getvalue())
 
     def test_default_model_runner_has_no_tools_and_no_repo_cwd(self):
         # Transcript text in the prompt must not be able to drive tools or
@@ -609,6 +620,9 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         cmd = args[0]
         self.assertEqual(cmd[cmd.index("--tools") + 1], "")
         self.assertIn("--strict-mcp-config", cmd)
+        # the operator's hooks (plugin SessionStart text) must not reach the
+        # model: one leaked a reply suffix into a status-v2 eval output (#96)
+        self.assertEqual(json.loads(cmd[cmd.index("--settings") + 1]), {"disableAllHooks": True})
         cwd = Path(kw["cwd"])
         self.assertTrue(cwd.is_dir())
         self.assertNotEqual(cwd.resolve(), analyze.REPO.resolve())

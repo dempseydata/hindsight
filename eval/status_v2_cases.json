@@ -1,0 +1,1055 @@
+{
+ "model": "claude-haiku-4-5-20251001",
+ "frozen": "2026-11-19",
+ "source": "a migrated copy of the live store via cli/how.py ledger() + adr_headers(); the dated cut re-runs run_ledger over the trail up to as_of (ticket #95)",
+ "cases": {
+  "hindsight@live": {
+   "project": "hindsight",
+   "as_of": "2026-11-17",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "Build",
+     "start": "2026-09-08",
+     "end": "2026-09-11",
+     "titles": [
+      "Implement #5 presence history and execute follow-up plan",
+      "Ticket #6: How-trail for renamed projects",
+      "Attribute subcommand and bidirectional inode tracking (tickets #7 and #8)",
+      "Close ticket 8: fix pruned-transcript decision rule and repair hindsight-old",
+      "Implement ticket #1: configurable day-bucket zone",
+      "Implement ticket 10: header filter persists across what↔where switch via sessionStorage",
+      "Sessions file under all active days, not just start day",
+      "Implement bidirectional project selection sync across views (#10)",
+      "Grill vocabulary and amend ingest-fidelity tickets for hindsight",
+      "Implement WAL mode for concurrent database access (#12)",
+      "Implement ticket 13: subagent transcripts filed under parent session",
+      "Reliability panel for where view — retries and MCP server connection health",
+      "Schema drift guard shipped; off-script runs filed as ticket 17"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-09-11",
+     "end": "2026-09-16",
+     "titles": [
+      "Ticket 17: off-script events and content-ledger eval case",
+      "Charting so-what view; EfficientStreet rubric research closes",
+      "Prototype Stage A: signals validation on real data",
+      "Grilled baseline and floor rules for what-view patterns (ticket 20)",
+      "Evaluated corrective-turn heuristic, killed model-only approach (#21)",
+      "Kill recurring-dead-end signal after prototype finds no true instances",
+      "ADR-0023: Pattern evidence is the session, session ids resolve to what-ledger rows",
+      "Drift guard deduplication and Stage B grilling",
+      "ADR-0025 confirmed and committed, ticket 26 closed",
+      "Closed map #18 after Stage B evaluation",
+      "Error text storage and surface decisions; ADR-0027 and spec #31 published",
+      "Publish dual-ticket breakdown for error display feature (#32–#33)"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-09-16",
+     "end": "2026-09-17",
+     "titles": [
+      "Substrate layer: capture error text from failed tool calls (ticket #32)"
+     ]
+    },
+    {
+     "stage": "off-script",
+     "start": "2026-09-17",
+     "end": "2026-09-18",
+     "titles": [
+      "Close ticket 33, update all documentation and diagrams",
+      "Analysis of skill usage across hindsight projects; Slack sharing blurb drafted",
+      "What view: session heatmap design, ADR-0028, and vocabulary change",
+      "Implement per-view headers with heatmap, tiles, and selection state (ticket 35)"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-09-18",
+     "end": "2026-09-18",
+     "titles": [
+      "Add errors tile to where view (#36)",
+      "SwiftBar menu bar plugin and listener guards shipped"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-09-26",
+     "end": "2026-09-30",
+     "titles": [
+      "Chart design direction map: Tabler redesign",
+      "Header layout: chose Tabler horizontal over incumbent",
+      "Build and measure card prototype; confirm Tabler patterns for Where/What",
+      "Grilling: palette — candidates, themes, and How view dependency",
+      "Build and validate How greybox prototype; decide design across 11 axes",
+      "Palette prototype testing, bugfix, and decision; create density recovery ticket",
+      "Density recovery prototype: side-by-side measurement and defaults decision",
+      "Closed: prototype icon set (#47), Tabler glyphs recorded",
+      "Grilled and closed palette decision: selection amber vs caution"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-09-30",
+     "end": "2026-11-13",
+     "titles": [
+      "Tabler restyle: design decisions finalized and six implementation tickets built",
+      "Complete restyle close-out: screenshots, docs, bug fixes, and branch cleanup",
+      "Hindsight data collection fix, v2 framing, and folder reorganization"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-11-13",
+     "end": "2026-11-13",
+     "titles": [
+      "v2 audit core: wayfinder map, three research tickets, hook fix"
+     ]
+    },
+    {
+     "stage": "off-script",
+     "start": "2026-11-13",
+     "end": "2026-11-13",
+     "titles": []
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-11-13",
+     "end": "2026-11-17",
+     "titles": [
+      "Raw record model: decisions on keying, deriver versioning, and retention",
+      "ADR-0032: process resolution — local-process.md replaces .claude/my-process.md",
+      "Research: v1 schema migration decision",
+      "Amend ADR-0031 §5: freeze v1 session start dates",
+      "Resolved incremental derivation strategy: whole-session rederive without state",
+      "ADR-0033: capture trigger, field ownership, input-side cross-check",
+      "Grilled and merged ADR-0034 on raw records compaction",
+      "Prototype current-state card generation (ticket 064)",
+      "Settled status-v2 eval and plugin v2 architecture; closed tickets 73, 69",
+      "ADR-0037: drift guard on raw store—settle design, merge decisions, graduate work items",
+      "Finalize analysis run job order and failure handling (ADR-0038)",
+      "Ticket 79: extract substrate and caching decisions resolved",
+      "Spec 82 and 14-ticket breakdown for Hindsight v2 migration; plugin installed and v1→v2 switchover validated"
+     ]
+    }
+   ],
+   "adrs": [
+    {
+     "number": "ADR-0001",
+     "date": "2026-08-01",
+     "title": "One ingest-only listener; everything else stays on-demand",
+     "status": "accepted, amended by ADR-0036 (plugin install, menu bar retired)",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0002",
+     "date": "2026-08-01",
+     "title": "The extraction contract — two pinned passes, index locators, verbatim-only evidence",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0003",
+     "date": "2026-08-01",
+     "title": "Backend stack — `claude -p` on subscription, stdlib listener, zero pip deps",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0004",
+     "date": "2026-08-16",
+     "title": "The audit format — session granularity, cross-project store, mechanical ADR counts",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0005",
+     "date": "2026-08-17",
+     "title": "Hook self-instrumentation — source, bounds, and what the numbers mean",
+     "status": "superseded by ADR-0033 (2026-11-15)",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0006",
+     "date": "2026-08-24",
+     "title": "v1 ships two views — the why-view is dropped wholesale",
+     "status": "accepted, amended by ADR-0010 (the how-view, a third view)",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0007",
+     "date": "2026-08-24",
+     "title": "Direction — V3 · Indigo deck; tokens.css is the contract",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0008",
+     "date": "2026-08-24",
+     "title": "UI stack — foreground stdlib server, zero-dep vanilla UI, two refresh controls",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0009",
+     "date": "2026-08-26",
+     "title": "Filesystem as the curation surface for the evolving collection",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0010",
+     "date": "2026-08-26",
+     "title": "The how-view — mechanical process trail, operator-declared stages, no verdicts",
+     "status": "accepted, amended by ADR-0012 (status narrative)",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0011",
+     "date": "2026-08-26",
+     "title": "Process-declaration schema — strict YAML subset, tail-segment matching, loud invalidity",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0012",
+     "date": "2026-08-28",
+     "title": "The how-view status narrative — one model-written fact list, evaluated",
+     "status": "accepted",
+     "touches": "Amends: ADR-0010"
+    },
+    {
+     "number": "ADR-0013",
+     "date": "2026-08-29",
+     "title": "Resumed sessions — substrate is topped up, the audit is prefix-semantic past a threshold",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0014",
+     "date": "2026-08-29",
+     "title": "Day buckets are the operator's local day; storage stays UTC",
+     "status": "accepted, amended by ADR-0031 (§5: a `v1` session keeps its stored day, never rebucketed)",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0015",
+     "date": "2026-08-29",
+     "title": "A pruned, never-extracted session is `lost` — a terminal status decided by condition, not budget",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0016",
+     "date": "2026-08-30",
+     "title": "The what-pass prompt brackets the extract — instructions after the data, no retry bound",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0017",
+     "date": "2026-08-30",
+     "title": "Light theme — derived second token set, three-state toggle, one contract file",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0018",
+     "date": "2026-09-08",
+     "title": "A project is its folder, not its name — identity by inode, renames observed, history stays with the folder",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0019",
+     "date": "2026-09-10",
+     "title": "A subagent transcript is filed under its parent session — never a session of its own",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0020",
+     "date": "2026-09-11",
+     "title": "The schema-drift guard is a histogram delta between record versions, not a version pin — and acknowledge is decoupled from rescan",
+     "status": "accepted, amended by ADR-0037",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0021",
+     "date": "2026-09-11",
+     "title": "The so-what view — patterns are mechanical and carry no verdict; a verdict lives only in an evaluated synthesis, and only if it earns its place",
+     "status": "dropped by ADR-0026 (2026-09-16); before that, accepted — the conditional clause resolved not built by the Stage B dry run (#27, ADR-0025, 2026-09-16); Stage A ships alone and the ADR-0006/0010 rule stands unreversed",
+     "touches": "Touches: ADR-0006, ADR-0010"
+    },
+    {
+     "number": "ADR-0022",
+     "date": "2026-09-11",
+     "title": "The so-what view reads the shared header window, states two baselines side by side, and floors sparsity before magnitude",
+     "status": "dropped by ADR-0026 (2026-09-16); accepted before that",
+     "touches": "Touches: ADR-0021, ADR-0014, ADR-0010"
+    },
+    {
+     "number": "ADR-0023",
+     "date": "2026-09-11",
+     "title": "A pattern's evidence is the session, per row; a session id resolves to its what-ledger row",
+     "status": "dropped by ADR-0026 (2026-09-16); accepted before that",
+     "touches": "Touches: ADR-0021, ADR-0022, ADR-0002"
+    },
+    {
+     "number": "ADR-0024",
+     "date": "2026-09-12",
+     "title": "Stage A is computed per request with the window in the URL; Stage B is stored like the status narrative",
+     "status": "dropped by ADR-0026 (2026-09-16); accepted before that",
+     "touches": "Touches: ADR-0008, ADR-0012, ADR-0022"
+    },
+    {
+     "number": "ADR-0025",
+     "date": "2026-09-12",
+     "title": "Stage B's go/no-go — criterion, model, digest and blind rating fixed before the dry run",
+     "status": "dropped by ADR-0026 (2026-09-16); before that, accepted — confirmed by the operator on #26 (2026-09-15); the dry run (#27, 2026-09-16) returned no-go on both arms (arm A: additive 1/5, 2 unsupported claims; arm A+T: additive 0/5, no turn-citing finding on a corrective label; controls empty), so §9's no-go branch applies: Stage A ships alone, the turn class is not admitted, and the numbers here are the record of what was fixed before the run",
+     "touches": "Touches: ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0012"
+    },
+    {
+     "number": "ADR-0026",
+     "date": "2026-09-16",
+     "title": "The so-what view is dropped after the Stage B dry run",
+     "status": "accepted",
+     "touches": "Touches: ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0006"
+    },
+    {
+     "number": "ADR-0027",
+     "date": "2026-09-16",
+     "title": "A failed call's result text is stored at ingest — the one tool-result content the product keeps — and its error line is derived at render, never classed",
+     "status": "accepted",
+     "touches": "Touches: ADR-0002, ADR-0015, ADR-0020, ADR-0023"
+    },
+    {
+     "number": "ADR-0028",
+     "date": "2026-09-18",
+     "title": "The header visual is per view — session heat on what, tokens on where — over one shared selection, a set of days",
+     "status": "accepted",
+     "touches": "Touches: ADR-0004, ADR-0007, ADR-0009, ADR-0014"
+    },
+    {
+     "number": "ADR-0029",
+     "date": "2026-09-29",
+     "title": "Tabler layout and card grammar on the Indigo deck's palette",
+     "status": "accepted",
+     "touches": "Amends: ADR-0007 (Look, Spark grammar)"
+    },
+    {
+     "number": "ADR-0030",
+     "date": "2026-09-30",
+     "title": "Tabler restyle — build contracts fixed before the unattended build",
+     "status": "accepted",
+     "touches": "Amends: ADR-0029 (trend-spark zeros)"
+    },
+    {
+     "number": "ADR-0031",
+     "date": "2026-11-13",
+     "title": "Raw records are keyed by position, not uuid, and derived tables are versioned per deriver",
+     "status": "accepted, amended by ADR-0039 (§1 migration split, §2 NULL agent key, §9 v1 rows replaced per captured agent)",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0032",
+     "date": "2026-11-13",
+     "title": "Process resolution — a root `local-process.md` deviates from the house master; the master declares every house layout",
+     "status": "accepted, amended by issue #98 (Consequences)",
+     "touches": "Amends: ADR-0011 (container)"
+    },
+    {
+     "number": "ADR-0033",
+     "date": "2026-11-15",
+     "title": "Capture runs on `Stop`, each field has one owning source, and an input-side token cross-check is a breakage",
+     "status": "accepted",
+     "touches": "Supersedes: ADR-0005 · Amends: ADR-0001, ADR-0020"
+    },
+    {
+     "number": "ADR-0034",
+     "date": "2026-11-15",
+     "title": "Raw records are compacted per session after a configurable limit, holding back anything not yet derived",
+     "status": "accepted, amended by ADR-0038 (§8: compaction runs in the analysis run, on demand too)",
+     "touches": "Amends: ADR-0031"
+    },
+    {
+     "number": "ADR-0035",
+     "date": "2026-11-16",
+     "title": "The status card is a current-state summary, with supersession judged from ADR headers",
+     "status": "accepted",
+     "touches": "Amends: ADR-0012"
+    },
+    {
+     "number": "ADR-0036",
+     "date": "2026-11-16",
+     "title": "Hindsight ships as a Claude Code plugin; everything that outlives an update lives in its own home",
+     "status": "accepted",
+     "touches": "Amends: ADR-0001"
+    },
+    {
+     "number": "ADR-0037",
+     "date": "2026-11-16",
+     "title": "The drift guard sits on the raw store: the histogram is a deriver, the contract is declared per deriver, and OTel gets its own histogram",
+     "status": "accepted, amended by ADR-0039 (§1: scan_runs dropped in v12)",
+     "touches": "Amends: ADR-0020"
+    },
+    {
+     "number": "ADR-0038",
+     "date": "2026-11-16",
+     "title": "The nightly is the analysis run on a timer: one ordered job list, each job failing alone, single-flight",
+     "status": "accepted",
+     "touches": "Amends: ADR-0034"
+    },
+    {
+     "number": "ADR-0039",
+     "date": "2026-11-17",
+     "title": "v2 audit core — build contracts fixed before the unattended build",
+     "status": "accepted",
+     "touches": "Amends: ADR-0031 (migration split, NULL agent key, §7 v1-row replacement), ADR-0037 (migration split)"
+    }
+   ],
+   "expected": [
+    {
+     "id": "S1",
+     "name": "so-what view dropped (ADR-0026)",
+     "group": "Superseded",
+     "anchors": [
+      "so-what"
+     ]
+    },
+    {
+     "id": "S2",
+     "name": "hook self-instrumentation -> ADR-0033",
+     "group": "Superseded",
+     "anchors": [
+      "self-instrument"
+     ]
+    }
+   ],
+   "forbidden": [
+    {
+     "anchor": "so-what",
+     "group": "Standing"
+    }
+   ]
+  },
+  "hindsight@2026-09-15": {
+   "project": "hindsight",
+   "as_of": "2026-09-15",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "Build",
+     "start": "2026-09-08",
+     "end": "2026-09-11",
+     "titles": [
+      "Implement #5 presence history and execute follow-up plan",
+      "Ticket #6: How-trail for renamed projects",
+      "Attribute subcommand and bidirectional inode tracking (tickets #7 and #8)",
+      "Close ticket 8: fix pruned-transcript decision rule and repair hindsight-old",
+      "Implement ticket #1: configurable day-bucket zone",
+      "Implement ticket 10: header filter persists across what↔where switch via sessionStorage",
+      "Sessions file under all active days, not just start day",
+      "Implement bidirectional project selection sync across views (#10)",
+      "Grill vocabulary and amend ingest-fidelity tickets for hindsight",
+      "Implement WAL mode for concurrent database access (#12)",
+      "Implement ticket 13: subagent transcripts filed under parent session",
+      "Reliability panel for where view — retries and MCP server connection health",
+      "Schema drift guard shipped; off-script runs filed as ticket 17"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-09-11",
+     "end": "2026-09-15",
+     "titles": [
+      "Ticket 17: off-script events and content-ledger eval case",
+      "Charting so-what view; EfficientStreet rubric research closes",
+      "Prototype Stage A: signals validation on real data",
+      "Grilled baseline and floor rules for what-view patterns (ticket 20)",
+      "Evaluated corrective-turn heuristic, killed model-only approach (#21)",
+      "Kill recurring-dead-end signal after prototype finds no true instances",
+      "ADR-0023: Pattern evidence is the session, session ids resolve to what-ledger rows",
+      "Drift guard deduplication and Stage B grilling",
+      "ADR-0025 confirmed and committed, ticket 26 closed"
+     ]
+    }
+   ],
+   "adrs": [
+    {
+     "number": "ADR-0001",
+     "date": "2026-08-01",
+     "title": "One ingest-only listener; everything else stays on-demand",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0002",
+     "date": "2026-08-01",
+     "title": "The extraction contract — two pinned passes, index locators, verbatim-only evidence",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0003",
+     "date": "2026-08-01",
+     "title": "Backend stack — `claude -p` on subscription, stdlib listener, zero pip deps",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0004",
+     "date": "2026-08-16",
+     "title": "The audit format — session granularity, cross-project store, mechanical ADR counts",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0005",
+     "date": "2026-08-17",
+     "title": "Hook self-instrumentation — source, bounds, and what the numbers mean",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0006",
+     "date": "2026-08-24",
+     "title": "v1 ships two views — the why-view is dropped wholesale",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0007",
+     "date": "2026-08-24",
+     "title": "Direction — V3 · Indigo deck; tokens.css is the contract",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0008",
+     "date": "2026-08-24",
+     "title": "UI stack — foreground stdlib server, zero-dep vanilla UI, two refresh controls",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0009",
+     "date": "2026-08-26",
+     "title": "Filesystem as the curation surface for the evolving collection",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0010",
+     "date": "2026-08-26",
+     "title": "The how-view — mechanical process trail, operator-declared stages, no verdicts",
+     "status": "accepted, amended by ADR-0012 (status narrative)",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0011",
+     "date": "2026-08-26",
+     "title": "Process-declaration schema — strict YAML subset, tail-segment matching, loud invalidity",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0012",
+     "date": "2026-08-28",
+     "title": "The how-view status narrative — one model-written fact list, evaluated",
+     "status": "accepted",
+     "touches": "Amends: ADR-0010"
+    },
+    {
+     "number": "ADR-0013",
+     "date": "2026-08-29",
+     "title": "Resumed sessions — substrate is topped up, the audit is prefix-semantic past a threshold",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0014",
+     "date": "2026-08-29",
+     "title": "Day buckets are the operator's local day; storage stays UTC",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0015",
+     "date": "2026-08-29",
+     "title": "A pruned, never-extracted session is `lost` — a terminal status decided by condition, not budget",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0016",
+     "date": "2026-08-30",
+     "title": "The what-pass prompt brackets the extract — instructions after the data, no retry bound",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0017",
+     "date": "2026-08-30",
+     "title": "Light theme — derived second token set, three-state toggle, one contract file",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0018",
+     "date": "2026-09-08",
+     "title": "A project is its folder, not its name — identity by inode, renames observed, history stays with the folder",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0019",
+     "date": "2026-09-10",
+     "title": "A subagent transcript is filed under its parent session — never a session of its own",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0020",
+     "date": "2026-09-11",
+     "title": "The schema-drift guard is a histogram delta between record versions, not a version pin — and acknowledge is decoupled from rescan",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0021",
+     "date": "2026-09-11",
+     "title": "The so-what view — patterns are mechanical and carry no verdict; a verdict lives only in an evaluated synthesis, and only if it earns its place",
+     "status": "accepted",
+     "touches": "Touches: ADR-0006, ADR-0010"
+    },
+    {
+     "number": "ADR-0022",
+     "date": "2026-09-11",
+     "title": "The so-what view reads the shared header window, states two baselines side by side, and floors sparsity before magnitude",
+     "status": "accepted",
+     "touches": "Touches: ADR-0021, ADR-0014, ADR-0010"
+    },
+    {
+     "number": "ADR-0023",
+     "date": "2026-09-11",
+     "title": "A pattern's evidence is the session, per row; a session id resolves to its what-ledger row",
+     "status": "accepted",
+     "touches": "Touches: ADR-0021, ADR-0022, ADR-0002"
+    },
+    {
+     "number": "ADR-0024",
+     "date": "2026-09-12",
+     "title": "Stage A is computed per request with the window in the URL; Stage B is stored like the status narrative",
+     "status": "accepted",
+     "touches": "Touches: ADR-0008, ADR-0012, ADR-0022"
+    },
+    {
+     "number": "ADR-0025",
+     "date": "2026-09-12",
+     "title": "Stage B's go/no-go — criterion, model, digest and blind rating fixed before the dry run",
+     "status": "proposed — confirmed by the operator on #26 (2026-09-15), accepted with #27's verdict, whichever way it falls",
+     "touches": "Touches: ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0012"
+    }
+   ],
+   "note": "Cut after the so-what view starts, before its drop; ADR headers from git at 6b6d473 (2026-09-15 10:26), the last commit on the cut day. A session with events past the cut keeps its events but not its title, which was written after it.",
+   "expected": [
+    {
+     "id": "T1",
+     "name": "so-what view standing",
+     "group": "Standing",
+     "anchors": [
+      "so-what"
+     ]
+    }
+   ],
+   "forbidden": [
+    "adr-0026",
+    {
+     "anchor": "so-what",
+     "group": "Superseded"
+    },
+    "so-what view dropped",
+    "so-what view is dropped",
+    "so-what dropped",
+    "not built"
+   ]
+  },
+  "explainer@live": {
+   "project": "explainer",
+   "as_of": "2026-10-12",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "Plan",
+     "start": "2026-09-25",
+     "end": "2026-09-26",
+     "titles": [
+      "Wayfinder charting for explainer MVP, establish map and first tickets"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-09-26",
+     "end": "2026-09-26",
+     "titles": [
+      "SVG player capture validated: benchmarks pass, design requirements identified"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-09-26",
+     "end": "2026-09-26",
+     "titles": []
+    },
+    {
+     "stage": "Build",
+     "start": "2026-09-26",
+     "end": "2026-09-26",
+     "titles": [
+      "Froze schema v0.1 for Wayfinder script; recorded 5 design decisions in ADR-0002",
+      "Prototype pencil-sketch visualization; settled look D with dotted-outline fog",
+      "Resolved standard flowchart icon pack with layout findings"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-09-26",
+     "end": "2026-09-27",
+     "titles": [
+      "Settle layout renderer rules for sibling group packing",
+      "Explainer rendering pipeline: removed fix loop, validation-based overrun checks, pre-capture keyframes",
+      "Design /explainer-script checkpoint flow and draft lifecycle",
+      "Grilled and closed: readability look as blind-viewer validator",
+      "Step-through controls resolved, spec published, 15 build tickets sequenced with orchestrator pattern"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-09-27",
+     "end": "2026-09-30",
+     "titles": [
+      "Built Explainer MVP with orchestrated subagents; created mp-night-shift skill; restructured repos for plugin layout",
+      "Executed spec #12: night-shift build of explainer plugin and skills"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-09-30",
+     "end": "2026-09-30",
+     "titles": []
+    },
+    {
+     "stage": "Build",
+     "start": "2026-09-30",
+     "end": "2026-10-12",
+     "titles": []
+    }
+   ],
+   "adrs": [
+    {
+     "number": "ADR-0001",
+     "date": "2026-09-26",
+     "title": "An SVG player, pure in time, captured to MP4 by headless Chromium",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0002",
+     "date": "2026-09-26",
+     "title": "Script schema v0.1, frozen against the whole Wayfinder story",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0003",
+     "date": "2026-09-26",
+     "title": "Layout packs sibling groups into rows to maximise label size",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0004",
+     "date": "2026-09-26",
+     "title": "Checks run before a single capture, and findings stop it",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0005",
+     "date": "2026-09-27",
+     "title": "/explainer-script: grounding at Checkpoint 1, timing fitted to every pack, and extracts the model never writes",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0006",
+     "date": "2026-09-27",
+     "title": "The readability look is a blind viewer run by the skill, and pacing is a validation rule",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0007",
+     "date": "2026-09-27",
+     "title": "Captions are burned into the frame, and the step-through is a frame beside a transcript",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0008",
+     "date": "2026-09-27",
+     "title": "The CLI is named `explainer`",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0009",
+     "date": "2026-09-27",
+     "title": "`explainer fetch` takes a URL and an extract path",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0010",
+     "date": "2026-09-30",
+     "title": "The skills install by symlink or plugin; the CLI by `npm link`",
+     "status": "accepted, superseded in part by ADR-0011",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0011",
+     "date": "2026-09-30",
+     "title": "The repo is a Claude Code plugin, and the skills run the CLI inside it",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0012",
+     "date": "2026-09-30",
+     "title": "The approval stamp is `approval.json`, hashing the script's raw bytes",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0013",
+     "date": "2026-09-30",
+     "title": "The skills find the CLI with `cd -P` and bootstrap it with `cli/setup.sh`",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0014",
+     "date": "2026-09-30",
+     "title": "The look's procedure lives in one file, and waits on `review.md`",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0015",
+     "date": "2026-09-30",
+     "title": "Tests skip capture through a test-only option on `main`",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0016",
+     "date": "2026-09-30",
+     "title": "A state mark's collision is an `overlap`; an edge through a card is a `crossing`",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0017",
+     "date": "2026-09-30",
+     "title": "The CLI reports JSON on stdout, exits 0, 1, 2, 3 or 70, and takes `--pack` by name",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0018",
+     "date": "2026-09-30",
+     "title": "A script sits at `explainers/<slug>/` or `local-data/<slug>/`, and renders by fixed name to `local-data/<slug>/render/<pack>/`",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0019",
+     "date": "2026-09-30",
+     "title": "The page contract is `?bare`, `seek`, `frameKey`, `DATA` and the frame's data attributes",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0020",
+     "date": "2026-09-30",
+     "title": "A style pack is `cli/packs/<name>/pack.json` and its assets, and the player reads these keys",
+     "status": "accepted",
+     "touches": ""
+    },
+    {
+     "number": "ADR-0021",
+     "date": "2026-09-30",
+     "title": "The draft is the script plus a `draft:` block, and Emit validates, moves, then stamps",
+     "status": "accepted",
+     "touches": ""
+    }
+   ],
+   "expected": [
+    {
+     "id": "S1",
+     "name": "npm-link install -> plugin layout (ADR-0011)",
+     "group": "Superseded",
+     "anchors": [
+      "npm link",
+      "npm-link"
+     ]
+    }
+   ],
+   "forbidden": []
+  },
+  "thisisme@live": {
+   "project": "thisisme",
+   "as_of": "2026-08-25",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "off-script",
+     "start": "2026-07-27",
+     "end": "2026-07-27",
+     "titles": [
+      "Retrofit ThisIsMe tooling to new process; close OpenSpec; promote PRD"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-07-27",
+     "end": "2026-08-03",
+     "titles": [
+      "ThisIsMe process retrofit — setup and design entry"
+     ]
+    },
+    {
+     "stage": "Design",
+     "start": "2026-08-03",
+     "end": "2026-08-17",
+     "titles": [
+      "Design phase complete: Cool Graphite direction chosen, process corrected",
+      "Run wayfinder map for ThisIsMe v0 decision phase"
+     ]
+    },
+    {
+     "stage": "Build",
+     "start": "2026-08-17",
+     "end": "2026-08-17",
+     "titles": [
+      "Document Cool Graphite v0 design direction and scope",
+      "Resolved storage, rate-limit identity, and retention for thisisme"
+     ]
+    },
+    {
+     "stage": "Plan",
+     "start": "2026-08-17",
+     "end": "2026-08-25",
+     "titles": [
+      "Lock decline taxonomy for assessment tool",
+      "Grilling ticket #6 — resume artifact through 8 decision points",
+      "Paused schema ticket, inverted to content-first ordering"
+     ]
+    }
+   ],
+   "adrs": [],
+   "note": "No ADRs under docs/adr (build/docs/adr is not read); the titles state the changes (ADR-0035 decision 4).",
+   "expected": [
+    {
+     "id": "S1",
+     "name": "OpenSpec closed",
+     "group": "Superseded",
+     "anchors": [
+      "openspec"
+     ]
+    },
+    {
+     "id": "S2",
+     "name": "schema-first ordering inverted to content-first",
+     "group": "Superseded",
+     "anchors": [
+      "content-first",
+      "content first"
+     ]
+    }
+   ],
+   "forbidden": []
+  },
+  "skills-playground@live": {
+   "project": "skills-playground",
+   "as_of": "2026-11-13",
+   "stages": [
+    "Ideate",
+    "Design",
+    "Plan",
+    "Build",
+    "Release"
+   ],
+   "runs": [
+    {
+     "stage": "Ideate",
+     "start": "2026-09-23",
+     "end": "2026-09-23",
+     "titles": []
+    },
+    {
+     "stage": "off-script",
+     "start": "2026-09-23",
+     "end": "2026-11-13",
+     "titles": [
+      "Build pm-doc-or-deck skill with alpha run on ODE homework deck",
+      "Rebuilt ARPA pitch deck: diagnosis and PR/FAQ",
+      "Intake and story core for GRACE agent workflows pitch",
+      "Create and refine Amazon 6-pager narrative for GRACE platform",
+      "Analyze and improve 6 mods, integrate into dempsey-skills",
+      "Debug and extend Track-Progress mod for Claude Desktop's plan tools",
+      "/detox audit: connectors culled, CLAUDE.md restructured, process docs synced",
+      "Consolidated project templates and process master"
+     ]
+    }
+   ],
+   "adrs": [],
+   "note": "No ADRs, no supersession wording: Superseded must be []. The empty anchor matches every line in its group.",
+   "expected": [],
+   "forbidden": [
+    {
+     "anchor": "",
+     "group": "Superseded"
+    }
+   ]
+  }
+ }
+}

@@ -66,14 +66,14 @@ def parse(raw):
     return json.loads(re.sub(r"^```(json)?\s*|\s*```$", "", raw.strip()))
 
 
-def groups_of(out):
+def groups_of(out, names=BOUNDS):
     """The three bounded groups, normalised. A group that is missing, null or
     not a list reads as empty here so a malformed shape can be *judged*
     rather than raise (ticket #77) — `bounded` is what then rejects it. The
     common invited shape is {"Reversed": null} for "nothing reversed"; the
     contract says [], and null is off-contract, not a synonym."""
     groups = {}
-    for g in BOUNDS:
+    for g in names:
         v = out.get(g)
         groups[g] = [norm(l) for l in v] if isinstance(v, list) else []
     return groups
@@ -141,6 +141,151 @@ def contract(runs, out):
             "bounded": bounded, "ok": ok}, detail
 
 
+# --- status-v2 (ADR-0035, #73, #95): Standing / Superseded / Now over the
+# run ledger plus the project's ADR headers. v1 above stays as the record.
+
+BOUNDS_V2 = {"Standing": (3, 8), "Superseded": (0, 6), "Now": (1, 3)}
+ADR_NUM = re.compile(r"\badr[- ]?0*(\d+)\b")
+
+
+def contract_v2(runs, adrs, out):
+    """M3–M6, ground-truth-free — the status-v2 write-time gate (#96 imports
+    this; no second implementation). M3: a line shares ≥ TRACE_WORDS content
+    words with the ledger, or with ledger + ADR titles while naming an ADR
+    number; every number it names is in the input. M4: every date is in the
+    ledger span or an ADR's date — Standing/Now need one, Superseded two, in
+    order (order binds Superseded only). M5: unchanged. M6: BOUNDS_V2, every group a list.
+    -> ({untraced, undated, now_ok, bounded, ok}, detail)"""
+    ledger_words = words(" ".join(r["stage"] + " " + " ".join(r["titles"]) for r in runs))
+    adr_words = words(" ".join(a["title"] for a in adrs))
+    numbers = {int(ADR_NUM.search(norm(a["number"]))[1]) for a in adrs}
+    span = (md(runs[0]["start"]), md(runs[-1]["end"]))
+    adr_days = {md(a["date"]) for a in adrs if a.get("date")}
+    groups = groups_of(out, BOUNDS_V2)
+    detail, untraced, undated = [], 0, 0
+    for g in BOUNDS_V2:
+        for l in groups[g]:
+            named = {int(n) for n in ADR_NUM.findall(l)}
+            w = words(l)
+            if named - numbers or not (len(w & ledger_words) >= TRACE_WORDS or
+                                       (named and len(w & (ledger_words | adr_words)) >= TRACE_WORDS)):
+                untraced += 1; detail.append(f"UNTRACED  {g}: {l}")
+            ds = dates_in(l)
+            sup = g == "Superseded"
+            if (len(ds) < (2 if sup else 1) or (sup and ds != sorted(ds))
+                    or not all(span[0] <= d <= span[1] or d in adr_days for d in ds)):
+                undated += 1; detail.append(f"UNDATED   {g}: {l}")
+    cur = runs[-1]
+    now_ok = any(norm(cur["stage"]) in l and md(cur["start"]) in dates_in(l) for l in groups["Now"])
+    bounded = all(isinstance(out.get(g), list) and lo <= len(out[g]) <= hi
+                  for g, (lo, hi) in BOUNDS_V2.items())
+    ok = untraced == 0 and undated == 0 and now_ok and bounded
+    return {"untraced": untraced, "undated": undated, "now_ok": now_ok,
+            "bounded": bounded, "ok": ok}, detail
+
+
+def _hits(case, out):
+    """Expected fact id -> the groups its anchors land in."""
+    groups = groups_of(out, BOUNDS_V2)
+    return {f["id"]: {g for g in BOUNDS_V2 for l in groups[g]
+                      if any(norm(a) in l for a in f["anchors"])} for f in case["expected"]}
+
+
+def score_v2(case, out):
+    """M1–M6 for one case. M1: ≥ RECALL_FLOOR of facts in the right group
+    and every Superseded fact. M2: lines hitting a forbidden anchor — a
+    string anywhere, or {"anchor", "group"} only in that group (the empty
+    anchor matches every line: that group must be [])."""
+    groups = groups_of(out, BOUNDS_V2)
+    where, detail = _hits(case, out), []
+    hit = sup = 0
+    for f in case["expected"]:
+        if f["group"] in where[f["id"]]:
+            hit += 1; sup += f["group"] == "Superseded"
+            detail.append(f"HIT       {f['group']:10} {f['id']} {f['name']}")
+        elif where[f["id"]]:
+            detail.append(f"MISPLACED {f['group']:10} {f['id']} {f['name']} -> {sorted(where[f['id']])}")
+        else:
+            detail.append(f"MISS      {f['group']:10} {f['id']} {f['name']}")
+    forbidden = 0
+    for g in BOUNDS_V2:
+        for l in groups[g]:
+            for fb in case.get("forbidden", []):
+                a, scope = (fb, g) if isinstance(fb, str) else (fb["anchor"], fb["group"])
+                if scope == g and norm(a) in l:
+                    forbidden += 1; detail.append(f"FORBIDDEN {g}: {l}"); break
+    c, cdetail = contract_v2(case["runs"], case["adrs"], out)
+    n = len(case["expected"])
+    n_sup = sum(f["group"] == "Superseded" for f in case["expected"])
+    ok = hit >= n * RECALL_FLOOR - 1e-9 and sup == n_sup and forbidden == 0 and c["ok"]
+    return {"recall": f"{hit}/{n}", "superseded": f"{sup}/{n_sup}", "forbidden": forbidden,
+            **{k: c[k] for k in ("untraced", "undated", "now_ok", "bounded")},
+            "lines": sum(map(len, groups.values())), "pass": ok}, detail + cdetail
+
+
+def hit_rates(case, outs):
+    """Each expected Superseded fact's hit rate across runs (#73 §5)."""
+    hits = [_hits(case, o) for o in outs]
+    return {f["id"]: f"{sum('Superseded' in h[f['id']] for h in hits)}/{len(outs)}"
+            for f in case["expected"] if f["group"] == "Superseded"}
+
+
+def selfcheck_v2():
+    """status-v2 floors (#73, #95): one rule per assertion."""
+    runs = [{"stage": "Build", "start": "2026-09-08", "end": "2026-09-11",
+             "titles": ["Implement presence history and renamed projects trail"]},
+            {"stage": "Plan", "start": "2026-09-11", "end": "2026-09-16",
+             "titles": ["Charting so-what view, prototype Stage A signals"]}]
+    adrs = [{"number": "ADR-0005", "date": "2026-08-17", "title": "Hook self-instrumentation source and bounds",
+             "status": "superseded by ADR-0033", "touches": ""},
+            {"number": "ADR-0033", "date": "2026-11-15", "title": "Capture runs on Stop, one owning source",
+             "status": "accepted", "touches": "Supersedes: ADR-0005"}]
+    case = {"runs": runs, "adrs": adrs,
+            "expected": [{"id": "S1", "name": "hook", "group": "Superseded", "anchors": ["self-instrument"]},
+                         {"id": "T1", "name": "so-what", "group": "Standing", "anchors": ["so-what"]}],
+            "forbidden": [{"anchor": "so-what", "group": "Superseded"}, "adr-0026"]}
+    good = {"Standing": ["Presence history and renamed projects trail implemented (Sep 8)",
+                         "Charting the so-what view, Stage A signals prototyped (Sep 11)",
+                         "ADR-0033: capture runs on Stop, one owning source per field (Nov 15)"],
+            "Superseded": ["Hook self-instrumentation source (Aug 17) → ADR-0033 capture on Stop (Nov 15)"],
+            "Now": ["Plan, since Sep 11: charting the so-what view"]}
+    base, d = score_v2(case, good)
+    assert base["pass"] and base["recall"] == "2/2" and base["superseded"] == "1/1", (base, d)
+
+    def fails(out, key, **kw):
+        s, d = score_v2({**case, **kw}, out)
+        assert not s["pass"] and s[key] != base[key], (key, s, d)
+
+    swap = lambda g, lines: {**good, g: lines}
+    fails(swap("Superseded", []), "superseded")                       # M1: 100% of Superseded
+    fails(swap("Superseded", good["Superseded"] + ["The so-what view (Sep 11) → nothing (Sep 16)"]),
+          "forbidden")                                                # M2: group-scoped
+    s, _ = score_v2(case, swap("Standing", good["Standing"][:2] + ["Hook self-instrumentation so-what (Aug 17)"]))
+    assert s["forbidden"] == 0, s                                     # ...and only in its group
+    fails(good, "forbidden", forbidden=[{"anchor": "", "group": "Superseded"}])  # empty anchor: Superseded must be []
+    fails(swap("Standing", good["Standing"][:2] + ["ADR-0023 capture runs on Stop (Nov 15)"]),
+          "untraced")                                                 # M3: ADR number not in the input
+    fails(swap("Standing", good["Standing"][:2] + ["Capture runs on Stop, owning source (Nov 15)"]),
+          "untraced")                                                 # M3: ADR-only words need the number
+    fails(swap("Superseded", ["Hook self-instrumentation source (Aug 17) → ADR-0033 capture on Stop"]),
+          "undated")                                                  # M4: Superseded needs two dates
+    fails(swap("Superseded", ["Hook self-instrumentation source (Nov 15) → ADR-0033 capture on Stop (Aug 17)"]),
+          "undated")                                                  # M4: ...in order
+    fails(swap("Standing", good["Standing"][:2] + ["ADR-0033: capture runs on Stop, one owning source (Oct 2)"]),
+          "undated")                                                  # M4: not in span, not an ADR date
+    s, _ = score_v2(case, swap("Standing", good["Standing"][:2] + ["Presence history (Sep 11) and renamed projects trail (Sep 8)"]))
+    assert s["undated"] == 0, s                                       # ...order binds Superseded only
+    fails(swap("Now", ["Build, since Sep 8: presence history trail"]), "now_ok")  # M5
+    fails(swap("Standing", good["Standing"][:2]), "bounded")          # M6: Standing 3-8
+    fails(swap("Now", []), "bounded")                                 # M6: Now 1-3
+    fails({k: v for k, v in good.items() if k != "Superseded"}, "bounded")  # M6: all groups present
+    c, _ = contract_v2(runs, adrs, good)
+    assert c["ok"], c                                                 # the write-time gate, no ground truth
+    stub = {"Standing": [], "Superseded": [], "Now": []}
+    assert not score_v2(case, stub)[0]["pass"]
+    assert hit_rates(case, [good, swap("Superseded", []), good]) == {"S1": "2/3"}
+
+
 def main():
     if sys.argv[1:] == ["--selfcheck"]:
         case = {"runs": [{"stage": "Plan", "start": "2026-08-01", "end": "2026-08-16",
@@ -169,6 +314,7 @@ def main():
         assert dates_in("4 decisions, aug 1–16") == [(8, 1)], dates_in("4 decisions, aug 1–16")
         assert dates_in("August 20 and 3 Sept.") == [(8, 20), (9, 3)]
         assert dates_in("tickets (#18-19), 2026-08-20") == [(8, 20)]
+        selfcheck_v2()
         print("selfcheck ok"); return
     cases = json.loads(Path(sys.argv[1]).read_text())
     case = cases["cases"][sys.argv[2]]

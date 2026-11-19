@@ -44,7 +44,7 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
-from analyze import (DEFAULT_PROJECTS_DIR, MODEL, SKILL, STATUS_VERSION,
+from analyze import (DEFAULT_PROJECTS_DIR, _git, MODEL, SKILL, STATUS_VERSION,
                      audit_title, local_day, session_day)
 from extract import FILE_TOOLS
 from substrate import former_names
@@ -395,6 +395,54 @@ def narrative(conn, project, d):
         ledger_hash(d), STATUS_VERSION, MODEL)
     return {"facts": json.loads(facts), "written_day": local_day(at),
             "model": model, "stale": stale}
+
+
+ADR_FILE = re.compile(r"^(\d{4})-.*\.md$")
+ADR_LINKS = ("Supersedes", "Amends", "Touches")
+
+
+def _plain(s):
+    """Markdown link → its text, emphasis dropped: the header as read."""
+    return re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s).replace("*", "").strip()
+
+
+def adr_header(name, text, added=None):
+    """One ADR's header (ADR-0035 §3): number from the filename, title from
+    the first `# ` line, date and status from the `**Date:** · **Status:**`
+    line or a `status:` frontmatter key, touches as the verbatim
+    Supersedes/Amends/Touches fields. `added` is the date of the commit that
+    added the file, used when the header carries none."""
+    lines = text.splitlines()
+    title = next((l[2:] for l in lines if l.startswith("# ")), "")
+    fields = {}
+    for l in lines:
+        if "**Date:**" in l or "**Status:**" in l:
+            for part in l.split(" · "):
+                m = re.match(r"\*\*(\w+):\*\*\s*(.*)", part.strip())
+                if m:
+                    fields[m[1]] = _plain(m[2])
+            break
+    if not fields.get("Status") and lines[:1] == ["---"]:
+        m = re.search(r"^status:\s*(.+)$", text.split("\n---", 1)[0], re.M)
+        fields["Status"] = m[1].strip() if m else ""
+    return {"number": f"ADR-{ADR_FILE.match(name)[1]}",
+            "date": fields.get("Date") or added,
+            "title": _plain(re.sub(r"^ADR-\d+:\s*", "", title)),
+            "status": fields.get("Status", ""),
+            "touches": " · ".join(f"{k}: {fields[k]}" for k in ADR_LINKS if k in fields)}
+
+
+def adr_headers(root):
+    """The project's ADR headers, by number, from <root>/docs/adr only (the
+    repo convention; #95 keeps thisisme's build/docs/adr out). [] when absent."""
+    d = Path(root) / "docs" / "adr"
+    out = []
+    for f in sorted(d.glob("*.md")) if d.is_dir() else []:
+        if ADR_FILE.match(f.name):
+            added = (_git(d, "log", "--diff-filter=A", "--format=%ad", "--date=short",
+                          "--", f.name) or "").split()
+            out.append(adr_header(f.name, f.read_text(), added[-1] if added else None))
+    return out
 
 
 def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR, claude_md=None):

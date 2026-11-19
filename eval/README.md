@@ -1,3 +1,90 @@
+# eval/ — the status-v2 regression set (ADR-0035, #73)
+
+**Frozen 2026-11-19** (#95), **before any `status-v2` prompt was written**.
+Design settled in #73. Any edit to the `status-v2` prompt or its model pin
+runs this first and lands only on ACCEPT. The v1 set below is kept as the
+record, and it gates `status-v1` until #96 retires it.
+
+## What is scored
+
+The input is **the run ledger plus the project's ADR headers** (ADR-0035 §3),
+read by `cli/how.py`: `ledger()` and `adr_headers(root)`. Each header has a
+number, a date (from the header, else from the commit that added the file), a
+title, a status line, and `touches` (the Supersedes/Amends/Touches fields,
+verbatim). Only `<root>/docs/adr` is read. Five cases, in
+`status_v2_cases.json`:
+
+| case | runs | ADRs | Now | expected |
+| --- | --- | --- | --- | --- |
+| hindsight@live | 10 | 39 | Plan since Nov 13 | Superseded: so-what view dropped (ADR-0026); hook self-instrumentation → ADR-0033. `so-what` forbidden in Standing |
+| hindsight@2026-09-15 | 2 | 25 | Plan since Sep 11 | Standing: the so-what view. Forbidden anywhere: `adr-0026`, `not built`, `so-what (view) (is) dropped`; `so-what` forbidden in Superseded (a bare `dropped` cannot be: ADR-0006's title says the why-view is dropped) |
+| explainer@live | 8 | 21 | Build since Sep 30 | Superseded: npm-link install → plugin layout (ADR-0011) |
+| thisisme@live | 5 | 0 | Plan since Aug 17 | Superseded from titles alone: OpenSpec closed; schema ordering inverted to content-first |
+| skills-playground@live | 2 | 0 | off-script since Sep 23 | Superseded must be `[]` |
+
+**How they were cut.** The live cases come from a migrated copy of the live
+store, with ADR headers read from each project's folder after hindsight's
+status-line backfill (0006 amended by 0010; 0021–0025 dropped by 0026).
+
+`hindsight@2026-09-15` re-runs `run_ledger` over the trail up to the cut day.
+Its ADR headers are read from git at `6b6d473`, the last commit on that day.
+A session with events after the cut keeps those events but loses its title,
+because the title was written after the session ended. ("Closed map #18 after
+Stage B evaluation" ran into 09-16.)
+
+thisisme keeps 11 ADRs under `build/docs/adr`. They are not read, so it stays
+the no-ADR, title-stated case that #73 resolved.
+
+**Output contract:**
+
+```json
+{"Standing": ["…"], "Superseded": ["…"], "Now": ["…"]}
+```
+
+## Metrics and floors (fixed before any prompt)
+
+Per case, from `score.py` `score_v2`. M3 to M6 are `contract_v2`, the
+write-time gate #96 imports.
+
+| # | Metric | Floor |
+| --- | --- | --- |
+| M1 | Recall: expected facts whose anchor lands in the right group | ≥ 80% of facts, and **100% of Superseded facts** |
+| M2 | Forbidden: lines hitting a forbidden anchor. A string counts in any group; `{"anchor", "group"}` counts only in its group. The empty anchor matches every line, so `{"anchor": "", "group": "Superseded"}` means Superseded must be `[]` | 0 |
+| M3 | Untraced: a line shares < 2 content words with the ledger's stages and titles. Words shared only with ADR titles count when the line names an ADR number. Any ADR number named must exist in the input | 0 |
+| M4 | Undated: every date in a line is in the ledger span or equals an ADR date. Standing and Now lines need ≥ 1 date; Superseded lines need ≥ 2, in order (order is checked on Superseded only) | 0 |
+| M5 | Now: a Now line names the current stage and its start date | required |
+| M6 | Bounded: all three groups are lists; Standing 3–8, Superseded ≤ 6, Now 1–3 | required |
+
+The expected facts are #73's anchors, plus thisisme's two. #73 names no
+thisisme facts, only "the titles state the changes", so its pair is carried
+over from the v1 set's thisisme Reversed facts (OpenSpec closed; ordering
+inverted). For most cases M1 means only the Superseded half. Standing coverage
+is not measured.
+
+Anchors are OR-substrings and cannot require both sides of a supersession. A
+Superseded line that names only the old side still needs two dates (M4) and a
+trace (M3), so it cannot be a bare mention.
+
+**ACCEPT** needs three consecutive rounds, each passing all five cases on
+`claude-haiku-4-5-20251001` (15 calls). The runner also reports each
+Superseded fact's hit rate across the rounds. Wording drift is not floored.
+Escalate one model tier only after two prompt iterations fail ACCEPT, and
+record the failing run's tag.
+
+```sh
+python3 eval/score.py --selfcheck                         # v1 and v2 floors
+python3 eval/run_v2.py cli/prompts/status-v2.txt <tag>    # 3 rounds × 5 cases
+```
+
+Outputs go to `local-data/eval/runs/<tag>/r1..r3/` (untracked).
+
+**Calibration.** An empty stub card fails every case (`cli/test_how.py`
+`StatusV2Cases`). A hand-written correct card for hindsight@live passes, with
+7 lines and 2/2 Superseded, so the floors can be reached. No model output
+existed when the set was frozen.
+
+---
+
 # eval/ — the status-narrative regression set (ADR-0012)
 
 **Frozen 2026-08-28** (ticket [#67](../background/tickets/067-status-narrative-frozen-eval-set-and-threshold.md)),

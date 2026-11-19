@@ -507,5 +507,102 @@ class Narrative(unittest.TestCase):
                             how.ledger_hash({**self.d, "runs": changed}))
 
 
+
+
+HINDSIGHT_ADR = """# ADR-0033: Capture runs on `Stop`
+
+**Date:** 2026-11-15 · **Status:** accepted, amended by [ADR-0039](0039-x.md) · **Supersedes:** ADR-0005 · **Amends:** ADR-0001, ADR-0020 · **Decides:** issue #68
+
+## Context
+"""
+FRONTMATTER_ADR = """---
+status: accepted, superseded in part by ADR-0011
+---
+
+# The skills install by symlink or plugin
+
+Body.
+"""
+
+
+class AdrHeaders(unittest.TestCase):
+    """ADR-0035 §3: the status-v2 input's second half, read mechanically —
+    number, date (header, else the commit that added the file), title,
+    status line and touches/amends, from <root>/docs/adr only (#95)."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / "docs" / "adr").mkdir(parents=True)
+
+    def write(self, name, text):
+        (self.root / "docs" / "adr" / name).write_text(text)
+
+    def git(self, *args):
+        import subprocess
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t",
+                        *args], check=True, capture_output=True,
+                       env={**os.environ, "GIT_AUTHOR_DATE": "2026-09-26T12:00:00",
+                            "GIT_COMMITTER_DATE": "2026-09-26T12:00:00"})
+
+    def test_bold_header_line(self):
+        self.write("0033-capture-on-stop.md", HINDSIGHT_ADR)
+        self.assertEqual(how.adr_headers(self.root), [{
+            "number": "ADR-0033", "date": "2026-11-15", "title": "Capture runs on `Stop`",
+            "status": "accepted, amended by ADR-0039",
+            "touches": "Supersedes: ADR-0005 · Amends: ADR-0001, ADR-0020"}])
+
+    def test_frontmatter_status_and_date_from_the_adding_commit(self):
+        self.write("0010-the-skills-install.md", FRONTMATTER_ADR)
+        self.git("init", "-q"); self.git("add", "."); self.git("commit", "-qm", "add")
+        self.assertEqual(how.adr_headers(self.root), [{
+            "number": "ADR-0010", "date": "2026-09-26",
+            "title": "The skills install by symlink or plugin",
+            "status": "accepted, superseded in part by ADR-0011", "touches": ""}])
+
+    def test_ordered_by_number_other_files_and_folders_ignored(self):
+        self.write("0002-b.md", "# ADR-0002: B\n\n**Date:** 2026-08-02 · **Status:** accepted\n")
+        self.write("0001-a.md", "# ADR-0001: A\n\n**Date:** 2026-08-01 · **Status:** accepted\n")
+        self.write("README.md", "# not an ADR\n")
+        self.assertEqual([a["number"] for a in how.adr_headers(self.root)], ["ADR-0001", "ADR-0002"])
+        other = Path(tempfile.mkdtemp())  # thisisme's shape: ADRs only under build/
+        (other / "build" / "docs" / "adr").mkdir(parents=True)
+        (other / "build" / "docs" / "adr" / "0001-a.md").write_text("# A\n")
+        self.assertEqual(how.adr_headers(other), [])
+
+
+class StatusV2Cases(unittest.TestCase):
+    """The frozen status-v2 set (#73, #95): five cases, the dated cut leaks
+    nothing later, and a stub card fails the floors before any prompt."""
+
+    def setUp(self):
+        import json
+        import score
+        self.score = score
+        self.cases = json.loads((Path(__file__).resolve().parent.parent / "eval"
+                                 / "status_v2_cases.json").read_text())["cases"]
+
+    def test_the_five_cases(self):
+        self.assertEqual(sorted(self.cases), sorted([
+            "hindsight@live", "hindsight@2026-09-15", "explainer@live",
+            "thisisme@live", "skills-playground@live"]))
+        self.assertEqual([c for c, v in self.cases.items() if not v["adrs"]],
+                         ["thisisme@live", "skills-playground@live"])
+
+    def test_the_cut_leaks_no_later_adr(self):
+        import json
+        c = self.cases["hindsight@2026-09-15"]
+        sent = json.dumps({k: c[k] for k in ("runs", "adrs")})
+        self.assertNotIn("0026", sent)
+        self.assertTrue(all(a["date"] <= c["as_of"] for a in c["adrs"]))
+        self.assertTrue(all(r["end"] <= c["as_of"] for r in c["runs"]))
+        self.assertEqual(c["adrs"][-1]["number"], "ADR-0025")
+
+    def test_a_stub_card_fails_every_case(self):
+        for cid, c in self.cases.items():
+            for stub in ({"Standing": [], "Superseded": [], "Now": []},
+                         {"Standing": ["x"] * 3, "Superseded": [], "Now": ["x"]}):
+                with self.subTest(cid):
+                    self.assertFalse(self.score.score_v2(c, stub)[0]["pass"])
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,7 @@ Contracts: ADR-0039.
 | #92 | closed | de496fa | 2 | 305 tests, 61 s | suite at 2× baseline — next implementer moves tests to cheaper seams |
 | #93 | built, open for human run | 6336548 | 1 | 320 tests, 39 s | tests moved to cheaper seams (61 → 39 s); live install, launchd, ~100 ms budget need a human |
 | #94 | built, open for review | 09924f0 | 1 | 326 tests, 36 s | draft `local-process.md` for review; house master frontmatter edit is the operator's |
+| #96 | parked, not accepted | 8e9b97c on `park/96-status-v2` | 8 eval iterations | 342 tests | status-v2 prompt best clean run 14/15 (`v2-p7-haiku`); the build is done, the bar is the operator's call |
 
 ## Owed
 
@@ -78,6 +79,7 @@ Contracts: ADR-0039.
 - hook isolation (found during #96, 2026-11-19): the operator's user-level hooks reached every `claude -p` call — a plugin's SessionStart text appended a reply suffix that broke a status-v2 output. The call now passes `--settings '{"disableAllHooks": true}'` (`--bare` would also skip hooks but drops subscription auth); a timed-out or failed call logs why. what-eval re-run through it, 20/20 ACCEPT (`what-v3-nohooks`) — ADR? no
 
 ## Blocked
+- #96 (2026-11-19): the status-v2 code, tests and docs are built on local branch `park/96-status-v2` (8e9b97c), off this branch because the prompt has not met ACCEPT. The pieces only land together: the write gate, the ADR-header input and the version switch. Eight eval iterations; the record is in that branch's `eval/README.md`. Runs before `v2-p6-sonnet-nohooks` are void (leaked answers in the prompt, and the hook leak fixed in 23e50f8). A Sonnet escalation was tried and withdrawn: clean runs put Haiku ahead, 14/15 v 10/15. **Operator decision:** clean runs vary more than any one prompt rule moves them, and ACCEPT needs 15/15. Settle whether that bar fits, or whether to run iteration 7 serially (`hindsight@live` timed out twice with five calls in flight; the live pass is serial). Open beside it: `dates_in` reads "Mon D-D" as a second date; issue #96's acceptance line names Haiku.
 
 ## Nits
 - #84: acknowledging a condition-6 row does not stick; the next firing reopens it. The banner's "acknowledge … to close" overpromises until a reset path exists.

@@ -115,6 +115,7 @@ before `v2-p6-sonnet-nohooks`:
 | `v2-p10-haiku` | haiku | 12/15 | serial. p9 plus "search every part of every title; one find does not end the search". thisisme failed r1 (0/2: the title-stated change copied verbatim into Standing and Now) and r2 (OpenSpec); explainer r2 named the "symlink or plugin" half of ADR-0010. Reverted to p9 |
 | `v2-p11-haiku` | haiku | **14/15** | serial, ADR-0040 input and M7. thisisme 6/6 facts; M7 unlisted 0 in all 15 calls; no timeouts. explainer r1 omitted ADR-0010 → ADR-0011: p9's rule forbids an in-force ADR on the replacing side, and ADR-0011 is that side. The rule is wrong, not the model |
 | `v2-p12-haiku` | haiku | 12/15 | serial. p11 with p9's rule fixed: an in-force ADR may be the replacing side only when another ADR's status line names it. Every Superseded fact 3/3 in every case, the first sweep to do so. Failures are Standing and Now: hindsight@live r2 a Standing line saying the so-what view was dropped (M2); dated cut r3 so-what missed from Standing and an untraced Now line; skills-playground r3 Standing empty (M6) |
+| `v2-p13-haiku` | haiku | 13/15 | serial. p12 plus: Standing is never under 3 lines, and a one-run project's titles are its Standing. skills-playground and the dated cut 3/3. hindsight@live r1 a Standing line saying the so-what view was dropped (M2, second sweep running); thisisme r1 OpenSpec missed (a close change, model-judged by ADR-0040) |
 
 **Escalation tried and withdrawn.** Sonnet was pinned after `v2-p4` on
 confounded evidence. Clean runs of the same prompt put Haiku ahead (14 v 10),
@@ -149,7 +150,7 @@ search instruction made it worse (3 misses in 3 rounds against 1).
 earlier clean runs fall to 6–9 /15, because no earlier prompt was asked to list
 the strong changes in hindsight and explainer.
 
-The prompt is left at `v2-p12`. Supersession is no longer the failing part; Standing composition is.
+The prompt is left at `v2-p13`. Supersession is no longer the failing part; Standing composition is.
 
 ---
 

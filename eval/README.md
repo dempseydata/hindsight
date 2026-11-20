@@ -107,21 +107,32 @@ before `v2-p6-sonnet-nohooks`:
 | `v2-p7-haiku` | haiku | **14/15** | best clean run; thisisme r1 dropped a current-run title |
 | `v2-p7-sonnet` | sonnet | 10/15 | npm-link 0/3, one 300 s timeout |
 | `v2-p8-haiku` | haiku | 11/15 | a title-pass rule made Haiku over-eager; reverted |
+| `v2-p7-haiku-serial-a` | haiku | 11/15 | serial, no timeouts. Dated cut: so-what missed from Standing (r1), placed in Superseded (r2); thisisme OpenSpec missed; skills-playground Standing empty (M6) |
+| `v2-p7-haiku-serial-b` | haiku | 14/15 | serial. Dated cut r1: so-what missed from Standing and placed in Superseded |
+| `v2-p9-haiku` | haiku | 12/15 | serial. New rule: an in-force ADR is Standing and never on either side of a Superseded arrow. Dated cut passed r1 and r3; r2 timed out at 300 s with one call in flight. thisisme content-first missed (r1); explainer r2 Now gave a wrong start date (M5) |
 
 **Escalation tried and withdrawn.** Sonnet was pinned after `v2-p4` on
 confounded evidence. Clean runs of the same prompt put Haiku ahead (14 v 10),
 so the pin stays on Haiku.
 
-**Open for the operator.** Clean runs vary by more than any single prompt
-rule moves them, and ACCEPT needs all 15 calls. At a 1-in-15 failure rate
-that sweep is about a one-in-three draw. Whether the bar fits this model is
-the operator's call. Two eval-harness questions are also open:
+**Operator decision (2026-11-20): the bar stays at 15/15.** Two more serial
+sweeps of `v2-p7` (above) put it at 39/45 across three sweeps, about a
+1-in-8 chance of a clean sweep. The failures are not noise. Half fall on
+`hindsight@2026-09-15`, where Haiku treats a decision still in force at the
+cut as superseded, or leaves it out of Standing. M2 fired twice, so a split
+bar (M1 by hit rate, M2–M6 strict) would not have accepted `v2-p7` either.
+The runner is now serial, like the live pass. `v2-p9`'s serial timeout shows
+concurrency was not the whole cause: the 300 s limit (`CALL_TIMEOUT`, shared
+with the live pass) can still be hit. Still open: `dates_in` reads "Mon D-D"
+as a second date.
 
-- `hindsight@live` timed out at 300 s twice with five calls in flight. The
-  live pass is serial.
-- `dates_in` reads "Mon D-D" as a second date.
+`v2-p9` is kept although its sweep scored lower than `v2-p7`'s mean. The new
+rule fixed the dated cut in both calls that completed (p7 failed it in 3 of 9).
+The remaining failures fall on cases the rule cannot reach: thisisme has no
+ADRs, and the explainer Now date is unrelated. One sweep cannot separate 12 from
+p7's 13 on average.
 
-The prompt is left at `v2-p7`.
+The prompt is left at `v2-p9`.
 
 ---
 

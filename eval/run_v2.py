@@ -9,7 +9,6 @@ case passing in all three rounds (15 calls).
 """
 import json
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -42,8 +41,8 @@ def main():
     for n in range(1, ROUNDS + 1):
         out_dir = REPO / "local-data" / "eval" / "runs" / tag / f"r{n}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        with ThreadPoolExecutor(5) as ex:
-            results = list(ex.map(lambda c: run_case(prompt, c, out_dir, model), CASES["cases"]))
+        # serial, like the live pass: five calls in flight timed out at 300 s
+        results = [run_case(prompt, c, out_dir, model) for c in CASES["cases"]]
         for cid, out, s, detail in results:
             print(f"== r{n} {cid}"); print("\n".join(detail))
             print("SCORE", " ".join(f"{k}={v}" for k, v in s.items()))

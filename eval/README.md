@@ -110,6 +110,7 @@ before `v2-p6-sonnet-nohooks`:
 | `v2-p7-haiku-serial-a` | haiku | 11/15 | serial, no timeouts. Dated cut: so-what missed from Standing (r1), placed in Superseded (r2); thisisme OpenSpec missed; skills-playground Standing empty (M6) |
 | `v2-p7-haiku-serial-b` | haiku | 14/15 | serial. Dated cut r1: so-what missed from Standing and placed in Superseded |
 | `v2-p9-haiku` | haiku | 12/15 | serial. New rule: an in-force ADR is Standing and never on either side of a Superseded arrow. Dated cut passed r1 and r3; r2 timed out at 300 s with one call in flight. thisisme content-first missed (r1); explainer r2 Now gave a wrong start date (M5) |
+| `v2-p10-haiku` | haiku | 12/15 | serial. p9 plus "search every part of every title; one find does not end the search". thisisme failed r1 (0/2: the title-stated change copied verbatim into Standing and Now) and r2 (OpenSpec); explainer r2 named the "symlink or plugin" half of ADR-0010. Reverted to p9 |
 
 **Escalation tried and withdrawn.** Sonnet was pinned after `v2-p4` on
 confounded evidence. Clean runs of the same prompt put Haiku ahead (14 v 10),
@@ -131,6 +132,12 @@ rule fixed the dated cut in both calls that completed (p7 failed it in 3 of 9).
 The remaining failures fall on cases the rule cannot reach: thisisme has no
 ADRs, and the explainer Now date is unrelated. One sweep cannot separate 12 from
 p7's 13 on average.
+
+**Title-stated supersessions resist prompt rules.** Across the five clean
+Haiku sweeps of p7, p9 and p10, thisisme failed 5 of 15 calls. Every miss is a
+change stated only in a run title, in a project with no ADRs. The prompt already
+names the verbs and has an example almost the same as the missed title. p10's
+search instruction made it worse (3 misses in 3 rounds against 1).
 
 The prompt is left at `v2-p9`.
 

@@ -120,6 +120,9 @@ before `v2-p6-sonnet-nohooks`:
 | `v2-p13-haiku` | haiku | 13/15 | serial. p12 plus: Standing is never under 3 lines, and a one-run project's titles are its Standing. skills-playground and the dated cut 3/3. hindsight@live r1 a Standing line saying the so-what view was dropped (M2); thisisme r1 OpenSpec missed (a close change, model-judged by ADR-0040) |
 | `v2-p13-haiku-b` | haiku | 11/15 | serial, p13 unchanged. thisisme r1 OpenSpec missed; hindsight@live r1 two undated Standing lines (M4); dated cut r1 so-what missed from Standing; explainer r3 "removed fix loop" not listed under Superseded (M7) |
 | `v2-p13-haiku-c` | haiku | 13/15 | serial, p13 unchanged. thisisme r3 OpenSpec missed; explainer r3 omitted ADR-0010 → ADR-0011 |
+| `v2-p14-haiku-a` | haiku | 13/15 | serial, ADR-0041 input. Dated cut r1 so-what placed in Now, not Standing; thisisme r1 OpenSpec missed (M7 unlisted, as ADR-0041 expected) |
+| `v2-p14-haiku-b` | haiku | 13/15 | serial, p14 unchanged. explainer r2 omitted ADR-0010 → ADR-0011; hindsight@live r3 a Standing line saying the so-what view was dropped (M2) |
+| `v2-p14-haiku-c` | haiku | 14/15 | serial, p14 unchanged. explainer r3 omitted ADR-0010 → ADR-0011 |
 
 **Escalation tried and withdrawn.** Sonnet was pinned after `v2-p4` on
 confounded evidence. Clean runs of the same prompt put Haiku ahead (14 v 10),
@@ -173,7 +176,13 @@ inquiry, or no thing named) is a mandatory change like the strong verbs, and bin
 set that leaves exactly "close OpenSpec". The prompt (`v2-p14`) drops the close judgement. No case,
 anchor or floor moved.
 
-The prompt is left at `v2-p14`, awaiting three sweeps.
+**`v2-p14` pooled: 40/45 → ACCEPT** (13 + 13 + 14). Superseded facts across the 9 calls per case:
+hindsight 9/9 and 9/9, thisisme OpenSpec 8/9 (from 6/9 under p13) and content-first 9/9,
+explainer ADR-0010 → ADR-0011 7/9. The five failures are the known minority ones: explainer's
+ADR-0011 twice, OpenSpec once, the so-what view placed wrongly once in Now and once in a
+Standing line (M2). No timeouts.
+
+The prompt is accepted at `v2-p14`.
 
 ---
 

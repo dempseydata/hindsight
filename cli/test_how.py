@@ -585,8 +585,8 @@ class AdrHeaders(unittest.TestCase):
 
 
 class TitleChanges(unittest.TestCase):
-    """ADR-0040: title-stated changes found mechanically, over the frozen
-    set's real titles."""
+    """ADR-0040, amended by ADR-0041: title-stated changes found mechanically,
+    over the frozen set's real titles."""
 
     def setUp(self):
         import json
@@ -594,20 +594,31 @@ class TitleChanges(unittest.TestCase):
         self.changes = score.title_changes
         cases = json.loads((Path(__file__).resolve().parent.parent / "eval"
                             / "status_v2_cases.json").read_text())["cases"]
-        self.found = lambda cid: [(c["kind"], c["part"]) for c in self.changes(cases[cid]["runs"])]
+        self.found = lambda cid: [c["part"] for c in self.changes(cases[cid]["runs"])]
+        self.of = lambda *titles: [c["part"] for c in self.changes(
+            [{"stage": "Build", "start": "2026-01-02", "end": "2026-01-02", "titles": list(titles)}])]
 
     def test_a_mixed_title_splits_into_parts(self):
         self.assertEqual(self.found("thisisme@live"), [
-            ("close", "close OpenSpec"), ("strong", "inverted to content-first ordering")])
+            "close OpenSpec", "inverted to content-first ordering"])
 
-    def test_close_on_finished_work_is_not_a_change(self):
-        closes = [p for k, p in self.found("hindsight@live") if k == "close"]
-        self.assertTrue(closes)
-        for p in closes:
-            self.assertNotRegex(p.lower(), r"\b(tickets?|maps?|issues?|phases?)\b|#\d")
+    def test_a_close_of_a_thing_is_the_only_close_in_the_frozen_set(self):
+        closes = [p for cid in ("hindsight@live", "hindsight@2026-09-15", "explainer@live",
+                                "thisisme@live", "skills-playground@live")
+                  for p in self.found(cid) if "clos" in p.lower()]
+        self.assertEqual(closes, ["close OpenSpec"])
+
+    def test_closing_a_ticket_or_an_inquiry_is_finished_work(self):
+        self.assertEqual(self.of("Close ticket 8", "closed map #18", "Rubric research closes",
+                                 "Grilled and closed: icon look", "Closed palette decision",
+                                 "Restyle close-out: screenshots"), [])
+
+    def test_a_close_naming_no_thing_is_not_a_change(self):
+        self.assertEqual(self.of("Verify the fix, close it"), [])
+        self.assertEqual(self.of("Paused billing, close the team wiki"), ["close the team wiki"])
 
     def test_strong_verbs_in_any_tense(self):
-        self.assertEqual([p for k, p in self.found("hindsight@2026-09-15") if k == "strong"], [
+        self.assertEqual(self.found("hindsight@2026-09-15"), [
             "killed model-only approach (#21)",
             "Kill recurring-dead-end signal after prototype finds no true instances"])
         self.assertEqual(self.found("skills-playground@live"), [])
@@ -621,8 +632,7 @@ class TitleChanges(unittest.TestCase):
         runs = [{"stage": "Plan", "start": "2026-03-02", "end": "2026-03-04",
                  "titles": ["Paused billing, inverted to usage-first pricing"]}]
         self.assertEqual(self.changes(runs), [{"start": "2026-03-02", "end": "2026-03-04",
-                                                "part": "inverted to usage-first pricing",
-                                                "kind": "strong"}])
+                                                "part": "inverted to usage-first pricing"}])
 
 
 class StatusV2Cases(unittest.TestCase):

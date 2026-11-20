@@ -1,6 +1,6 @@
 # ADR-0040: Title-stated changes are found mechanically, and the card must carry the strong ones
 
-**Date:** 2026-11-20 · **Status:** accepted · **Amends:** ADR-0035 (§2, §4, §6) · **Decides:** issue #96 (map #59, v2 audit core)
+**Date:** 2026-11-20 · **Status:** accepted; §1 and §3 amended by ADR-0041 · **Amends:** ADR-0035 (§2, §4, §6) · **Decides:** issue #96 (map #59, v2 audit core)
 
 ## Context
 

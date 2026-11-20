@@ -55,7 +55,7 @@ write-time gate #96 imports.
 | M4 | Undated: every date in a line is in the ledger span or equals an ADR date. Standing and Now lines need ≥ 1 date; Superseded lines need ≥ 2, in order (order is checked on Superseded only) | 0 |
 | M5 | Now: a Now line names the current stage and its start date | required |
 | M6 | Bounded: all three groups are lists; Standing 3–8, Superseded ≤ 6, Now 1–3 | required |
-| M7 | Listed (added 2026-11-20, ADR-0040, before `v2-p11`): every strong title change (`title_changes`) shares ≥ 2 content words with a Superseded line | 0 |
+| M7 | Listed (added 2026-11-20, ADR-0040, before `v2-p11`): every title change (`title_changes`; a close of a thing too, ADR-0041) shares ≥ 2 content words with a Superseded line | 0 |
 
 The expected facts are #73's anchors, plus thisisme's two. #73 names no
 thisisme facts, only "the titles state the changes", so its pair is carried
@@ -168,7 +168,12 @@ passes at least 8 of 9), and five singletons spread across M2, M4, M7 and two mi
 is the one failure that repeats. It is a "close" change, which ADR-0040 leaves to the model's
 judgement. Without it the pool is 40/45.
 
-The prompt is left at `v2-p13`.
+**ADR-0041 (2026-11-20).** A close that survives the finished-work filters (a ticket, an
+inquiry, or no thing named) is a mandatory change like the strong verbs, and binds M7. In the frozen
+set that leaves exactly "close OpenSpec". The prompt (`v2-p14`) drops the close judgement. No case,
+anchor or floor moved.
+
+The prompt is left at `v2-p14`, awaiting three sweeps.
 
 ---
 

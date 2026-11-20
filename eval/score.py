@@ -154,21 +154,27 @@ STRONG = re.compile(r"\b(drop(s|ped|ping)?|kill(s|ed|ing)?|retir(e|es|ed|ing)|re
                     r"|replac(e|es|ed|ing)|invert(s|ed|ing)?)\b", re.I)
 CLOSE = re.compile(r"\bclos(e|es|ed|ing)\b", re.I)
 FINISHED = re.compile(r"\b(tickets?|maps?|issues?|phases?)\b|#\d", re.I)
+# ADR-0041: closing an inquiry is finished work too; "grill" is the operator's word for a decision session
+INQUIRY = re.compile(r"\b(research|decisions?|questions?|grill(ed|ing)?)\b|\bclose-out\b", re.I)
+
+
+def _finished_close(part):
+    """ADR-0040/0041: a close on a ticket or an inquiry, or one naming no thing ("close it")."""
+    return (FINISHED.search(part) or INQUIRY.search(part)
+            or not {w for w in words(part) if not CLOSE.fullmatch(w)})
 
 
 def title_changes(runs):
-    """ADR-0040: every title part (split on ";" and ",") that states a change.
-    strong: drop/kill/retire/remove/replace/invert. close: close, unless the
-    part names a ticket, map, issue, phase or #N (finished work).
-    -> [{start, end, part, kind}] in ledger order."""
+    """ADR-0040, amended by ADR-0041: every title part (split on ";" and ",")
+    that states a change — drop/kill/retire/remove/replace/invert, or a close
+    that is not finished work. Every one is mandatory under Superseded (M7).
+    -> [{start, end, part}] in ledger order."""
     found = []
     for r in runs:
         for t in r["titles"]:
             for part in (p.strip() for p in re.split(r"[;,]", t)):
-                kind = ("strong" if STRONG.search(part) else
-                        "close" if CLOSE.search(part) and not FINISHED.search(part) else None)
-                if kind:
-                    found.append({"start": r["start"], "end": r["end"], "part": part, "kind": kind})
+                if STRONG.search(part) or (CLOSE.search(part) and not _finished_close(part)):
+                    found.append({"start": r["start"], "end": r["end"], "part": part})
     return found
 
 
@@ -202,8 +208,7 @@ def contract_v2(runs, adrs, out):
     unlisted = 0
     for c in title_changes(runs):
         w = words(c["part"])
-        if c["kind"] == "strong" and not any(len(w & words(l)) >= min(TRACE_WORDS, len(w))
-                                             for l in groups["Superseded"]):
+        if not any(len(w & words(l)) >= min(TRACE_WORDS, len(w)) for l in groups["Superseded"]):
             unlisted += 1; detail.append(f"UNLISTED  {c['part']}")
     cur = runs[-1]
     now_ok = any(norm(cur["stage"]) in l and md(cur["start"]) in dates_in(l) for l in groups["Now"])
@@ -311,6 +316,10 @@ def selfcheck_v2():
     fails({k: v for k, v in good.items() if k != "Superseded"}, "bounded")  # M6: all groups present
     killed = [{**runs[0], "titles": runs[0]["titles"] + ["killed the polling sync daemon"]}, runs[1]]
     fails(good, "unlisted", runs=killed)                              # M7: a strong change needs its line
+    closed = [{**runs[0], "titles": runs[0]["titles"] + ["close the polling sync daemon"]}, runs[1]]
+    fails(good, "unlisted", runs=closed)                              # ADR-0041: so does a close of a thing
+    for t in ("close it", "Sync research closes", "Grilled and closed: sync cadence", "Sync close-out: docs"):
+        assert not title_changes([{**runs[0], "titles": [t]}]), t     # ...but not finished work
     listed = swap("Superseded", good["Superseded"] + ["polling sync daemon (Sep 8) → killed the polling sync daemon (Sep 11)"])
     assert contract_v2(killed, adrs, listed)[0]["ok"], contract_v2(killed, adrs, listed)
     c, _ = contract_v2(runs, adrs, good)

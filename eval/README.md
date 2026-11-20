@@ -113,6 +113,7 @@ before `v2-p6-sonnet-nohooks`:
 | `v2-p7-haiku-serial-b` | haiku | 14/15 | serial. Dated cut r1: so-what missed from Standing and placed in Superseded |
 | `v2-p9-haiku` | haiku | 12/15 | serial. New rule: an in-force ADR is Standing and never on either side of a Superseded arrow. Dated cut passed r1 and r3; r2 timed out at 300 s with one call in flight. thisisme content-first missed (r1); explainer r2 Now gave a wrong start date (M5) |
 | `v2-p10-haiku` | haiku | 12/15 | serial. p9 plus "search every part of every title; one find does not end the search". thisisme failed r1 (0/2: the title-stated change copied verbatim into Standing and Now) and r2 (OpenSpec); explainer r2 named the "symlink or plugin" half of ADR-0010. Reverted to p9 |
+| `v2-p11-haiku` | haiku | **14/15** | serial, ADR-0040 input and M7. thisisme 6/6 facts; M7 unlisted 0 in all 15 calls; no timeouts. explainer r1 omitted ADR-0010 → ADR-0011: p9's rule forbids an in-force ADR on the replacing side, and ADR-0011 is that side. The rule is wrong, not the model |
 
 **Escalation tried and withdrawn.** Sonnet was pinned after `v2-p4` on
 confounded evidence. Clean runs of the same prompt put Haiku ahead (14 v 10),
@@ -147,7 +148,7 @@ search instruction made it worse (3 misses in 3 rounds against 1).
 earlier clean runs fall to 6–9 /15, because no earlier prompt was asked to list
 the strong changes in hindsight and explainer.
 
-The prompt is left at `v2-p9`.
+The prompt is left at `v2-p11`.
 
 ---
 

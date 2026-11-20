@@ -1,6 +1,6 @@
 # ADR-0035: The status card is a current-state summary, with supersession judged from ADR headers
 
-**Date:** 2026-11-16 · **Status:** accepted · **Amends:** ADR-0012 · **Decides:** issue #64 (map #59, v2 audit core)
+**Date:** 2026-11-16 · **Status:** accepted; §2, §4 and §6 amended by ADR-0040 (proposed) · **Amends:** ADR-0012 · **Decides:** issue #64 (map #59, v2 audit core)
 
 ## Context
 

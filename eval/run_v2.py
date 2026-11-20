@@ -4,8 +4,9 @@ through the pinned model, M1–M6 per case, each Superseded fact's hit rate.
 
 Usage: eval/run_v2.py PROMPT_FILE TAG [MODEL]   (outputs in local-data/eval/runs/TAG/rN/)
 MODEL overrides the pin for a comparison run; ACCEPT counts only on the pin.
-The case's ledger plus ADR headers is appended as JSON. ACCEPT needs every
-case passing in all three rounds (15 calls).
+The case's ledger plus ADR headers is appended as JSON. One run is one sweep;
+ACCEPT needs at least 39 of 45 cases passing across three consecutive sweeps of
+one prompt (eval/README.md), so a single run reports its count, not the verdict.
 """
 import json
 import sys
@@ -53,7 +54,7 @@ def main():
             print("SUPERSEDED", cid, " ".join(f"{k}={v}" for k, v in rates.items()))
     total = ROUNDS * len(CASES["cases"])
     print(f"TOTAL {tag} model={model} cases_passed={passed}/{total}"
-          f" -> {'ACCEPT' if passed == total else 'REJECT'}")
+          f" (one sweep; ACCEPT is >= 39/45 pooled over three)")
 
 
 if __name__ == "__main__":

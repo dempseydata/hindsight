@@ -68,8 +68,10 @@ Anchors are OR-substrings and cannot require both sides of a supersession. A
 Superseded line that names only the old side still needs two dates (M4) and a
 trace (M3), so it cannot be a bare mention.
 
-**ACCEPT** needs three consecutive rounds, each passing all five cases on
-`claude-haiku-4-5-20251001` (15 calls). The runner also reports each
+**ACCEPT** needs **at least 39 of 45 cases passing** across three
+consecutive serial sweeps of one prompt on `claude-haiku-4-5-20251001` (each
+sweep is one `run_v2.py` run: 3 rounds × 5 cases). Until this decision the bar was
+15/15 in a single sweep; see the operator decision below. The runner also reports each
 Superseded fact's hit rate across the rounds. Wording drift is not floored.
 Escalate one model tier only after two prompt iterations fail ACCEPT, and
 record the failing run's tag.
@@ -115,13 +117,23 @@ before `v2-p6-sonnet-nohooks`:
 | `v2-p10-haiku` | haiku | 12/15 | serial. p9 plus "search every part of every title; one find does not end the search". thisisme failed r1 (0/2: the title-stated change copied verbatim into Standing and Now) and r2 (OpenSpec); explainer r2 named the "symlink or plugin" half of ADR-0010. Reverted to p9 |
 | `v2-p11-haiku` | haiku | **14/15** | serial, ADR-0040 input and M7. thisisme 6/6 facts; M7 unlisted 0 in all 15 calls; no timeouts. explainer r1 omitted ADR-0010 → ADR-0011: p9's rule forbids an in-force ADR on the replacing side, and ADR-0011 is that side. The rule is wrong, not the model |
 | `v2-p12-haiku` | haiku | 12/15 | serial. p11 with p9's rule fixed: an in-force ADR may be the replacing side only when another ADR's status line names it. Every Superseded fact 3/3 in every case, the first sweep to do so. Failures are Standing and Now: hindsight@live r2 a Standing line saying the so-what view was dropped (M2); dated cut r3 so-what missed from Standing and an untraced Now line; skills-playground r3 Standing empty (M6) |
-| `v2-p13-haiku` | haiku | 13/15 | serial. p12 plus: Standing is never under 3 lines, and a one-run project's titles are its Standing. skills-playground and the dated cut 3/3. hindsight@live r1 a Standing line saying the so-what view was dropped (M2, second sweep running); thisisme r1 OpenSpec missed (a close change, model-judged by ADR-0040) |
+| `v2-p13-haiku` | haiku | 13/15 | serial. p12 plus: Standing is never under 3 lines, and a one-run project's titles are its Standing. skills-playground and the dated cut 3/3. hindsight@live r1 a Standing line saying the so-what view was dropped (M2); thisisme r1 OpenSpec missed (a close change, model-judged by ADR-0040) |
+| `v2-p13-haiku-b` | haiku | 11/15 | serial, p13 unchanged. thisisme r1 OpenSpec missed; hindsight@live r1 two undated Standing lines (M4); dated cut r1 so-what missed from Standing; explainer r3 "removed fix loop" not listed under Superseded (M7) |
+| `v2-p13-haiku-c` | haiku | 13/15 | serial, p13 unchanged. thisisme r3 OpenSpec missed; explainer r3 omitted ADR-0010 → ADR-0011 |
 
 **Escalation tried and withdrawn.** Sonnet was pinned after `v2-p4` on
 confounded evidence. Clean runs of the same prompt put Haiku ahead (14 v 10),
 so the pin stays on Haiku.
 
-**Operator decision (2026-11-20): the bar stays at 15/15.** Two more serial
+**Operator decision (2026-11-20, later): ACCEPT is ≥ 39/45 pooled over three
+sweeps.** The how-view is an approximation for the operator, not an
+auditable record (ADR-0012's posture). The goal is a card that is right
+about 90% of the time. An all-or-nothing 15/15 passes a true-90% prompt only
+21% of the time. ≥ 39/45 passes it 84% of the time, and passes a true-80%
+prompt 18% of the time. The cases, anchors, floors and the write-time gate
+(M3–M7) do not change. The earlier decision is kept below as the record.
+
+**Operator decision (2026-11-20, superseded the same day): the bar stays at 15/15.** Two more serial
 sweeps of `v2-p7` (above) put it at 39/45 across three sweeps, about a
 1-in-8 chance of a clean sweep. The failures are not noise. Half fall on
 `hindsight@2026-09-15`, where Haiku treats a decision still in force at the
@@ -150,7 +162,13 @@ search instruction made it worse (3 misses in 3 rounds against 1).
 earlier clean runs fall to 6–9 /15, because no earlier prompt was asked to list
 the strong changes in hindsight and explainer.
 
-The prompt is left at `v2-p13`. Supersession is no longer the failing part; Standing composition is.
+**`v2-p13` pooled: 37/45 → REJECT** (13 + 11 + 13; the bar is 39). Eight
+failed calls: thisisme's OpenSpec close 3 (it passes 6 of 9 calls; every other Superseded fact
+passes at least 8 of 9), and five singletons spread across M2, M4, M7 and two misses. OpenSpec
+is the one failure that repeats. It is a "close" change, which ADR-0040 leaves to the model's
+judgement. Without it the pool is 40/45.
+
+The prompt is left at `v2-p13`.
 
 ---
 

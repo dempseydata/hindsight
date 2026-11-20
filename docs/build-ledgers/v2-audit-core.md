@@ -17,9 +17,9 @@ Contracts: ADR-0039.
 | #89 | closed | dd5fb93 | 1 | 294 tests, 56 s | |
 | #90 | closed | 16701b1 | 1 | 298 tests, 55 s | where-view wording: optional human look |
 | #92 | closed | de496fa | 2 | 305 tests, 61 s | suite at 2× baseline — next implementer moves tests to cheaper seams |
-| #93 | built, open for human run | 6336548 | 1 | 320 tests, 39 s | tests moved to cheaper seams (61 → 39 s); live install, launchd, ~100 ms budget need a human |
+| #93 | built, open for human run | 6336548, dc3e497 | 2 | 333 tests, 23 s | live run 2026-11-20 on the 2.0.0 install: jobs-loaded passes; `Path.as_uri` cost ~60 ms, fixed (184 → 132 ms); re-point and kickstart pending the v10 upgrade |
 | #94 | built, open for review | 09924f0 | 1 | 326 tests, 36 s | draft `local-process.md` for review; house master frontmatter edit is the operator's |
-| #96 | parked, not accepted | 8e9b97c on `park/96-status-v2` | 8 eval iterations | 342 tests | status-v2 prompt best clean run 14/15 (`v2-p7-haiku`); the build is done, the bar is the operator's call |
+| #96 | closed | merged in a654c55 (#99) | prompt v2-p14 | — | status-v2 accepted at 40/45 over three sweeps; ACCEPT bar set at ≥ 39/45 in 9b7b022 |
 
 ## Owed
 
@@ -79,7 +79,6 @@ Contracts: ADR-0039.
 - hook isolation (found during #96, 2026-11-19): the operator's user-level hooks reached every `claude -p` call — a plugin's SessionStart text appended a reply suffix that broke a status-v2 output. The call now passes `--settings '{"disableAllHooks": true}'` (`--bare` would also skip hooks but drops subscription auth); a timed-out or failed call logs why. what-eval re-run through it, 20/20 ACCEPT (`what-v3-nohooks`) — ADR? no
 
 ## Blocked
-- #96 (2026-11-19): the status-v2 code, tests and docs are built on local branch `park/96-status-v2` (8e9b97c), off this branch because the prompt has not met ACCEPT. The pieces only land together: the write gate, the ADR-header input and the version switch. Eight eval iterations; the record is in that branch's `eval/README.md`. Runs before `v2-p6-sonnet-nohooks` are void (leaked answers in the prompt, and the hook leak fixed in 23e50f8). A Sonnet escalation was tried and withdrawn: clean runs put Haiku ahead, 14/15 v 10/15. **Operator decision:** clean runs vary more than any one prompt rule moves them, and ACCEPT needs 15/15. Settle whether that bar fits, or whether to run iteration 7 serially (`hindsight@live` timed out twice with five calls in flight; the live pass is serial). Open beside it: `dates_in` reads "Mon D-D" as a second date; issue #96's acceptance line names Haiku.
 
 ## Nits
 - #84: acknowledging a condition-6 row does not stick; the next firing reopens it. The banner's "acknowledge … to close" overpromises until a reset path exists.
@@ -113,7 +112,7 @@ Contracts: ADR-0039.
 - #92: a resumed tail is derived alone; a tool call whose result lands in the tail is split across the cut (not probed).
 - #93: a hung `launchctl print` reports "not installed"; the timed-out child is left running.
 - #93: a plain file at `current` is overwritten without a message.
-- #93: a healthy run takes ~0.2 s including Python startup, against the ~100 ms budget.
+- #93: a healthy run takes ~0.13 s including Python startup (36 ms bare), against the ~100 ms budget; the rest above startup is not yet broken down.
 - #94: a dangling `local-process.md` symlink silently falls back to the master.
 - #94: the source line shows a relative pointer unnormalised (`../..`).
 - #94: house-master errors lack the `line N:` prefix the docstring promises.

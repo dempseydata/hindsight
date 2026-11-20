@@ -8,6 +8,7 @@ record; #96 retired `status-v1` from the live pass.
 ## What is scored
 
 The input is **the run ledger plus the project's ADR headers** (ADR-0035 §3),
+plus the title changes derived from the runs at call time (ADR-0040),
 read by `cli/how.py`: `ledger()` and `adr_headers(root)`. Each header has a
 number, a date (from the header, else from the commit that added the file), a
 title, a status line, and `touches` (the Supersedes/Amends/Touches fields,
@@ -43,7 +44,7 @@ the no-ADR, title-stated case that #73 resolved.
 
 ## Metrics and floors (fixed before any prompt)
 
-Per case, from `score.py` `score_v2`. M3 to M6 are `contract_v2`, the
+Per case, from `score.py` `score_v2`. M3 to M7 are `contract_v2`, the
 write-time gate #96 imports.
 
 | # | Metric | Floor |
@@ -54,6 +55,7 @@ write-time gate #96 imports.
 | M4 | Undated: every date in a line is in the ledger span or equals an ADR date. Standing and Now lines need ≥ 1 date; Superseded lines need ≥ 2, in order (order is checked on Superseded only) | 0 |
 | M5 | Now: a Now line names the current stage and its start date | required |
 | M6 | Bounded: all three groups are lists; Standing 3–8, Superseded ≤ 6, Now 1–3 | required |
+| M7 | Listed (added 2026-11-20, ADR-0040, before `v2-p11`): every strong title change (`title_changes`) shares ≥ 2 content words with a Superseded line | 0 |
 
 The expected facts are #73's anchors, plus thisisme's two. #73 names no
 thisisme facts, only "the titles state the changes", so its pair is carried
@@ -138,6 +140,12 @@ Haiku sweeps of p7, p9 and p10, thisisme failed 5 of 15 calls. Every miss is a
 change stated only in a run title, in a project with no ADRs. The prompt already
 names the verbs and has an example almost the same as the missed title. p10's
 search instruction made it worse (3 misses in 3 rounds against 1).
+
+**ADR-0040 (2026-11-20).** Title-stated changes are now found by code
+(`score.title_changes`) and sent as `changes`. M7 joins the floors before
+`v2-p11`. No case or anchor moved. Re-scored under M7 for the record only, the
+earlier clean runs fall to 6–9 /15, because no earlier prompt was asked to list
+the strong changes in hindsight and explainer.
 
 The prompt is left at `v2-p9`.
 

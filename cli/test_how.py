@@ -584,6 +584,47 @@ class AdrHeaders(unittest.TestCase):
         self.assertEqual(how.adr_headers(other), [])
 
 
+class TitleChanges(unittest.TestCase):
+    """ADR-0040: title-stated changes found mechanically, over the frozen
+    set's real titles."""
+
+    def setUp(self):
+        import json
+        import score
+        self.changes = score.title_changes
+        cases = json.loads((Path(__file__).resolve().parent.parent / "eval"
+                            / "status_v2_cases.json").read_text())["cases"]
+        self.found = lambda cid: [(c["kind"], c["part"]) for c in self.changes(cases[cid]["runs"])]
+
+    def test_a_mixed_title_splits_into_parts(self):
+        self.assertEqual(self.found("thisisme@live"), [
+            ("close", "close OpenSpec"), ("strong", "inverted to content-first ordering")])
+
+    def test_close_on_finished_work_is_not_a_change(self):
+        closes = [p for k, p in self.found("hindsight@live") if k == "close"]
+        self.assertTrue(closes)
+        for p in closes:
+            self.assertNotRegex(p.lower(), r"\b(tickets?|maps?|issues?|phases?)\b|#\d")
+
+    def test_strong_verbs_in_any_tense(self):
+        self.assertEqual([p for k, p in self.found("hindsight@2026-09-15") if k == "strong"], [
+            "killed model-only approach (#21)",
+            "Kill recurring-dead-end signal after prototype finds no true instances"])
+        self.assertEqual(self.found("skills-playground@live"), [])
+
+    def test_a_verb_inside_a_word_is_not_a_change(self):
+        runs = [{"stage": "Build", "start": "2026-01-02", "end": "2026-01-02",
+                 "titles": ["Built skills dropdown; enclosed the dialog"]}]
+        self.assertEqual(self.changes(runs), [])
+
+    def test_a_change_carries_its_runs_dates(self):
+        runs = [{"stage": "Plan", "start": "2026-03-02", "end": "2026-03-04",
+                 "titles": ["Paused billing, inverted to usage-first pricing"]}]
+        self.assertEqual(self.changes(runs), [{"start": "2026-03-02", "end": "2026-03-04",
+                                                "part": "inverted to usage-first pricing",
+                                                "kind": "strong"}])
+
+
 class StatusV2Cases(unittest.TestCase):
     """The frozen status-v2 set (#73, #95): five cases, the dated cut leaks
     nothing later, and a stub card fails the floors before any prompt."""

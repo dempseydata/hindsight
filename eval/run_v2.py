@@ -15,7 +15,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "eval"))
 sys.path.insert(0, str(REPO / "cli"))
 import analyze  # noqa: E402  the restricted call: no tools, no repo cwd
-from score import hit_rates, ledger_prompt, parse, score_v2  # noqa: E402
+from score import hit_rates, ledger_prompt, parse, score_v2, title_changes  # noqa: E402
 
 CASES = json.loads((REPO / "eval" / "status_v2_cases.json").read_text())
 ROUNDS = 3
@@ -24,6 +24,7 @@ ROUNDS = 3
 def run_case(prompt, cid, out_dir, model):
     case = CASES["cases"][cid]
     sent = {k: case[k] for k in ("project", "as_of", "stages", "runs", "adrs")}
+    sent["changes"] = title_changes(case["runs"])  # ADR-0040: derived, as in how.ledger
     text = analyze.default_model_runner(ledger_prompt(prompt, sent), model) or ""
     (out_dir / f"{cid}.json").write_text(text)
     try:

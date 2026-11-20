@@ -1,6 +1,6 @@
 # ADR-0040: Title-stated changes are found mechanically, and the card must carry the strong ones
 
-**Date:** 2026-11-20 · **Status:** proposed · **Amends:** ADR-0035 (§2, §4, §6) · **Decides:** issue #96 (map #59, v2 audit core)
+**Date:** 2026-11-20 · **Status:** accepted · **Amends:** ADR-0035 (§2, §4, §6) · **Decides:** issue #96 (map #59, v2 audit core)
 
 ## Context
 
@@ -14,10 +14,10 @@ ADR-0035 §4 leaves a project with no ADRs to take its Superseded lines from tit
 
 ## Decision
 
-1. **`cli/how.py` derives title changes from the run ledger.** It splits each title into parts on `;` and `,`, and matches the closed verb list as whole words in any tense. Each match is a **title change**: its run's dates, the part verbatim, and its kind.
+1. **`eval/score.py` `title_changes` derives title changes from the run ledger.** It lives beside the gate that needs it, since `cli/how.py` imports `analyze`, which imports `score`. It splits each title into parts on `;` and `,`, and matches the closed verb list as whole words in any tense. Each match is a **title change**: its run's dates, the part verbatim, and its kind.
    - **strong**: drop, kill, retire, remove, replace, invert.
    - **close**: close, unless the same part names a ticket, map, issue, phase or `#N`. Such a part is finished work and is not a title change.
-2. **The narrative's input gains `changes` beside `runs` and `adrs`.** They are derived from `runs` at call time, by the same function in the live pass and in `eval/run_v2.py`. The frozen cases stay as they are.
+2. **The narrative's input gains `changes` beside `runs` and `adrs`.** They are derived from `runs` at call time, by the same function in the live pass (`how.ledger`) and in `eval/run_v2.py`. The frozen cases stay as they are.
 3. **Every strong change gets a Superseded line.** A close change gets one only when a thing was abandoned. That judgement stays with the model, under `status-v1`'s existing rule. The prompt replaces its "read every title for these verbs" instruction with "read `changes`".
 4. **The write-time gate gains M7, Listed:** every strong change shares at least two content words with some Superseded line. It is ground-truth-free, because it reads only the input. So it joins `contract_v2` and binds the eval and the live pass alike. A card that drops a strong change is refused, and the next run retries.
 5. **The eval floors gain M7 before the next prompt is written.** No case, anchor or existing floor moves. Earlier runs are re-scored under M7 for the record only.
@@ -40,4 +40,4 @@ This amends ADR-0035 §2: a title-stated change is now found by code, not by the
 - Two failures are left untouched:
   - the explainer case naming the wrong half of ADR-0010's title (2 of 15 Haiku calls);
   - the 300 s `CALL_TIMEOUT`, hit once with a single call in flight.
-- CONTEXT.md: **Superseded** changes ("judged by the narrative" covers ADR-drawn lines only), and **Title change** is added. Both wait until this ADR is accepted.
+- CONTEXT.md: **Superseded** changes ("judged by the narrative" covers ADR-drawn lines only), and **Title change** is added.

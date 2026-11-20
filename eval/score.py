@@ -148,6 +148,30 @@ BOUNDS_V2 = {"Standing": (3, 8), "Superseded": (0, 6), "Now": (1, 3)}
 ADR_NUM = re.compile(r"\badr[- ]?0*(\d+)\b")
 
 
+# ADR-0040: the closed verb list, as whole words in any tense. Here, not in
+# cli/how.py, because the gate needs it and how imports analyze imports score.
+STRONG = re.compile(r"\b(drop(s|ped|ping)?|kill(s|ed|ing)?|retir(e|es|ed|ing)|remov(e|es|ed|ing)"
+                    r"|replac(e|es|ed|ing)|invert(s|ed|ing)?)\b", re.I)
+CLOSE = re.compile(r"\bclos(e|es|ed|ing)\b", re.I)
+FINISHED = re.compile(r"\b(tickets?|maps?|issues?|phases?)\b|#\d", re.I)
+
+
+def title_changes(runs):
+    """ADR-0040: every title part (split on ";" and ",") that states a change.
+    strong: drop/kill/retire/remove/replace/invert. close: close, unless the
+    part names a ticket, map, issue, phase or #N (finished work).
+    -> [{start, end, part, kind}] in ledger order."""
+    found = []
+    for r in runs:
+        for t in r["titles"]:
+            for part in (p.strip() for p in re.split(r"[;,]", t)):
+                kind = ("strong" if STRONG.search(part) else
+                        "close" if CLOSE.search(part) and not FINISHED.search(part) else None)
+                if kind:
+                    found.append({"start": r["start"], "end": r["end"], "part": part, "kind": kind})
+    return found
+
+
 def contract_v2(runs, adrs, out):
     """M3–M6, ground-truth-free — the status-v2 write-time gate (#96 imports
     this; no second implementation). M3: a line shares ≥ TRACE_WORDS content
@@ -175,12 +199,18 @@ def contract_v2(runs, adrs, out):
             if (len(ds) < (2 if sup else 1) or (sup and ds != sorted(ds))
                     or not all(span[0] <= d <= span[1] or d in adr_days for d in ds)):
                 undated += 1; detail.append(f"UNDATED   {g}: {l}")
+    unlisted = 0
+    for c in title_changes(runs):
+        w = words(c["part"])
+        if c["kind"] == "strong" and not any(len(w & words(l)) >= min(TRACE_WORDS, len(w))
+                                             for l in groups["Superseded"]):
+            unlisted += 1; detail.append(f"UNLISTED  {c['part']}")
     cur = runs[-1]
     now_ok = any(norm(cur["stage"]) in l and md(cur["start"]) in dates_in(l) for l in groups["Now"])
     bounded = all(isinstance(out.get(g), list) and lo <= len(out[g]) <= hi
                   for g, (lo, hi) in BOUNDS_V2.items())
-    ok = untraced == 0 and undated == 0 and now_ok and bounded
-    return {"untraced": untraced, "undated": undated, "now_ok": now_ok,
+    ok = untraced == 0 and undated == 0 and unlisted == 0 and now_ok and bounded
+    return {"untraced": untraced, "undated": undated, "unlisted": unlisted, "now_ok": now_ok,
             "bounded": bounded, "ok": ok}, detail
 
 
@@ -219,7 +249,7 @@ def score_v2(case, out):
     n_sup = sum(f["group"] == "Superseded" for f in case["expected"])
     ok = hit >= n * RECALL_FLOOR - 1e-9 and sup == n_sup and forbidden == 0 and c["ok"]
     return {"recall": f"{hit}/{n}", "superseded": f"{sup}/{n_sup}", "forbidden": forbidden,
-            **{k: c[k] for k in ("untraced", "undated", "now_ok", "bounded")},
+            **{k: c[k] for k in ("untraced", "undated", "unlisted", "now_ok", "bounded")},
             "lines": sum(map(len, groups.values())), "pass": ok}, detail + cdetail
 
 
@@ -279,6 +309,10 @@ def selfcheck_v2():
     fails(swap("Standing", good["Standing"][:2]), "bounded")          # M6: Standing 3-8
     fails(swap("Now", []), "bounded")                                 # M6: Now 1-3
     fails({k: v for k, v in good.items() if k != "Superseded"}, "bounded")  # M6: all groups present
+    killed = [{**runs[0], "titles": runs[0]["titles"] + ["killed the polling sync daemon"]}, runs[1]]
+    fails(good, "unlisted", runs=killed)                              # M7: a strong change needs its line
+    listed = swap("Superseded", good["Superseded"] + ["polling sync daemon (Sep 8) → killed the polling sync daemon (Sep 11)"])
+    assert contract_v2(killed, adrs, listed)[0]["ok"], contract_v2(killed, adrs, listed)
     c, _ = contract_v2(runs, adrs, good)
     assert c["ok"], c                                                 # the write-time gate, no ground truth
     stub = {"Standing": [], "Superseded": [], "Now": []}

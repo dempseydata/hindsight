@@ -50,6 +50,7 @@ from pathlib import Path
 from analyze import (DEFAULT_PROJECTS_DIR, _git, MODEL, SKILL, STATUS_VERSION,
                      audit_title, local_day, session_day)
 from extract import FILE_TOOLS
+from score import title_changes  # ADR-0040: shared with the write-time gate
 from substrate import former_names
 
 # commands and skills are one name pool seen through two capture paths
@@ -365,13 +366,13 @@ def run_ledger(trail, sessions, detail=False):
 
 
 def ledger(d):
-    """The narrative's input (ADR-0012, ADR-0035 §3): the run ledger plus the
-    project's ADR headers — the exact object sent and hashed into
+    """The narrative's input (ADR-0012, ADR-0035 §3, ADR-0040): the run ledger,
+    the project's ADR headers and the title changes derived from the runs — the exact object sent and hashed into
     `status_narrative.ledger_hash`, so an edited ADR status line makes the
     stored card stale just as a new run does (#96)."""
     return {"project": d["project"], "as_of": d["runs"][-1]["end"],
             "stages": [s["name"] for s in d["declaration"]["stages"]],
-            "runs": d["runs"], "adrs": d["adrs"]}
+            "runs": d["runs"], "adrs": d["adrs"], "changes": title_changes(d["runs"])}
 
 
 def ledger_hash(d):

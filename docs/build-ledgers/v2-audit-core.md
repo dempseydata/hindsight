@@ -17,8 +17,9 @@ Contracts: ADR-0039.
 | #89 | closed | dd5fb93 | 1 | 294 tests, 56 s | |
 | #90 | closed | 16701b1 | 1 | 298 tests, 55 s | where-view wording: optional human look |
 | #92 | closed | de496fa | 2 | 305 tests, 61 s | suite at 2× baseline — next implementer moves tests to cheaper seams |
-| #93 | built, open for human run | 6336548 | 1 | 320 tests, 39 s | tests moved to cheaper seams (61 → 39 s); live install, launchd, ~100 ms budget need a human |
+| #93 | built, open for human run | 6336548, dc3e497 | 2 | 333 tests, 23 s | live run 2026-11-20 on the 2.0.0 install: jobs-loaded passes; `Path.as_uri` cost ~60 ms, fixed (184 → 132 ms); re-point and kickstart pending the v10 upgrade |
 | #94 | built, open for review | 09924f0 | 1 | 326 tests, 36 s | draft `local-process.md` for review; house master frontmatter edit is the operator's |
+| #96 | closed | merged in a654c55 (#99) | prompt v2-p14 | — | status-v2 accepted at 40/45 over three sweeps; ACCEPT bar set at ≥ 39/45 in 9b7b022 |
 
 ## Owed
 
@@ -111,7 +112,7 @@ Contracts: ADR-0039.
 - #92: a resumed tail is derived alone; a tool call whose result lands in the tail is split across the cut (not probed).
 - #93: a hung `launchctl print` reports "not installed"; the timed-out child is left running.
 - #93: a plain file at `current` is overwritten without a message.
-- #93: a healthy run takes ~0.2 s including Python startup, against the ~100 ms budget.
+- #93: a healthy run takes ~0.13 s including Python startup (36 ms bare), against the ~100 ms budget; the rest above startup is not yet broken down.
 - #94: a dangling `local-process.md` symlink silently falls back to the master.
 - #94: the source line shows a relative pointer unnormalised (`../..`).
 - #94: house-master errors lack the `line N:` prefix the docstring promises.

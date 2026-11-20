@@ -23,6 +23,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote  # not Path.as_uri: it imports urllib.request, ~60 ms
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from home import INGEST, NIGHTLY, domain, home  # noqa: E402
@@ -112,7 +113,7 @@ def check(session):
                                for label in (INGEST, NIGHTLY)):
         return [NOT_INSTALLED]
     out = repoint(Path(os.environ.get("CLAUDE_PLUGIN_ROOT") or ROOT))
-    conn = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=1)
+    conn = sqlite3.connect(f"file:{quote(str(db))}?mode=ro", uri=True, timeout=1)
     try:
         return out + problems(conn, session, datetime.now(timezone.utc))
     except sqlite3.OperationalError:

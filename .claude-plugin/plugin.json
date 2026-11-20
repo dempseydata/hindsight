@@ -1,6 +1,6 @@
 {
   "name": "hindsight",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Local observability over Claude Code history: where tokens went, what was done, how the process ran.",
   "author": {
     "name": "Andrew Dempsey",

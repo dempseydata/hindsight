@@ -483,7 +483,8 @@ class Narrative(unittest.TestCase):
         n = how.narrative(self.conn, "proj", self.d)
         self.assertEqual(n, {"facts": {"Built": ["x"], "Reversed": [], "Now": ["y"]},
                              "written_day": "2026-08-05",
-                             "model": analyze.MODEL, "stale": False})
+                             "model": analyze.MODEL,
+                             "prompt_version": analyze.STATUS_VERSION, "stale": False})
 
     def test_stale_on_any_of_the_three_keys(self):
         h = how.ledger_hash(self.d)
@@ -506,6 +507,167 @@ class Narrative(unittest.TestCase):
         self.assertNotEqual(how.ledger_hash(self.d),
                             how.ledger_hash({**self.d, "runs": changed}))
 
+    def test_adr_status_edit_rekeys_the_narrative(self):
+        """#96, ADR-0035 §3: the ADR headers are the narrative's second input,
+        so editing a status line makes the stored card stale."""
+        adr = self.root / "proj" / "docs" / "adr" / "0001-x.md"
+        adr.parent.mkdir(parents=True)
+        adr.write_text("# ADR-0001: X\n\n**Date:** 2026-08-01 · **Status:** accepted\n")
+        d = how.how_data(self.conn, "proj", self.root)
+        self.assertEqual([a["number"] for a in how.ledger(d)["adrs"]], ["ADR-0001"])
+        self.store(how.ledger_hash(d))
+        adr.write_text("# ADR-0001: X\n\n**Date:** 2026-08-01 · **Status:** superseded by ADR-0002\n")
+        self.assertTrue(how.narrative(self.conn, "proj",
+                                      how.how_data(self.conn, "proj", self.root))["stale"])
+
+
+
+
+HINDSIGHT_ADR = """# ADR-0033: Capture runs on `Stop`
+
+**Date:** 2026-11-15 · **Status:** accepted, amended by [ADR-0039](0039-x.md) · **Supersedes:** ADR-0005 · **Amends:** ADR-0001, ADR-0020 · **Decides:** issue #68
+
+## Context
+"""
+FRONTMATTER_ADR = """---
+status: accepted, superseded in part by ADR-0011
+---
+
+# The skills install by symlink or plugin
+
+Body.
+"""
+
+
+class AdrHeaders(unittest.TestCase):
+    """ADR-0035 §3: the status-v2 input's second half, read mechanically —
+    number, date (header, else the commit that added the file), title,
+    status line and touches/amends, from <root>/docs/adr only (#95)."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / "docs" / "adr").mkdir(parents=True)
+
+    def write(self, name, text):
+        (self.root / "docs" / "adr" / name).write_text(text)
+
+    def git(self, *args):
+        import subprocess
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t",
+                        *args], check=True, capture_output=True,
+                       env={**os.environ, "GIT_AUTHOR_DATE": "2026-09-26T12:00:00",
+                            "GIT_COMMITTER_DATE": "2026-09-26T12:00:00"})
+
+    def test_bold_header_line(self):
+        self.write("0033-capture-on-stop.md", HINDSIGHT_ADR)
+        self.assertEqual(how.adr_headers(self.root), [{
+            "number": "ADR-0033", "date": "2026-11-15", "title": "Capture runs on `Stop`",
+            "status": "accepted, amended by ADR-0039",
+            "touches": "Supersedes: ADR-0005 · Amends: ADR-0001, ADR-0020"}])
+
+    def test_frontmatter_status_and_date_from_the_adding_commit(self):
+        self.write("0010-the-skills-install.md", FRONTMATTER_ADR)
+        self.git("init", "-q"); self.git("add", "."); self.git("commit", "-qm", "add")
+        self.assertEqual(how.adr_headers(self.root), [{
+            "number": "ADR-0010", "date": "2026-09-26",
+            "title": "The skills install by symlink or plugin",
+            "status": "accepted, superseded in part by ADR-0011", "touches": ""}])
+
+    def test_ordered_by_number_other_files_and_folders_ignored(self):
+        self.write("0002-b.md", "# ADR-0002: B\n\n**Date:** 2026-08-02 · **Status:** accepted\n")
+        self.write("0001-a.md", "# ADR-0001: A\n\n**Date:** 2026-08-01 · **Status:** accepted\n")
+        self.write("README.md", "# not an ADR\n")
+        self.assertEqual([a["number"] for a in how.adr_headers(self.root)], ["ADR-0001", "ADR-0002"])
+        other = Path(tempfile.mkdtemp())  # thisisme's shape: ADRs only under build/
+        (other / "build" / "docs" / "adr").mkdir(parents=True)
+        (other / "build" / "docs" / "adr" / "0001-a.md").write_text("# A\n")
+        self.assertEqual(how.adr_headers(other), [])
+
+
+class TitleChanges(unittest.TestCase):
+    """ADR-0040, amended by ADR-0041: title-stated changes found mechanically,
+    over the frozen set's real titles."""
+
+    def setUp(self):
+        import json
+        import score
+        self.changes = score.title_changes
+        cases = json.loads((Path(__file__).resolve().parent.parent / "eval"
+                            / "status_v2_cases.json").read_text())["cases"]
+        self.found = lambda cid: [c["part"] for c in self.changes(cases[cid]["runs"])]
+        self.of = lambda *titles: [c["part"] for c in self.changes(
+            [{"stage": "Build", "start": "2026-01-02", "end": "2026-01-02", "titles": list(titles)}])]
+
+    def test_a_mixed_title_splits_into_parts(self):
+        self.assertEqual(self.found("thisisme@live"), [
+            "close OpenSpec", "inverted to content-first ordering"])
+
+    def test_a_close_of_a_thing_is_the_only_close_in_the_frozen_set(self):
+        closes = [p for cid in ("hindsight@live", "hindsight@2026-09-15", "explainer@live",
+                                "thisisme@live", "skills-playground@live")
+                  for p in self.found(cid) if "clos" in p.lower()]
+        self.assertEqual(closes, ["close OpenSpec"])
+
+    def test_closing_a_ticket_or_an_inquiry_is_finished_work(self):
+        self.assertEqual(self.of("Close ticket 8", "closed map #18", "Rubric research closes",
+                                 "Grilled and closed: icon look", "Closed palette decision",
+                                 "Restyle close-out: screenshots"), [])
+
+    def test_a_close_naming_no_thing_is_not_a_change(self):
+        self.assertEqual(self.of("Verify the fix, close it"), [])
+        self.assertEqual(self.of("Paused billing, close the team wiki"), ["close the team wiki"])
+
+    def test_strong_verbs_in_any_tense(self):
+        self.assertEqual(self.found("hindsight@2026-09-15"), [
+            "killed model-only approach (#21)",
+            "Kill recurring-dead-end signal after prototype finds no true instances"])
+        self.assertEqual(self.found("skills-playground@live"), [])
+
+    def test_a_verb_inside_a_word_is_not_a_change(self):
+        runs = [{"stage": "Build", "start": "2026-01-02", "end": "2026-01-02",
+                 "titles": ["Built skills dropdown; enclosed the dialog"]}]
+        self.assertEqual(self.changes(runs), [])
+
+    def test_a_change_carries_its_runs_dates(self):
+        runs = [{"stage": "Plan", "start": "2026-03-02", "end": "2026-03-04",
+                 "titles": ["Paused billing, inverted to usage-first pricing"]}]
+        self.assertEqual(self.changes(runs), [{"start": "2026-03-02", "end": "2026-03-04",
+                                                "part": "inverted to usage-first pricing"}])
+
+
+class StatusV2Cases(unittest.TestCase):
+    """The frozen status-v2 set (#73, #95): five cases, the dated cut leaks
+    nothing later, and a stub card fails the floors before any prompt."""
+
+    def setUp(self):
+        import json
+        import score
+        self.score = score
+        self.cases = json.loads((Path(__file__).resolve().parent.parent / "eval"
+                                 / "status_v2_cases.json").read_text())["cases"]
+
+    def test_the_five_cases(self):
+        self.assertEqual(sorted(self.cases), sorted([
+            "hindsight@live", "hindsight@2026-09-15", "explainer@live",
+            "thisisme@live", "skills-playground@live"]))
+        self.assertEqual([c for c, v in self.cases.items() if not v["adrs"]],
+                         ["thisisme@live", "skills-playground@live"])
+
+    def test_the_cut_leaks_no_later_adr(self):
+        import json
+        c = self.cases["hindsight@2026-09-15"]
+        sent = json.dumps({k: c[k] for k in ("runs", "adrs")})
+        self.assertNotIn("0026", sent)
+        self.assertTrue(all(a["date"] <= c["as_of"] for a in c["adrs"]))
+        self.assertTrue(all(r["end"] <= c["as_of"] for r in c["runs"]))
+        self.assertEqual(c["adrs"][-1]["number"], "ADR-0025")
+
+    def test_a_stub_card_fails_every_case(self):
+        for cid, c in self.cases.items():
+            for stub in ({"Standing": [], "Superseded": [], "Now": []},
+                         {"Standing": ["x"] * 3, "Superseded": [], "Now": ["x"]}):
+                with self.subTest(cid):
+                    self.assertFalse(self.score.score_v2(c, stub)[0]["pass"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,191 @@
+# eval/ — the status-v2 regression set (ADR-0035, #73)
+
+**Frozen 2026-11-19** (#95), **before any `status-v2` prompt was written**.
+Design settled in #73. Any edit to the `status-v2` prompt or its model pin
+runs this first and lands only on ACCEPT. The v1 set below is kept as the
+record; #96 retired `status-v1` from the live pass.
+
+## What is scored
+
+The input is **the run ledger plus the project's ADR headers** (ADR-0035 §3),
+plus the title changes derived from the runs at call time (ADR-0040),
+read by `cli/how.py`: `ledger()` and `adr_headers(root)`. Each header has a
+number, a date (from the header, else from the commit that added the file), a
+title, a status line, and `touches` (the Supersedes/Amends/Touches fields,
+verbatim). Only `<root>/docs/adr` is read. Five cases, in
+`status_v2_cases.json`:
+
+| case | runs | ADRs | Now | expected |
+| --- | --- | --- | --- | --- |
+| hindsight@live | 10 | 39 | Plan since Nov 13 | Superseded: so-what view dropped (ADR-0026); hook self-instrumentation → ADR-0033. `so-what` forbidden in Standing |
+| hindsight@2026-09-15 | 2 | 25 | Plan since Sep 11 | Standing: the so-what view. Forbidden anywhere: `adr-0026`, `not built`, `so-what (view) (is) dropped`; `so-what` forbidden in Superseded (a bare `dropped` cannot be: ADR-0006's title says the why-view is dropped) |
+| explainer@live | 8 | 21 | Build since Sep 30 | Superseded: npm-link install → plugin layout (ADR-0011) |
+| thisisme@live | 5 | 0 | Plan since Aug 17 | Superseded from titles alone: OpenSpec closed; schema ordering inverted to content-first |
+| skills-playground@live | 2 | 0 | off-script since Sep 23 | Superseded must be `[]` |
+
+**How they were cut.** The live cases come from a migrated copy of the live
+store, with ADR headers read from each project's folder after hindsight's
+status-line backfill (0006 amended by 0010; 0021–0025 dropped by 0026).
+
+`hindsight@2026-09-15` re-runs `run_ledger` over the trail up to the cut day.
+Its ADR headers are read from git at `6b6d473`, the last commit on that day.
+A session with events after the cut keeps those events but loses its title,
+because the title was written after the session ended. ("Closed map #18 after
+Stage B evaluation" ran into 09-16.)
+
+thisisme keeps 11 ADRs under `build/docs/adr`. They are not read, so it stays
+the no-ADR, title-stated case that #73 resolved.
+
+**Output contract:**
+
+```json
+{"Standing": ["…"], "Superseded": ["…"], "Now": ["…"]}
+```
+
+## Metrics and floors (fixed before any prompt)
+
+Per case, from `score.py` `score_v2`. M3 to M7 are `contract_v2`, the
+write-time gate #96 imports.
+
+| # | Metric | Floor |
+| --- | --- | --- |
+| M1 | Recall: expected facts whose anchor lands in the right group | ≥ 80% of facts, and **100% of Superseded facts** |
+| M2 | Forbidden: lines hitting a forbidden anchor. A string counts in any group; `{"anchor", "group"}` counts only in its group. The empty anchor matches every line, so `{"anchor": "", "group": "Superseded"}` means Superseded must be `[]` | 0 |
+| M3 | Untraced: a line shares < 2 content words with the ledger's stages and titles. Words shared only with ADR titles count when the line names an ADR number. Any ADR number named must exist in the input | 0 |
+| M4 | Undated: every date in a line is in the ledger span or equals an ADR date. Standing and Now lines need ≥ 1 date; Superseded lines need ≥ 2, in order (order is checked on Superseded only) | 0 |
+| M5 | Now: a Now line names the current stage and its start date | required |
+| M6 | Bounded: all three groups are lists; Standing 3–8, Superseded ≤ 6, Now 1–3 | required |
+| M7 | Listed (added 2026-11-20, ADR-0040, before `v2-p11`): every title change (`title_changes`; a close of a thing too, ADR-0041) shares ≥ 2 content words with a Superseded line | 0 |
+
+The expected facts are #73's anchors, plus thisisme's two. #73 names no
+thisisme facts, only "the titles state the changes", so its pair is carried
+over from the v1 set's thisisme Reversed facts (OpenSpec closed; ordering
+inverted). The operator ratified the pair on 2026-11-19, before any model
+output. For most cases M1 means only the Superseded half. Standing coverage
+is not measured.
+
+Anchors are OR-substrings and cannot require both sides of a supersession. A
+Superseded line that names only the old side still needs two dates (M4) and a
+trace (M3), so it cannot be a bare mention.
+
+**ACCEPT** needs **at least 39 of 45 cases passing** across three
+consecutive serial sweeps of one prompt on `claude-haiku-4-5-20251001` (each
+sweep is one `run_v2.py` run: 3 rounds × 5 cases). Until this decision the bar was
+15/15 in a single sweep; see the operator decision below. The runner also reports each
+Superseded fact's hit rate across the rounds. Wording drift is not floored.
+Escalate one model tier only after two prompt iterations fail ACCEPT, and
+record the failing run's tag.
+
+```sh
+python3 eval/score.py --selfcheck                         # v1 and v2 floors
+python3 eval/run_v2.py cli/prompts/status-v2.txt <tag>    # 3 rounds × 5 cases
+```
+
+Outputs go to `local-data/eval/runs/<tag>/r1..r3/` (untracked).
+
+**Calibration.** An empty stub card fails every case (`cli/test_how.py`
+`StatusV2Cases`). A hand-written correct card for hindsight@live passes, with
+7 lines and 2/2 Superseded, so the floors can be reached. No model output
+existed when the set was frozen.
+
+## Record: `status-v2` — not accepted, parked for the operator (2026-11-19, #96)
+
+No case, anchor, floor or scorer line moved. Two confounds void every run
+before `v2-p6-sonnet-nohooks`:
+
+- **Leaked answers (`v2-p1` to `v2-p5`).** The prompt's examples quoted the
+  frozen set's anchors and titles ("so-what view", "npm link install", "close
+  OpenSpec", "content-first"). `test_status_prompt_carries_no_eval_answers`
+  now fails on any anchor, or on any four-word run of a case title or ADR
+  title, in the live prompt.
+- **Hook leak (`v2-p1` to `v2-p6-sonnet-clean`).** The operator's user-level
+  SessionStart hook reached every `claude -p` call. Fixed in 23e50f8
+  (`disableAllHooks`); the what-eval re-ran 20/20.
+
+| tag | model | passed | note |
+| --- | --- | --- | --- |
+| `v2-p1`..`v2-p4` | haiku | 6, 10, 10, 14 /15 | void: leaked answers, hook leak |
+| `v2-p4-sonnet`, `v2-p5-sonnet` | sonnet | 14, 15 /15 | void: same; p5's "ACCEPT" withdrawn |
+| `v2-p6-sonnet-clean` | sonnet | 11/15 | void: hook leak (a reply suffix, two empty calls) |
+| `v2-p6-sonnet-nohooks` | sonnet | 12/15 | first clean run; npm-link named by the wrong half of ADR-0010's title |
+| `v2-p7-haiku` | haiku | **14/15** | best clean run; thisisme r1 dropped a current-run title |
+| `v2-p7-sonnet` | sonnet | 10/15 | npm-link 0/3, one 300 s timeout |
+| `v2-p8-haiku` | haiku | 11/15 | a title-pass rule made Haiku over-eager; reverted |
+| `v2-p7-haiku-serial-a` | haiku | 11/15 | serial, no timeouts. Dated cut: so-what missed from Standing (r1), placed in Superseded (r2); thisisme OpenSpec missed; skills-playground Standing empty (M6) |
+| `v2-p7-haiku-serial-b` | haiku | 14/15 | serial. Dated cut r1: so-what missed from Standing and placed in Superseded |
+| `v2-p9-haiku` | haiku | 12/15 | serial. New rule: an in-force ADR is Standing and never on either side of a Superseded arrow. Dated cut passed r1 and r3; r2 timed out at 300 s with one call in flight. thisisme content-first missed (r1); explainer r2 Now gave a wrong start date (M5) |
+| `v2-p10-haiku` | haiku | 12/15 | serial. p9 plus "search every part of every title; one find does not end the search". thisisme failed r1 (0/2: the title-stated change copied verbatim into Standing and Now) and r2 (OpenSpec); explainer r2 named the "symlink or plugin" half of ADR-0010. Reverted to p9 |
+| `v2-p11-haiku` | haiku | **14/15** | serial, ADR-0040 input and M7. thisisme 6/6 facts; M7 unlisted 0 in all 15 calls; no timeouts. explainer r1 omitted ADR-0010 → ADR-0011: p9's rule forbids an in-force ADR on the replacing side, and ADR-0011 is that side. The rule is wrong, not the model |
+| `v2-p12-haiku` | haiku | 12/15 | serial. p11 with p9's rule fixed: an in-force ADR may be the replacing side only when another ADR's status line names it. Every Superseded fact 3/3 in every case, the first sweep to do so. Failures are Standing and Now: hindsight@live r2 a Standing line saying the so-what view was dropped (M2); dated cut r3 so-what missed from Standing and an untraced Now line; skills-playground r3 Standing empty (M6) |
+| `v2-p13-haiku` | haiku | 13/15 | serial. p12 plus: Standing is never under 3 lines, and a one-run project's titles are its Standing. skills-playground and the dated cut 3/3. hindsight@live r1 a Standing line saying the so-what view was dropped (M2); thisisme r1 OpenSpec missed (a close change, model-judged by ADR-0040) |
+| `v2-p13-haiku-b` | haiku | 11/15 | serial, p13 unchanged. thisisme r1 OpenSpec missed; hindsight@live r1 two undated Standing lines (M4); dated cut r1 so-what missed from Standing; explainer r3 "removed fix loop" not listed under Superseded (M7) |
+| `v2-p13-haiku-c` | haiku | 13/15 | serial, p13 unchanged. thisisme r3 OpenSpec missed; explainer r3 omitted ADR-0010 → ADR-0011 |
+| `v2-p14-haiku-a` | haiku | 13/15 | serial, ADR-0041 input. Dated cut r1 so-what placed in Now, not Standing; thisisme r1 OpenSpec missed (M7 unlisted, as ADR-0041 expected) |
+| `v2-p14-haiku-b` | haiku | 13/15 | serial, p14 unchanged. explainer r2 omitted ADR-0010 → ADR-0011; hindsight@live r3 a Standing line saying the so-what view was dropped (M2) |
+| `v2-p14-haiku-c` | haiku | 14/15 | serial, p14 unchanged. explainer r3 omitted ADR-0010 → ADR-0011 |
+
+**Escalation tried and withdrawn.** Sonnet was pinned after `v2-p4` on
+confounded evidence. Clean runs of the same prompt put Haiku ahead (14 v 10),
+so the pin stays on Haiku.
+
+**Operator decision (2026-11-20, later): ACCEPT is ≥ 39/45 pooled over three
+sweeps.** The how-view is an approximation for the operator, not an
+auditable record (ADR-0012's posture). The goal is a card that is right
+about 90% of the time. An all-or-nothing 15/15 passes a true-90% prompt only
+21% of the time. ≥ 39/45 passes it 84% of the time, and passes a true-80%
+prompt 18% of the time. The cases, anchors, floors and the write-time gate
+(M3–M7) do not change. The earlier decision is kept below as the record.
+
+**Operator decision (2026-11-20, superseded the same day): the bar stays at 15/15.** Two more serial
+sweeps of `v2-p7` (above) put it at 39/45 across three sweeps, about a
+1-in-8 chance of a clean sweep. The failures are not noise. Half fall on
+`hindsight@2026-09-15`, where Haiku treats a decision still in force at the
+cut as superseded, or leaves it out of Standing. M2 fired twice, so a split
+bar (M1 by hit rate, M2–M6 strict) would not have accepted `v2-p7` either.
+The runner is now serial, like the live pass. `v2-p9`'s serial timeout shows
+concurrency was not the whole cause: the 300 s limit (`CALL_TIMEOUT`, shared
+with the live pass) can still be hit. Still open: `dates_in` reads "Mon D-D"
+as a second date.
+
+`v2-p9` is kept although its sweep scored lower than `v2-p7`'s mean. The new
+rule fixed the dated cut in both calls that completed (p7 failed it in 3 of 9).
+The remaining failures fall on cases the rule cannot reach: thisisme has no
+ADRs, and the explainer Now date is unrelated. One sweep cannot separate 12 from
+p7's 13 on average.
+
+**Title-stated supersessions resist prompt rules.** Across the five clean
+Haiku sweeps of p7, p9 and p10, thisisme failed 5 of 15 calls. Every miss is a
+change stated only in a run title, in a project with no ADRs. The prompt already
+names the verbs and has an example almost the same as the missed title. p10's
+search instruction made it worse (3 misses in 3 rounds against 1).
+
+**ADR-0040 (2026-11-20).** Title-stated changes are now found by code
+(`score.title_changes`) and sent as `changes`. M7 joins the floors before
+`v2-p11`. No case or anchor moved. Re-scored under M7 for the record only, the
+earlier clean runs fall to 6–9 /15, because no earlier prompt was asked to list
+the strong changes in hindsight and explainer.
+
+**`v2-p13` pooled: 37/45 → REJECT** (13 + 11 + 13; the bar is 39). Eight
+failed calls: thisisme's OpenSpec close 3 (it passes 6 of 9 calls; every other Superseded fact
+passes at least 8 of 9), and five singletons spread across M2, M4, M7 and two misses. OpenSpec
+is the one failure that repeats. It is a "close" change, which ADR-0040 leaves to the model's
+judgement. Without it the pool is 40/45.
+
+**ADR-0041 (2026-11-20).** A close that survives the finished-work filters (a ticket, an
+inquiry, or no thing named) is a mandatory change like the strong verbs, and binds M7. In the frozen
+set that leaves exactly "close OpenSpec". The prompt (`v2-p14`) drops the close judgement. No case,
+anchor or floor moved.
+
+**`v2-p14` pooled: 40/45 → ACCEPT** (13 + 13 + 14). Superseded facts across the 9 calls per case:
+hindsight 9/9 and 9/9, thisisme OpenSpec 8/9 (from 6/9 under p13) and content-first 9/9,
+explainer ADR-0010 → ADR-0011 7/9. The five failures are the known minority ones: explainer's
+ADR-0011 twice, OpenSpec once, the so-what view placed wrongly once in Now and once in a
+Standing line (M2). No timeouts.
+
+The prompt is accepted at `v2-p14`.
+
+---
+
 # eval/ — the status-narrative regression set (ADR-0012)
 
 **Frozen 2026-08-28** (ticket [#67](../background/tickets/067-status-narrative-frozen-eval-set-and-threshold.md)),

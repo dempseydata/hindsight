@@ -1,6 +1,6 @@
 # ADR-0023: A pattern's evidence is the session, per row; a session id resolves to its what-ledger row
 
-**Date:** 2026-09-11 · **Status:** accepted · **Decides:** [issue #24](https://github.com/dempseydata/hindsight/issues/24); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0021, ADR-0022, ADR-0002
+**Date:** 2026-09-11 · **Status:** dropped by ADR-0026 (2026-09-16); accepted before that · **Decides:** [issue #24](https://github.com/dempseydata/hindsight/issues/24); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0021, ADR-0022, ADR-0002
 
 ## Context
 

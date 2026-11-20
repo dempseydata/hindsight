@@ -1,6 +1,6 @@
 # ADR-0022: The so-what view reads the shared header window, states two baselines side by side, and floors sparsity before magnitude
 
-**Date:** 2026-09-11 · **Status:** accepted · **Decides:** [issue #20](https://github.com/dempseydata/hindsight/issues/20); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0021, ADR-0014, ADR-0010
+**Date:** 2026-09-11 · **Status:** dropped by ADR-0026 (2026-09-16); accepted before that · **Decides:** [issue #20](https://github.com/dempseydata/hindsight/issues/20); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0021, ADR-0014, ADR-0010
 
 ## Context
 

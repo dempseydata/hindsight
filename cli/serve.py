@@ -45,7 +45,7 @@ Pricing/cost columns are never rendered (ADR-0003).
 How-view (ticket #65, ADR-0010/0011/0012): one declaring project at a time
 (`?p=`; the selector lists projects whose resolved declaration is not
 absent — `local-process.md` reading `none` = no view, ADR-0032), rendered server-side with no script: the
-status card (model-written Built / Reversed / Now from `status_narrative`,
+status card (model-written Standing / Superseded / Now from `status_narrative`, ADR-0035,
 marked stale when its ledger hash no longer matches the live ledger, the
 mechanical line when absent) over the phase runs newest first, beside the
 stated-process panel. It takes the shell with an empty actions slot and
@@ -72,7 +72,7 @@ import how
 from analyze import (DEFAULT_PROJECTS_DIR, DEFAULT_DB, LOST, REPO,  # noqa: E402 — one authority on paths
                      BREAKAGE_COLS, SECTIONS, SIDE_REQUESTS, audit_title, breakage_text,
                      day_sql, local_day, session_day)
-from score import BOUNDS  # noqa: E402 — narrative group names; eval/ on sys.path via analyze
+from score import BOUNDS, BOUNDS_V2  # noqa: E402 — narrative group names; eval/ on sys.path via analyze
 
 TOKENS_CSS = REPO / "design" / "tokens.css"
 # View CSS/JS/HTML, one file per extracted constant (ticket #80). The CSS is
@@ -600,7 +600,9 @@ def _status(conn, d):
     out = [f'<div class="o-stage-panel status{"" if runs else " none"}"{hue}><h2>{_icon("clock")}Status</h2>']
     if nar:
         out.append('<div class="facts">')
-        for g in BOUNDS:  # the contract's group names, in contract order
+        # the contract's group names, in contract order; a status-v1 row stays
+        # readable (marked stale) until the next run replaces it (#96)
+        for g in BOUNDS if nar["prompt_version"] == "status-v1" else BOUNDS_V2:
             items = nar["facts"].get(g) or []
             out.append(f"<div><h3>{g}</h3><ul>" + ("".join(
                 f"<li>{html.escape(x)}</li>" for x in items)
@@ -608,7 +610,7 @@ def _status(conn, d):
         out.append("</div>")
         out.append(f'<p class="mech">narrative written {html.escape(nar["written_day"])}'
                    f" by {html.escape(nar['model'])}"
-                   + (' · <span class="stale">stale — the ledger has moved'
+                   + (' · <span class="stale">stale — the ledger or the ADRs have moved'
                       " since; the next analysis run regenerates it</span>"
                       if nar["stale"] else "")
                    + "</p>")

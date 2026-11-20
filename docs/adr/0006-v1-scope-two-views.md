@@ -1,6 +1,6 @@
 # ADR-0006: v1 ships two views — the why-view is dropped wholesale
 
-**Date:** 2026-08-24 · **Status:** accepted · **Decides:** [issue #39](../../background/tickets/039-scope-drop-the-why-view-from-v1.md) (operator decision, 2026-08-19), recorded at the top of Build per the handoff
+**Date:** 2026-08-24 · **Status:** accepted, amended by ADR-0010 (the how-view, a third view) · **Decides:** [issue #39](../../background/tickets/039-scope-drop-the-why-view-from-v1.md) (operator decision, 2026-08-19), recorded at the top of Build per the handoff
 
 ## Context
 

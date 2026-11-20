@@ -1,6 +1,6 @@
 # ADR-0024: Stage A is computed per request with the window in the URL; Stage B is stored like the status narrative
 
-**Date:** 2026-09-12 · **Status:** accepted · **Decides:** [issue #25](https://github.com/dempseydata/hindsight/issues/25); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0008, ADR-0012, ADR-0022
+**Date:** 2026-09-12 · **Status:** dropped by ADR-0026 (2026-09-16); accepted before that · **Decides:** [issue #25](https://github.com/dempseydata/hindsight/issues/25); map [#18](https://github.com/dempseydata/hindsight/issues/18) · **Touches:** ADR-0008, ADR-0012, ADR-0022
 
 ## Context
 

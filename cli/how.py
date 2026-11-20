@@ -29,9 +29,12 @@ Output of how_data() (the greybox ticket consumes it directly):
   sessions:    {session_id: {date, title}}  title = audit title or None
   runs:        [{stage, start, end, titles}]  the run ledger (ticket #64):
                phase runs in date order, empty unless the declaration is
-               valid — the sole input to the status narrative (ADR-0012).
+               valid — with `adrs`, the status narrative's input (ADR-0035).
                stage is a declared name or OFF_SCRIPT (#17); start/end are
                local days (ADR-0014); trail `at` stays UTC
+  adrs:        [{number, date, title, status, touches}]  the project's ADR
+               headers (ADR-0035 §3), the narrative's second input; [] unless
+               the declaration is valid
   run_detail:  [{sessions, events, names, minor}]  parallel to runs — what
                the view shows per run beyond the ledger (ticket #65);
                kept apart so the ledger's content hash stays the narrative's
@@ -44,9 +47,10 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
-from analyze import (DEFAULT_PROJECTS_DIR, MODEL, SKILL, STATUS_VERSION,
+from analyze import (DEFAULT_PROJECTS_DIR, _git, MODEL, SKILL, STATUS_VERSION,
                      audit_title, local_day, session_day)
 from extract import FILE_TOOLS
+from score import title_changes  # ADR-0040: shared with the write-time gate
 from substrate import former_names
 
 # commands and skills are one name pool seen through two capture paths
@@ -362,12 +366,13 @@ def run_ledger(trail, sessions, detail=False):
 
 
 def ledger(d):
-    """The run ledger as the narrative pass sees it (ADR-0012) — the exact
-    object hashed into `status_narrative.ledger_hash`, so the view can tell
-    a stale row from a current one."""
+    """The narrative's input (ADR-0012, ADR-0035 §3, ADR-0040): the run ledger,
+    the project's ADR headers and the title changes derived from the runs — the exact object sent and hashed into
+    `status_narrative.ledger_hash`, so an edited ADR status line makes the
+    stored card stale just as a new run does (#96)."""
     return {"project": d["project"], "as_of": d["runs"][-1]["end"],
             "stages": [s["name"] for s in d["declaration"]["stages"]],
-            "runs": d["runs"]}
+            "runs": d["runs"], "adrs": d["adrs"], "changes": title_changes(d["runs"])}
 
 
 def ledger_hash(d):
@@ -394,7 +399,55 @@ def narrative(conn, project, d):
     stale = bool(d["runs"]) and (h, pv, model) != (
         ledger_hash(d), STATUS_VERSION, MODEL)
     return {"facts": json.loads(facts), "written_day": local_day(at),
-            "model": model, "stale": stale}
+            "model": model, "prompt_version": pv, "stale": stale}
+
+
+ADR_FILE = re.compile(r"^(\d{4})-.*\.md$")
+ADR_LINKS = ("Supersedes", "Amends", "Touches")
+
+
+def _plain(s):
+    """Markdown link → its text, emphasis dropped: the header as read."""
+    return re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s).replace("*", "").strip()
+
+
+def adr_header(name, text, added=None):
+    """One ADR's header (ADR-0035 §3): number from the filename, title from
+    the first `# ` line, date and status from the `**Date:** · **Status:**`
+    line or a `status:` frontmatter key, touches as the verbatim
+    Supersedes/Amends/Touches fields. `added` is the date of the commit that
+    added the file, used when the header carries none."""
+    lines = text.splitlines()
+    title = next((l[2:] for l in lines if l.startswith("# ")), "")
+    fields = {}
+    for l in lines:
+        if "**Date:**" in l or "**Status:**" in l:
+            for part in l.split(" · "):
+                m = re.match(r"\*\*(\w+):\*\*\s*(.*)", part.strip())
+                if m:
+                    fields[m[1]] = _plain(m[2])
+            break
+    if not fields.get("Status") and lines[:1] == ["---"]:
+        m = re.search(r"^status:\s*(.+)$", text.split("\n---", 1)[0], re.M)
+        fields["Status"] = m[1].strip() if m else ""
+    return {"number": f"ADR-{ADR_FILE.match(name)[1]}",
+            "date": fields.get("Date") or added,
+            "title": _plain(re.sub(r"^ADR-\d+:\s*", "", title)),
+            "status": fields.get("Status", ""),
+            "touches": " · ".join(f"{k}: {fields[k]}" for k in ADR_LINKS if k in fields)}
+
+
+def adr_headers(root):
+    """The project's ADR headers, by number, from <root>/docs/adr only (the
+    repo convention; #95 keeps thisisme's build/docs/adr out). [] when absent."""
+    d = Path(root) / "docs" / "adr"
+    out = []
+    for f in sorted(d.glob("*.md")) if d.is_dir() else []:
+        if ADR_FILE.match(f.name):
+            added = (_git(d, "log", "--diff-filter=A", "--format=%ad", "--date=short",
+                          "--", f.name) or "").split()
+            out.append(adr_header(f.name, f.read_text(), added[-1] if added else None))
+    return out
 
 
 def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR, claude_md=None):
@@ -436,6 +489,8 @@ def how_data(conn, project, projects_dir=DEFAULT_PROJECTS_DIR, claude_md=None):
         "sessions": sessions,
         "runs": runs,
         "run_detail": detail,
+        # the narrative's second input (#96); only a declaring project has one
+        "adrs": adr_headers(root) if state == "valid" else [],
     }
 
 

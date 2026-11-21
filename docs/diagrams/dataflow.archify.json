@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "One session, after it ends",
+    "output": "dataflow.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": { "url": "https://github.com/dempseydata/hindsight.git", "provider": "github", "link_mode": "web", "revision": "bdafcf56b7303d57b0f4273c22160df7dc5f5e89" }
+  },
+  "stages": [
+    { "label": "Session" },
+    { "label": "Capture" },
+    { "label": "Nightly run" },
+    { "label": "Store" },
+    { "label": "Views" }
+  ],
+  "nodes": [
+    { "id": "transcript", "type": "external", "label": "Transcript", "sublabel": "JSONL lines", "stage": 0, "row": 0,
+      "sources": [ { "path": "cli/analyze.py", "line": 118, "end_line": 118, "label": "~/.claude/projects" }, { "path": "cli/capture.py", "line": 101, "end_line": 111 } ] },
+    { "id": "otel_src", "type": "external", "label": "OTel export", "sublabel": "opt-in", "stage": 0, "row": 3,
+      "sources": [ { "path": "cli/listener.py", "line": 1, "end_line": 6 } ] },
+    { "id": "capture", "type": "backend", "label": "Capture hook", "sublabel": "Stop, SubagentStop", "tag": "async", "stage": 1, "row": 0,
+      "sources": [ { "path": "hooks/hooks.json", "line": 24, "end_line": 45 }, { "path": "cli/capture.py", "line": 91, "end_line": 126, "label": "append past high-water" } ] },
+    { "id": "raw", "type": "database", "label": "Raw store", "sublabel": "verbatim, zlib", "tag": "90-day keep", "stage": 1, "row": 1,
+      "sources": [ { "path": "cli/analyze.py", "line": 560, "end_line": 583, "label": "raw_records, transcripts" }, { "path": "cli/analyze.py", "line": 1903, "end_line": 1916, "label": "HINDSIGHT_RAW_DAYS" }, { "path": "cli/analyze.py", "line": 1918, "end_line": 1925, "label": "compaction" } ] },
+    { "id": "listener", "type": "backend", "label": "OTel listener", "sublabel": "127.0.0.1:4318", "stage": 1, "row": 3,
+      "sources": [ { "path": "cli/listener.py", "line": 186, "end_line": 197 }, { "path": "cli/listener.py", "line": 239, "end_line": 243 } ] },
+    { "id": "extract", "type": "backend", "label": "Derive + extract", "sublabel": "03:00 analysis run", "tag": "launchd", "stage": 2, "row": 1,
+      "sources": [ { "path": "cli/analyze.py", "line": 2037, "end_line": 2080, "label": "derivation, what-pass" }, { "path": "cli/extract.py", "line": 30, "end_line": 52, "label": "user + assistant text only" }, { "path": "cli/extract.py", "line": 16, "end_line": 17, "label": "1,500-char cap" } ] },
+    { "id": "model", "type": "external", "label": "claude -p", "sublabel": "what-pass, status", "tag": "Haiku, no tools", "stage": 2, "row": 0,
+      "sources": [ { "path": "cli/analyze.py", "line": 1622, "end_line": 1656 }, { "path": "cli/analyze.py", "line": 1575, "end_line": 1617, "label": "status narrative" }, { "path": "cli/analyze.py", "line": 1526, "end_line": 1574, "label": "what-pass per session" } ] },
+    { "id": "facts", "type": "database", "label": "Facts tables", "sublabel": "hindsight.db", "stage": 3, "row": 1,
+      "sources": [ { "path": "cli/analyze.py", "line": 236, "end_line": 258, "label": "sessions, audit" }, { "path": "cli/analyze.py", "line": 1519, "end_line": 1519, "label": "audit write" }, { "path": "cli/analyze.py", "line": 1614, "end_line": 1614, "label": "status_narrative write" } ] },
+    { "id": "otel_tables", "type": "database", "label": "OTel tables", "sublabel": "events, metrics", "stage": 3, "row": 3,
+      "sources": [ { "path": "cli/listener.py", "line": 192, "end_line": 195 } ] },
+    { "id": "what_view", "type": "frontend", "label": "what view", "sublabel": "audit entries", "stage": 4, "row": 0,
+      "sources": [ { "path": "cli/serve.py", "line": 276, "end_line": 340 } ] },
+    { "id": "how_view", "type": "frontend", "label": "how view", "sublabel": "status card", "stage": 4, "row": 1,
+      "sources": [ { "path": "cli/serve.py", "line": 717, "end_line": 741 } ] },
+    { "id": "where_view", "type": "frontend", "label": "where view", "sublabel": "token usage", "stage": 4, "row": 2,
+      "sources": [ { "path": "cli/serve.py", "line": 341, "end_line": 345 }, { "path": "cli/serve.py", "line": 431, "end_line": 510, "label": "OTel queries" } ] }
+  ],
+  "flows": [
+    { "from": "transcript", "to": "capture", "label": "new lines", "variant": "emphasis" },
+    { "from": "capture", "to": "raw", "label": "append verbatim", "variant": "emphasis" },
+    { "from": "raw", "to": "extract", "label": "raw lines", "variant": "emphasis" },
+    { "from": "extract", "to": "model", "label": "text ≤1,500 chars", "variant": "security" },
+    { "from": "model", "to": "facts", "label": "audit, narrative", "variant": "security" },
+    { "from": "extract", "to": "facts", "label": "derived usage" },
+    { "from": "facts", "to": "what_view", "label": "audit rows" },
+    { "from": "facts", "to": "how_view", "label": "status card" },
+    { "from": "facts", "to": "where_view", "label": "usage, tools" },
+    { "from": "otel_src", "to": "listener", "label": "OTLP JSON", "variant": "dashed" },
+    { "from": "listener", "to": "otel_tables", "label": "event rows", "variant": "dashed" },
+    { "from": "otel_tables", "to": "where_view", "label": "API tokens", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "What leaves the machine", "items": ["Only user and assistant text, each capped at 1,500 characters, plus file-tool paths", "Tool results and thinking are dropped before the extract", "The status pass sends a project's run ledger and ADR headers, not transcript text"] },
+    { "dot": "amber", "title": "Raw store lifetime", "items": ["Each line is stored verbatim and zlib-compressed, keyed by byte offset", "Compaction deletes a session's raw lines after HINDSIGHT_RAW_DAYS (90; 0 keeps them)", "Audit and derived rows survive compaction, marked compacted"] },
+    { "dot": "slate", "title": "Simplified", "items": ["Model output is gated before it is stored: SKIP or ### for audits, the narrative contract for cards", "The nightly sweep re-captures lines a missed hook firing left behind", "Views open the database read-only and re-query on every request"] }
+  ]
+}

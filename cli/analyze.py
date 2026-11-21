@@ -713,8 +713,9 @@ def audit_title(md):
     return m.group(1).strip() if m else None
 
 
-def project_name(dirname):
-    prefix = "-Users-andrew-Documents-Claude-"
+def project_name(dirname, projects_dir=DEFAULT_PROJECTS_DIR):
+    # Claude Code names a transcript dir by its cwd with every non-alphanumeric char as '-'
+    prefix = re.sub(r"[^A-Za-z0-9]", "-", str(projects_dir)) + "-"
     return dirname[len(prefix):] if dirname.startswith(prefix) else dirname
 
 

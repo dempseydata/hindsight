@@ -52,8 +52,10 @@ def plists():
     h = home()
     script = h / "current" / "cli"
     # Baked at install: launchd's default PATH lacks `claude`, and the jobs
-    # must see the same zone, home and cache directory as the installing shell.
-    env = {k: os.environ[k] for k in ("HINDSIGHT_HOME", "HINDSIGHT_TZ", "CLAUDE_PLUGIN_DATA")
+    # must see the same zone, home, raw limit and cache directory as the installing
+    # shell (an unbaked HINDSIGHT_RAW_DAYS would compact at the default 90 days).
+    env = {k: os.environ[k] for k in ("HINDSIGHT_HOME", "HINDSIGHT_TZ", "HINDSIGHT_RAW_DAYS",
+                                      "CLAUDE_PLUGIN_DATA")
            if os.environ.get(k)}
     return {
         INGEST: {"Label": INGEST,

@@ -1498,5 +1498,20 @@ class GuardsTest(unittest.TestCase):
             self.assertIsNone(serve.db_missing(db))
 
 
+class OpenDbQuotingTest(unittest.TestCase):
+    def test_uri_characters_in_the_path_keep_the_open_read_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "odd?mode=rw#%41" / "hindsight.db"
+            db.parent.mkdir()
+            sqlite3.connect(db).execute("CREATE TABLE t (x)").connection.close()
+            conn = serve.open_db(db)
+            try:
+                with self.assertRaises(sqlite3.OperationalError):
+                    conn.execute("INSERT INTO t VALUES (1)")
+            finally:
+                conn.close()
+            self.assertEqual(sorted(p.name for p in db.parent.iterdir()), ["hindsight.db"])
+
+
 if __name__ == "__main__":
     unittest.main()

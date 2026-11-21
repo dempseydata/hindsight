@@ -104,7 +104,6 @@ uncommitted.
 
 - **ADR-0036 §6** budgets the health hook at about 100 ms. `hooks.json` allows `timeout: 5`, and `check` can spend 1 s on each `launchctl` call plus a 1 s SQLite timeout.
 - **ADR-0003** says "recognise the limit error"; the code matches any stderr containing `limit` (above).
-- **ADR-0034 §2** puts `HINDSIGHT_RAW_DAYS` in the same pattern as `HINDSIGHT_TZ`, but `install` bakes `HINDSIGHT_TZ` and not `HINDSIGHT_RAW_DAYS`: the nightly uses 90 unless launchd's own environment sets it.
 - **ADR-0038 §5** puts the lock "in Hindsight home"; the code puts it beside the DB. Same by default, different under `--db`.
 
 ## Other automation

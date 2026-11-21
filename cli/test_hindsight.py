@@ -35,7 +35,8 @@ class OpsTest(unittest.TestCase):
             (bin_ / name).chmod(0o755)
         self.calls_file = self.tmp / "calls"
         env = {k: v for k, v in os.environ.items()
-               if k not in ("HINDSIGHT_HOME", "HINDSIGHT_TZ", "CLAUDE_PLUGIN_DATA")}
+               if k not in ("HINDSIGHT_HOME", "HINDSIGHT_TZ", "HINDSIGHT_RAW_DAYS",
+                             "CLAUDE_PLUGIN_DATA")}
         env.update(HOME=str(self.user), STUB_LOG=str(self.calls_file),
                    PATH=f"{bin_}:{os.environ['PATH']}")
         patcher = mock.patch.dict(os.environ, env, clear=True)
@@ -102,6 +103,15 @@ class OpsTest(unittest.TestCase):
         self.assertEqual(self.plist("com.hindsight.ingest")["EnvironmentVariables"]
                          ["HINDSIGHT_HOME"], str(self.tmp / "elsewhere"))
         self.assertTrue((self.tmp / "elsewhere" / "current").is_symlink())
+
+    def test_install_bakes_the_raw_limit_into_the_nightly_only_when_set(self):
+        self.run_ops("install")
+        self.assertNotIn("HINDSIGHT_RAW_DAYS",
+                         self.plist("com.hindsight.nightly")["EnvironmentVariables"])
+        os.environ["HINDSIGHT_RAW_DAYS"] = "0"   # keep forever: a falsy-looking value still bakes
+        self.run_ops("install")
+        self.assertEqual(self.plist("com.hindsight.nightly")["EnvironmentVariables"]
+                         ["HINDSIGHT_RAW_DAYS"], "0")
 
     def test_install_from_moves_a_v1_database_once_after_booting_out_the_jobs(self):
         v1 = self.tmp / "v1" / "hindsight.db"

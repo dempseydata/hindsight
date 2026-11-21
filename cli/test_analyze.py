@@ -2535,5 +2535,12 @@ class JobListTest(DbHelpers, unittest.TestCase):
         self.assertEqual(len(self.health()), 1)
 
 
+class ProjectNameTest(unittest.TestCase):
+    def test_strips_the_encoded_projects_dir_of_any_user(self):
+        ws = Path("/home/some.one/Work Space")
+        self.assertEqual(analyze.project_name("-home-some-one-Work-Space-hindsight", ws), "hindsight")
+        self.assertEqual(analyze.project_name("-tmp-elsewhere", ws), "-tmp-elsewhere")
+
+
 if __name__ == "__main__":
     unittest.main()

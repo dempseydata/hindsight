@@ -71,6 +71,18 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
         self.run_pipeline(StubRunner([]))
         self.assertEqual(self.audit_rows(), rows)
 
+    def test_work_dir_owner_only_under_open_umask(self):
+        # Extracts are transcript text: closed whatever the umask, even pre-existing.
+        self.work.mkdir(mode=0o755)
+        write_transcript(self.proj / "sess-modes.jsonl",
+                          [("user", "fix the typo"), ("assistant", "done")])
+        old = os.umask(0o022)
+        try:
+            self.run_pipeline(StubRunner([SKIP_MD]))
+        finally:
+            os.umask(old)
+        self.assertEqual(self.work.stat().st_mode & 0o777, 0o700)
+
     def test_audit_rows_carry_prompt_version_and_model(self):
         write_transcript(self.proj / "sess-v.jsonl",
                           [("user", "ship the feature"), ("assistant", "shipped")])

@@ -1420,6 +1420,9 @@ def extract_session(conn, work_dir, session_id):
     prefix = extracts_dir / session_id
     if not Path(f"{prefix}.map.json").exists():
         extracts_dir.mkdir(parents=True, exist_ok=True)
+        # The first write into the work dir: extracts and model output are
+        # transcript text, so owner-only whatever the umask; 0700 bars subdirs.
+        Path(work_dir).chmod(0o700)
         run_extract(parent_lines(conn, session_id), prefix)
     return part_files(extracts_dir, session_id)
 

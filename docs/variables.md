@@ -32,7 +32,7 @@ Rotation "re-install" means re-running `/hindsight:ops install`, which rewrites 
 | Backfill dir | `import_backfill.py --backfill-dir` | server | `<repo>/local-data/backfill` | — | Same |
 | Model pin | `analyze.MODEL` (what, merge and status passes; stamped on every `audit`/narrative row); `"model"` in `eval/what_cases.json`, `eval/status_v2_cases.json`, `eval/cases.json` | server | constant `claude-haiku-4-5-20251001` in **four places** | change all together, run the evals first | `run_v2.py` asserts its manifest equals `analyze.MODEL`; `what_run.py` uses `analyze.MODEL` directly (its manifest string is a label); `run.py` (v1) uses `cases.json`'s own. Nothing else enforces the gate |
 | Prompt versions | `analyze.PROMPT_VERSION` `what-v3`, `STATUS_VERSION` `status-v2`; `merge-v1.txt` | server | constants → `cli/prompts/<v>.txt` | — | Recorded on every row; the what cache dir is keyed by version. The merge prompt is not versioned on the row |
-| Schema version | `analyze.init_db` `PRAGMA user_version` | server | `12` (v10 additive v2 core, v11 drops `audit.date`, v12 drops `scan_runs`) | — | A downgrade is not supported. Any process that calls `init_db` — the capture hook included — can fire a pending migration |
+| Schema version | `analyze.init_db` `PRAGMA user_version` | server | `13` (v10 additive v2 core, v11 drops `audit.date`, v12 drops `scan_runs`, v13 redacts stored blobs and `VACUUM`s) | — | A downgrade is not supported. Any process that calls `init_db` — the capture hook included — can fire a pending migration |
 | `claude -p` timeout | `analyze.CALL_TIMEOUT`; `eval/run.py` literal | server | `300` s per call | — | The only per-call bound; no per-run cap |
 | Model flags | `analyze.MODEL_FLAGS`, `MODEL_CWD` | server | `--tools "" --strict-mcp-config --settings {"disableAllHooks": true}`, cwd `$TMPDIR/hindsight-model-cwd` | — | See [automation.md](automation.md) |
 | Subprocess timeouts | `claude --version`, `osascript` | server | `30` s; `git` calls have none | — | — |
@@ -72,8 +72,8 @@ the DB and its sidecars are `0600` inside a `0700` Hindsight home (`home.private
 | Where | What | How | Exposure |
 | --- | --- | --- | --- |
 | `raw_records.line` | Every transcript line verbatim, zlib-compressed, kept `HINDSIGHT_RAW_DAYS` past the session's newest record | `capture.py`, the sweep | Anyone who can read `hindsight.db` |
-| `blobs.content` | **Verbatim** `~/.claude/{CLAUDE.md, settings.json, settings.local.json, keybindings.json, mcp.json}` and `installed_plugins.json`, current and every changed version since first run — tokens in `env` blocks or MCP headers included. Never compacted | `capture_backstop` | Same. **Never queried by `serve.py`** |
-| `blobs.content` | Every committed version of every `.claude/*` file in every repo under the projects dir — `settings.local.json`, `.mcp.json` included if ever committed | `_capture_project_git` | Same |
+| `blobs.content` | `~/.claude/{CLAUDE.md, settings.json, settings.local.json, keybindings.json, mcp.json}` and `installed_plugins.json`, current and every changed version since first run, **redacted** (`redact.py`): secret-named keys, `headers` values and known key shapes become `<redacted>`; a secret under an innocent name and in no known shape is not caught. Never compacted | `capture_backstop` | Same. **Never queried by `serve.py`** |
+| `blobs.content` | Every committed version of every `.claude/*` file in every repo under the projects dir — `settings.local.json`, `.mcp.json` included if ever committed — redacted the same way | `_capture_project_git` | Same |
 | `tool_events.error_text` | Verbatim, uncapped text of every failed tool result (ADR-0027): stderr, tracebacks, absolute paths, whatever a command printed | `substrate.py` deriver | **Served** in the where blob (`errs[].t`) |
 | `otel_events.attributes` | Every OTLP attribute as JSON; whatever Claude Code exports — more with `OTEL_LOG_TOOL_DETAILS=1` | `listener.py` | Database |
 | `audit.markdown`, `status_narrative` | Model-written prose derived from transcripts | analysis run | **Served** (what-view, how-view) |
@@ -83,7 +83,7 @@ the DB and its sidecars are `0600` inside a `0700` Hindsight home (`home.private
 
 **Rotation:** if `hindsight.db`, a backup of `<home>` or `local-data/` is ever copied off the machine or committed, treat
 every key in `~/.claude/settings*.json`, `~/.claude/mcp.json` and any workspace `.claude/settings.local.json`
-/ `.mcp.json` as exposed and rotate — and treat the transcripts as disclosed. Deleting `blobs` rows does not recall a copy already taken.
+/ `.mcp.json` as exposed and rotate — and treat the transcripts as disclosed. Redaction does not recall a copy already taken: a backup made before v13 (`hindsight.db.pre-v*` included) still holds config secrets.
 
 **Client-side bundling:** each page inlines `tokens.css`, the view's JS, and JSON blobs as `const`s
 (`<`-escaped against script breakout):

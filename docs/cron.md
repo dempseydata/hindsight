@@ -40,9 +40,9 @@ Replaced wholesale each run: `sunk_cost`. Appended: `raw_records`, `change_event
 
 sweep → project bookkeeping → derivation → drift guard and cross-check (skipped if derivation failed or any session is still due) → what-pass → how narrative (skipped if the what-pass paused) → backstop → sunk-cost scan → compaction → `health` row (`source=analysis`). Each job runs in its own try block; a failure is one `<job> failed:` stderr line and lands in the health row (ADR-0038).
 
-### The first run after a schema bump (v10–v12)
+### The first run after a schema bump (v10–v13)
 
-`init_db` runs migrations before anything else. v10 (ADR-0031, ADR-0039) is additive and ends with `auto_vacuum = INCREMENTAL` and a full `VACUUM`; v11 drops `audit.date`; v12 drops `scan_runs`. **No model calls**; audit rows and caches are untouched. Whichever process calls `init_db` first with the new code does this — the async capture hook included, so the `VACUUM` can run inside a hook firing. The listener runs only its own `CREATE IF NOT EXISTS`; `serve.py` and the health hook open read-only and never migrate. Re-derivation is no longer a schema bump: a deriver version bump clears its `deriver_state` and the next run rebuilds every session with raw records.
+`init_db` runs migrations before anything else. v10 (ADR-0031, ADR-0039) is additive and ends with `auto_vacuum = INCREMENTAL` and a full `VACUUM`; v11 drops `audit.date`; v12 drops `scan_runs`; v13 redacts the stored backstop blobs and runs a full `VACUUM` (about 6 s on a 1.1 GB store), retried at the next open if the store is busy. **No model calls**; audit rows and caches are untouched. Whichever process calls `init_db` first with the new code does this — the async capture hook included, so the `VACUUM` can run inside a hook firing. The listener runs only its own `CREATE IF NOT EXISTS`; `serve.py` and the health hook open read-only and never migrate. Re-derivation is no longer a schema bump: a deriver version bump clears its `deriver_state` and the next run rebuilds every session with raw records.
 
 ### The drift guard, every run
 

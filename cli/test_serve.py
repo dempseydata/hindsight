@@ -410,6 +410,21 @@ class ServerTest(unittest.TestCase):
         c.close()
         return r, body
 
+    def test_rebound_host_refused(self):
+        # DNS rebinding: the views are the whole store, readable same-origin by a rebound page.
+        c = http.client.HTTPConnection("127.0.0.1", self.port)
+        try:
+            c.request("GET", "/what", headers={"Host": f"attacker.example:{self.port}"})
+            self.assertEqual(c.getresponse().status, 403)
+        finally:
+            c.close()
+        c = http.client.HTTPConnection("127.0.0.1", self.port)
+        try:
+            c.request("GET", "/", headers={"Host": f"localhost:{self.port}"})
+            self.assertEqual(c.getresponse().status, 302)
+        finally:
+            c.close()
+
     def test_root_redirects_to_what(self):
         r, _ = self.get("/")
         self.assertEqual(r.status, 302)

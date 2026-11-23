@@ -69,6 +69,7 @@ from pathlib import Path
 # cli/ is sys.path[0] when run as a script, and importers of this module
 # already resolve cli/ — no path insert needed (the #50 shadowing lesson).
 import how
+from home import loopback_host
 from analyze import (DEFAULT_PROJECTS_DIR, DEFAULT_DB, LOST, REPO,  # noqa: E402 — one authority on paths
                      BREAKAGE_COLS, SECTIONS, SIDE_REQUESTS, audit_title, breakage_text,
                      day_sql, local_day, session_day)
@@ -862,6 +863,10 @@ def render(view, conn, query="", projects_dir=DEFAULT_PROJECTS_DIR):
 def make_server(port, db_path, projects_dir=DEFAULT_PROJECTS_DIR):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            # DNS rebinding: a page whose domain resolves to 127.0.0.1 is same-origin here.
+            if not loopback_host(self.headers.get("Host")):
+                self.send_error(403)
+                return
             path, _, query = self.path.partition("?")
             if path == "/":
                 self.send_response(302)

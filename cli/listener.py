@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from capture import write_health
-from home import home, log_to
+from home import home, log_to, loopback_host
 
 DEFAULT_DB = home() / "hindsight.db"
 DEFAULT_PORT = 4318
@@ -164,9 +164,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        # #34: both guards run before the body is read. A browser cannot send
+        # #34: every guard runs before the body is read. A browser cannot send
         # application/json cross-origin without a preflight, and there is no
-        # OPTIONS handler, so the type check alone closes the page vector.
+        # OPTIONS handler; the Host check covers a page that rebinds its
+        # domain to 127.0.0.1, which is same-origin and needs no preflight.
+        if not loopback_host(self.headers.get("Host")):
+            return self._refuse(403, "host not loopback")
         if not self.headers.get("Content-Type", "").startswith("application/json"):
             return self._refuse(415, "content-type not application/json")
         length = self.headers.get("Content-Length", "")
@@ -224,6 +227,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         # #37: the liveness probe. The one GET, no DB touch.
+        if not loopback_host(self.headers.get("Host")):
+            return self._refuse(403, "host not loopback")
         ok = self.path == "/health"
         body = b'{"ok": true}' if ok else b""
         self.send_response(200 if ok else 404)

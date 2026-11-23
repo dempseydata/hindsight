@@ -92,7 +92,7 @@ session id, project, day, skip/ADR flags, and the model-written title and sectio
 from transcripts), `WHERE` (tool, lens, session, subagent, model, latency, hook, retry, MCP-connection
 rows; `errs` with the verbatim error text above; sunk-cost plugin and skill names with tokens; medians;
 coverage). The how-view is server-rendered HTML with no blob. No key, token or path constant exists to
-bundle; `error_text` is the one served field that can carry a path or a secret. `serve.py` has no auth and no Host-header check, so anything that can reach `127.0.0.1:8321` — DNS rebinding not excluded — can read it.
+bundle; `error_text` is the one served field that can carry a path or a secret. `serve.py` has no auth, so any local process that can reach `127.0.0.1:8321` can read it; a non-loopback `Host` (DNS rebinding) is refused.
 
 ## Pre-go-live checklist
 

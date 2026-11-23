@@ -306,6 +306,23 @@ class ListenerTest(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_rebound_host_refused_before_ingest(self):
+        # DNS rebinding: a page whose domain resolves to 127.0.0.1 is same-origin,
+        # so the content-type preflight does not stop it; the Host header does.
+        before = self.count("otel_events")
+        status, _ = self.post("/v1/logs", logs_payload(log_record(session_id="sess-rebind")),
+                              headers={"Host": "attacker.example:4318"})
+        self.assertEqual(status, 403)
+        self.assertEqual(self.count("otel_events"), before)
+
+    def test_loopback_host(self):
+        from home import loopback_host
+        for ok in (None, "", "127.0.0.1:4318", "LOCALHOST:8321", "localhost", "[::1]:4318"):
+            self.assertTrue(loopback_host(ok), ok)
+        for bad in ("attacker.example", "attacker.example:4318", "localhost.attacker.example",
+                    "127.0.0.1.nip.io:4318", "0.0.0.0:4318"):
+            self.assertFalse(loopback_host(bad), bad)
+
     def test_store_init_idempotent(self):
         listener.init_db(self.db)
         listener.init_db(self.db)

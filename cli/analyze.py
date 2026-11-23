@@ -1632,6 +1632,14 @@ MODEL_CWD = Path(tempfile.gettempdir()) / "hindsight-model-cwd"
 MODEL_FLAGS = ["--tools", "", "--strict-mcp-config", "--settings", '{"disableAllHooks": true}']
 
 
+# The CLI's own usage-stop lines (read from claude 2.1.329's strings): its composed
+# "You've hit your ... limit" family, the server's billing message, or a bare 429
+# under "API Error". A bare "limit" also matched context, size and nesting limits.
+LIMIT_RE = re.compile(r"you.ve (?:hit|reached) your|usage limit reached|spend limit reached"
+                      r"|out of (?:extra )?usage|credit balance (?:is )?too low"
+                      r"|api error: 429|rate_limit_error|billing_error", re.I)
+
+
 def default_model_runner(prompt, model=MODEL):  # model: eval/run_v2.py's comparison override
     MODEL_CWD.mkdir(exist_ok=True)
     try:
@@ -1650,10 +1658,10 @@ def default_model_runner(prompt, model=MODEL):  # model: eval/run_v2.py's compar
               file=sys.stderr)
         raise LimitExhausted("claude CLI not found on PATH")
     if r.returncode != 0:
-        # ponytail: bare substring match on stderr — tighten against a
-        # confirmed claude -p limit-exhaustion message if this false-positives.
-        if "limit" in (r.stderr or "").lower():
-            raise LimitExhausted(r.stderr.strip())
+        # Either stream: -p prints the composed limit line as its result.
+        said = f"{r.stderr or ''}\n{r.stdout or ''}".strip()
+        if LIMIT_RE.search(said):
+            raise LimitExhausted(said)
         print(f"model call exited {r.returncode}: {(r.stderr or '').strip()[:200]}",
               file=sys.stderr)
         return None
@@ -2079,7 +2087,8 @@ def _run_jobs(root, db_path, work_dir, model_runner, claude_dir, projects_dir,
             session = {"id": sid, "project": project, "transcript_path": path}
             try:
                 process_session(conn, work_dir, session, model_runner)
-            except LimitExhausted:
+            except LimitExhausted as e:
+                print(f"model calls paused: {str(e)[:200]}", file=sys.stderr)
                 return True  # designed pause — remaining sessions stay pending/partial
         return False
 

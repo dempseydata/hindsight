@@ -79,7 +79,7 @@ No row-level security: SQLite has none and there is one owner.
 | Owner-only store | `home.private` sets the DB and sidecars `0600` and Hindsight home `0700` on every `init_db`; logs are opened `0600` (`home.log_to`) | The analysis work dir is `0700` too (`extract_session`). Plists and a `--db` directory outside home still take the umask |
 | `blobs` holds config verbatim | `capture_backstop` snapshots the whole `BACKSTOP_SURFACE` file and every `.claude/` commit's before/after | Reading the DB file reveals every settings/MCP file, current and historical; protected only by the file's Unix mode; it lives in Hindsight home, outside the repo. See [variables.md](variables.md). |
 | Model input is not redacted | ADR-0034 rejects a redaction pass | Secrets typed into a conversation reach the model in the extract, and sit in the raw store until compaction |
-| No in-code spend cap | Serial calls; only the `"limit"` stderr sniff and `claude` missing pause the what-pass | The first run is a full-history backfill bounded by subscription limits alone |
+| No in-code spend cap | Serial calls; only a usage-stop line (`LIMIT_RE`) and `claude` missing pause the what-pass | The first run is a full-history backfill bounded by subscription limits alone |
 | Model output gated by shape, not content | `valid_entry`, `contract_v2` | A well-formed but wrong entry is written; `eval/` is the standing check. See [automation.md](automation.md). |
 | Port squatting on 8321 | `hindsight.http_up` treats any HTTP answer as the views server | `/hindsight:ops open` sends the browser to whatever answers |
 | Pre-commit hook is opt-in | A clone without `core.hooksPath` set has no denylist | The publication rule then rests on the author alone |

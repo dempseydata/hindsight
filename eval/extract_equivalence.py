@@ -19,6 +19,7 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "cli"))
@@ -39,7 +40,7 @@ def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=str(analyze.DEFAULT_DB))
     db = ap.parse_args(argv).db
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{quote(db)}?mode=ro", uri=True)
     compared, differ = 0, []
     try:
         for sid, path, hw in conn.execute(

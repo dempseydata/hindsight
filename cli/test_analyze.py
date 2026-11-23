@@ -568,6 +568,17 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
             self.assertEqual(extract_equivalence.main(["--db", str(self.db)]), 0)
         self.assertIn("compared 1 session(s): 1 equal", out.getvalue())
 
+    def test_equivalence_check_opens_a_store_under_uri_characters(self):
+        """Issue #115: `?`, `#` and `%` in the --db path are path, not URI syntax."""
+        db = Path(self.tmp.name) / "odd?mode=rw#%41" / "hindsight.db"
+        analyze.init_db(db).close()
+        sys.path.insert(0, str(analyze.REPO / "eval"))
+        self.addCleanup(sys.path.remove, str(analyze.REPO / "eval"))
+        import extract_equivalence
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(extract_equivalence.main(["--db", str(db)]), 0)
+        self.assertIn("compared 0 session(s)", out.getvalue())
+
     def test_reaudit_share_is_measured_on_captured_bytes(self):
         """Issue #79, ADR-0039 §7: growth the hook captured counts toward
         REAUDIT_SHARE even once the transcript is pruned, and `size` and

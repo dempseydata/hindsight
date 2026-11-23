@@ -136,7 +136,7 @@ C4Component
   }
 
   Container_Boundary(srv, "Serve") {
-    Component(serve, "serve.py", "http.server · read-only", "Routes / → what, /what /where /how. Header chrome, day buckets, the header-visual mount, tokens.css inlining, breakage banner, error_line() (ADR-0027 §3).")
+    Component(serve, "serve.py", "http.server · read-only", "Routes / → what, /what /where /how; its stdlib request log is the view-use record (serve.log). Header chrome, day buckets, the header-visual mount, tokens.css inlining, breakage banner, error_line() (ADR-0027 §3).")
     Component(how, "how.py", "how-view data pipeline", "Declaration resolution (local-process.md over the house master — ADR-0032; strict YAML subset — ADR-0011), mechanical trail merge (ADR-0010), run ledger with off-script runs, ADR headers (ADR-0035), status narrative inputs.")
   }
 

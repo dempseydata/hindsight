@@ -222,6 +222,17 @@ class OpsTest(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertIn("no database", log.read_text())
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+
+    def test_serve_tightens_an_existing_world_readable_log(self):
+        log = self.home / "logs" / "serve.log"
+        log.parent.mkdir(parents=True)
+        log.write_text("old\n")
+        log.chmod(0o644)
+        with mock.patch.object(hindsight, "SERVE_PORT", self.free_port()):
+            self.run_ops("serve")
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        self.assertTrue(log.read_text().startswith("old\n"))
 
     def test_serve_when_a_server_already_answers_starts_nothing(self):
         with mock.patch.object(hindsight, "http_up", return_value=True):

@@ -81,7 +81,7 @@ the `listener` health row updated.
 
 | Step | Where | Check | Side effect |
 | --- | --- | --- | --- |
-| 1. GET `/` (302 → `/what`), `/what`, `/where`, `/how` | `serve.py:862-886` | Loopback bind; no auth; `Host` not naming loopback → `403`; other paths → 404 (`VIEWS` allowlist); other methods → 501 (stdlib) | — |
+| 1. GET `/` (302 → `/what`), `/what`, `/where`, `/how` | `serve.py:862-886` | Loopback bind; no auth; `Host` not naming loopback → `403`; other paths → 404 (`VIEWS` allowlist); other methods → 501 (stdlib) | One request line on stderr (stdlib `log_message`: time, path, query, status) → `<home>/logs/serve.log` when started by `/hindsight:ops`; the view-use record (ticket 119). Never the DB (ADR-0008) |
 | 2. Open DB `mode=ro` | `serve.py:94-98` | SQLite enforces read-only; WAL + 30 s timeout, so a writer's checkpoint waits rather than 500s. The path is URL-quoted, as in `health.py:116` and the `how.py` smoke entry | — |
 | 3. Query | `serve.py:101-537`, `how.py:256-292` | All values bound with `?`. The one request parameter, `?p=` on `/how`, is membership-checked against `declaring_projects` before use; an unknown value is escaped into a note and falls back to the busiest (`serve.py:717-729`) | — |
 | 4. Resolve the chosen project's process | `serve.py:567-573`, `how.py:192-238, 440-450` | Root `local-process.md`, else the house master named under `## Process` in `~/.claude/CLAUDE.md` (ADR-0032); strict YAML subset, any fault → declaration invalid, error text rendered escaped | Filesystem reads outside the repo (every DB project's `local-process.md`, the master, `docs/adr/*.md`); `git log` per ADR file for a valid declaration |

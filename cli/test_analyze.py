@@ -623,6 +623,28 @@ class AnalyzeTest(DbHelpers, unittest.TestCase):
             self.assertIsNone(analyze.default_model_runner("prompt"))
         self.assertIn("exited 2: auth expired", err.getvalue())
 
+    def test_default_model_runner_pauses_on_usage_stops_only(self):
+        # The CLI's usage-stop lines pause the run, on either stream; other
+        # failures that merely mention a limit fail the session, not the run.
+        stops = [("You've hit your session limit \u00b7 resets 3pm", ""),
+                 ("", "You\u2019ve reached your weekly limit"),
+                 ("", "API Error: 429 spend limit reached \u00b7 resets Aug 8"),
+                 ("", "You're out of usage credits"),
+                 ("", 'API Error: 400 {"type":"error","error":{"type":"billing_error"}}')]
+        others = ["Context limit reached \u00b7 /compact or /clear to continue",
+                  "Subagent nesting limit reached (depth 3)", "output token limit exceeded",
+                  "Error: line 429 of settings.json"]
+        for stdout, stderr in stops:
+            fake = subprocess.CompletedProcess([], 1, stdout=stdout, stderr=stderr)
+            with unittest.mock.patch.object(analyze.subprocess, "run", return_value=fake):
+                with self.assertRaises(analyze.LimitExhausted, msg=stdout or stderr):
+                    analyze.default_model_runner("prompt")
+        for stderr in others:
+            fake = subprocess.CompletedProcess([], 1, stdout="", stderr=stderr)
+            with unittest.mock.patch.object(analyze.subprocess, "run", return_value=fake), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertIsNone(analyze.default_model_runner("prompt"), stderr)
+
     def test_default_model_runner_has_no_tools_and_no_repo_cwd(self):
         # Transcript text in the prompt must not be able to drive tools or
         # inherit the repo's project permissions (security-preflight).

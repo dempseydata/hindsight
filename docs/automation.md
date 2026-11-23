@@ -20,9 +20,11 @@ prompt on stdin, `capture_output`, `timeout=300`, `cwd=$TMPDIR/hindsight-model-c
 | Pin | `analyze.MODEL`; `eval/what_cases.json`, `eval/status_v2_cases.json` and `eval/cases.json` carry the same string |
 
 **Failure mapping:** timeout → `None` (session `partial`). No `claude` on `PATH` → `LimitExhausted`.
-Non-zero exit whose stderr contains `limit` (any case) → `LimitExhausted` — a bare substring match, flagged
-`ponytail:` in the code: a non-limit error mentioning the word pauses the whole run, and a real limit
-message without it is just a failed session. Any other non-zero exit → `None`, first 200 chars of stderr logged.
+Non-zero exit whose stdout or stderr matches `LIMIT_RE` → `LimitExhausted`, with the reason logged as
+`model calls paused:`. `LIMIT_RE` holds the CLI's own usage-stop lines, read from the strings in Claude Code
+2.1.329 rather than from a live stop: the "You've hit/reached your … limit" family, `usage`/`spend limit
+reached`, `out of usage`, `credit balance too low`, `API Error: 429`, and `rate_limit_error`/`billing_error`.
+A context, size or nesting limit is an ordinary failed session. Any other non-zero exit → `None`, first 200 chars of stderr logged.
 
 ## A1 — What-pass (one audit entry per session)
 

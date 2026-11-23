@@ -38,3 +38,7 @@ A menu bar icon needs a process that lives as long as the login session, which t
 ## Amendment (2026-11-15)
 
 The 2026-08-17 amendment is itself falsified: OTel does emit hook telemetry (`hook_execution_complete`; issue #61). The original Context sentence was right. Self-instrumentation is retired by ADR-0033, which also makes the capture hook a second short-lived writer to the store. It is spawned per event by Claude Code and is never resident, so the boundary test holds.
+
+## Amendment (2026-11-23)
+
+"Always return 200" covered a store failure too, and that lost data: a write that could not get the store (the nightly holding it past the 5 s busy timeout, a full disk) rolled back, and was answered `200` with one rejected record, which the OTel exporter treats as delivered. Worse, the per-row handlers caught the lock as a bad row, so the batch was half-counted and gone. A store failure is now `503` with `Retry-After: 5`: retryable to the exporter Claude Code bundles (`@opentelemetry/otlp-exporter-base` retries 429, 502, 503 and 504, and honours `Retry-After`), and safe to resend because the transaction rolled back. Per-row handlers re-raise `sqlite3.OperationalError`, so a store failure is never mistaken for a bad row. A body the listener cannot parse is still `200` with `partialSuccess`: a resend of the same bytes cannot succeed, so the original reasoning holds there.

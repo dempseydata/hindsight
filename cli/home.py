@@ -25,6 +25,19 @@ def loopback_host(host):
     return host in ("127.0.0.1", "localhost", "[::1]")
 
 
+def private(db_path):
+    """Owner-only modes on the store, whatever the umask: 0600 on the db and its
+    WAL sidecars, 0700 on its directory when that is Hindsight home. A --db
+    elsewhere leaves its directory alone: that one is the operator's choice."""
+    db_path = Path(db_path)
+    for suffix in ("", "-wal", "-shm"):
+        p = Path(f"{db_path}{suffix}")
+        if p.exists():
+            p.chmod(0o600)
+    if db_path.parent.resolve() == home().resolve():
+        db_path.parent.chmod(0o700)
+
+
 def domain():
     return f"gui/{os.getuid()}"
 
@@ -40,7 +53,8 @@ def log_to(name):
     start instead of failing the spawn or swallowing errors (ADR-0036)."""
     d = home() / "logs"
     d.mkdir(parents=True, exist_ok=True)
-    fd = os.open(d / name, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    home().chmod(0o700)
+    fd = os.open(d / name, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     sys.stdout.flush()
     sys.stderr.flush()
     os.dup2(fd, 1)

@@ -13,6 +13,7 @@ import gzip
 import http.client
 import io
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -377,6 +378,33 @@ class HealthRowTest(unittest.TestCase):
 
         self.post("/v1/metrics", METRICS_PAYLOAD)
         self.assertIsNone(self.row()["failing_since"])
+
+
+class OwnerOnlyModesTest(unittest.TestCase):
+    """The store is transcripts: owner-only whatever the umask, and a --db
+    outside Hindsight home leaves its directory alone."""
+
+    def test_init_db_closes_store_under_open_umask(self):
+        import analyze
+        from unittest import mock
+        old = os.umask(0o022)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                h = Path(tmp) / "home"
+                with mock.patch.dict(os.environ, {"HINDSIGHT_HOME": str(h)}):
+                    for init in (listener.init_db, analyze.init_db):
+                        init(h / "hindsight.db")
+                        self.assertEqual(h.stat().st_mode & 0o777, 0o700)
+                        for suffix in ("", "-wal", "-shm"):
+                            p = Path(f"{h / 'hindsight.db'}{suffix}")
+                            if p.exists():
+                                self.assertEqual(p.stat().st_mode & 0o777, 0o600, p)
+                    other = Path(tmp) / "elsewhere"
+                    listener.init_db(other / "x.db")
+                    self.assertEqual(other.stat().st_mode & 0o777, 0o755)
+                    self.assertEqual((other / "x.db").stat().st_mode & 0o777, 0o600)
+        finally:
+            os.umask(old)
 
 
 if __name__ == "__main__":

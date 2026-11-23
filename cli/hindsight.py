@@ -101,6 +101,7 @@ def install(from_path=None):
         print(f"moved {src} to {db}")
     logs = h / "logs"
     logs.mkdir(parents=True, exist_ok=True)
+    h.chmod(0o700)   # the store is transcripts: owner-only, whatever the umask
     v1_logs = Path.home() / "Library" / "Logs" / "hindsight"
     for f in sorted(v1_logs.glob("*.log")):   # v1's log history moves once, never over a newer log
         if not (logs / f.name).exists():

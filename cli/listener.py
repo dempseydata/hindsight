@@ -5,7 +5,8 @@ Receives OTLP/HTTP JSON on /v1/logs and /v1/metrics, writes otel_events and
 otel_metrics rows to the local SQLite store, and its `listener` health row (#93). Ingest
 contract (ADR-0003, definition/ingest-schema-verification.md): chunked bodies
 handled explicitly, every attribute optional-by-default kept as JSON, per-row
-count-and-skip, always return 200 once a body is accepted. Two guards run
+count-and-skip, always return 200 once a body is accepted — except when the
+store itself fails, which answers 503 so the exporter resends (ADR-0001). Two guards run
 before the body is read (#34): Content-Type must be application/json (415)
 and the declared, chunked or inflated body must fit MAX_BODY (413 / dropped).
 The one GET, /health, is a liveness probe (#37) and touches nothing.
@@ -30,6 +31,7 @@ from home import home, log_to, loopback_host, private
 DEFAULT_DB = home() / "hindsight.db"
 DEFAULT_PORT = 4318
 MAX_BODY = 8 * 1024 * 1024   # #34: declared, chunked and inflated body ceiling
+BUSY_TIMEOUT_MS = 5000       # a write waits this long for the nightly before a 503
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS otel_events (
@@ -110,6 +112,8 @@ def ingest_logs(payload, conn):
                         " VALUES (?, ?, ?, ?)",
                         (name, attrs.get("session.id"), ts, json.dumps(attrs)))
                     ok += 1
+                except sqlite3.OperationalError:
+                    raise  # the store failed, not this row: the batch is retried
                 except Exception:
                     bad += 1
     return ok, bad
@@ -135,6 +139,8 @@ def ingest_metrics(payload, conn):
                                 (name, iso(dp.get("timeUnixNano")),
                                  None if val is None else float(val), json.dumps(attrs)))
                             ok += 1
+                        except sqlite3.OperationalError:
+                            raise  # the store failed, not this row: see ingest_logs
                         except Exception:
                             bad += 1
     return ok, bad
@@ -158,9 +164,11 @@ class Handler(BaseHTTPRequestHandler):
             return body
         return self.rfile.read(int(self.headers.get("Content-Length", 0)))
 
-    def _refuse(self, status, why):
+    def _refuse(self, status, why, retry_after=None):
         print(f"{self.path}: refused {status}, {why}", file=sys.stderr, flush=True)
         self.send_response(status)
+        if retry_after is not None:
+            self.send_header("Retry-After", str(retry_after))
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -190,7 +198,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("truncated gzip stream")
             payload = json.loads(body)
             conn = sqlite3.connect(self.server.db_path)
-            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
             try:
                 with conn:
                     if self.path == "/v1/logs":
@@ -199,6 +207,13 @@ class Handler(BaseHTTPRequestHandler):
                         _, bad = ingest_metrics(payload, conn)
             finally:
                 conn.close()
+        except sqlite3.Error as e:
+            # The store, not the batch, failed (locked past busy_timeout, disk
+            # full): the transaction rolled back, so a resend duplicates nothing.
+            # 503 is retryable to the OTel exporter (429/502/503/504) and it
+            # honours Retry-After; a 200 here dropped the batch for good.
+            self._health(f"{self.path}: {type(e).__name__}: {e}")
+            return self._refuse(503, f"store unavailable, retry: {e}", retry_after=5)
         except Exception as e:
             bad += 1
             error = f"{self.path}: {type(e).__name__}: {e}"

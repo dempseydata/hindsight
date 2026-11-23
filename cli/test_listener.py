@@ -223,6 +223,35 @@ class ListenerTest(unittest.TestCase):
         self.assertEqual(body, {})
         self.assertEqual(self.count("otel_events"), before + 1)
 
+    def test_locked_store_answers_503_then_the_resend_lands_once(self):
+        """A write that cannot get the store (the nightly holding it past the
+        busy timeout) used to answer 200 and lose the batch: the exporter
+        never resends a 200. Now 503 + Retry-After, nothing half-written."""
+        from unittest import mock
+        rec = log_record(session_id="sess-locked")
+        blocker = sqlite3.connect(self.db)
+        blocker.execute("BEGIN EXCLUSIVE")
+        try:
+            with mock.patch.object(listener, "BUSY_TIMEOUT_MS", 50), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+                try:
+                    conn.request("POST", "/v1/logs", json.dumps(logs_payload(rec)),
+                                 {"Content-Type": "application/json"})
+                    resp = conn.getresponse()
+                    resp.read()
+                    self.assertEqual(resp.status, 503)
+                    self.assertEqual(resp.getheader("Retry-After"), "5")
+                finally:
+                    conn.close()
+        finally:
+            blocker.rollback()
+            blocker.close()
+        status, _ = self.post("/v1/logs", logs_payload(rec))
+        self.assertEqual(status, 200)
+        landed = [r for r in self.rows("otel_events") if r[2] == "sess-locked"]
+        self.assertEqual(len(landed), 1)
+
     def test_garbage_body_still_200(self):
         status, body = self.post("/v1/logs", b"not json at all", raw=True)
         self.assertEqual(status, 200)

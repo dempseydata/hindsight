@@ -6,10 +6,23 @@ Nothing deletes it. Read at call time; the --db defaults in analyze, listener
 and serve read it once, at import.
 """
 import os
+import re
 import sys
 from pathlib import Path
 
 INGEST, NIGHTLY = "com.hindsight.ingest", "com.hindsight.nightly"  # launchd labels
+
+
+def loopback_host(host):
+    """DNS-rebinding guard for the two loopback servers: True when the Host
+    header names loopback. A page that rebinds its own domain to 127.0.0.1
+    still sends its own domain here. No header passes: browsers always send one."""
+    if not host:
+        return True
+    host = host.strip().lower()
+    if re.fullmatch(r".*:\d+", host):
+        host = host.rsplit(":", 1)[0]
+    return host in ("127.0.0.1", "localhost", "[::1]")
 
 
 def domain():

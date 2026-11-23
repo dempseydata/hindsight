@@ -50,7 +50,7 @@ No row-level security: SQLite has none and there is one owner.
 | Guard | Enforced by |
 | --- | --- |
 | Both servers reachable only from this Mac | Socket bind to `127.0.0.1` (`listener.make_server`, `serve.make_server`). Neither checks `Host`, so loopback is not the same as same-machine *origin* (F1, F4) |
-| A cross-site page cannot post to the listener | `Content-Type` must start `application/json` (`415`) and there is no OPTIONS handler, so no preflight succeeds (#34). Does not stop a DNS-rebinding page, which is same-origin |
+| A cross-site page cannot post to the listener | `Content-Type` must start `application/json` (`415`) and there is no OPTIONS handler, so no preflight succeeds (#34). A DNS-rebinding page is same-origin, so `Host` must also name loopback (`403`, `home.loopback_host`) |
 | Bounded listener bodies | `MAX_BODY` 8 MiB on declared, chunked and inflated length (`413` or dropped) — except a negative chunk size (F1 step 2) |
 | The server and health hook cannot write | SQLite URI `file:…?mode=ro` (`serve.open_db`, `health.check`; `how.py`'s smoke entry likewise), each with the path URL-quoted |
 | A page render never blocks a run, capture or listener commit, and vice versa | `PRAGMA journal_mode=WAL`, persisted in the file by whichever writer opens first; 30 s connect timeout; listener `busy_timeout` 5 s; capture's `BEGIN IMMEDIATE` |
@@ -71,9 +71,9 @@ No row-level security: SQLite has none and there is one owner.
 
 | Gap | Fact | Consequence |
 | --- | --- | --- |
-| Listener accepts any local writer, and a rebinding page | No auth, no `Host` check; unknown paths still return 200 and record a health success (`Handler.do_POST`) | Any local process, or a page that rebinds its hostname to `127.0.0.1`, can forge `otel_events` — which take precedence over transcript usage in the where view, feed the cross-check and the health check's capture-behind line (F1) |
+| Listener accepts any local writer | No auth; unknown paths still return 200 and record a health success (`Handler.do_POST`) | Any local process can forge `otel_events` — which take precedence over transcript usage in the where view, feed the cross-check and the health check's capture-behind line (F1) |
 | Negative chunk size bypasses the body cap | `int(size, 16)` accepts `-N`; `rfile.read(-N)` reads to EOF (`listener.py:149-155`) | A local client can push an uncapped body into memory and hold a handler thread until it closes the connection |
-| Server has no auth and no `Host` check | `serve.py` serves every view to any loopback client, and to a DNS-rebinding page (F4) | Session titles, model prose, project and consumer names, and — since ADR-0027 — verbatim, uncapped error text including tracebacks that carry paths on every frame. Not `blobs`, not raw records |
+| Server has no auth | `serve.py` serves every view to any local client; a non-loopback `Host` (a DNS-rebinding page) gets `403` (F4) | Session titles, model prose, project and consumer names, and — since ADR-0027 — verbatim, uncapped error text including tracebacks that carry paths on every frame. Not `blobs`, not raw records |
 | Capture reads any `.jsonl` path | `capture.is_transcript` checks the suffix only; ids come from the path stem | Whoever controls a hook payload can have any readable `.jsonl` file stored verbatim and synced as a session; the stem reaches `data-id` unescaped in `what.js:33` |
 | Write commands bypass single-flight | Capture, listener, `attribute`, `acknowledge-breakage`, `import_backfill` call `init_db` without the flock | They interleave with a run, serialised only by SQLite's write lock; a first capture after an upgrade can run a pending migration (including v10's `VACUUM`) inside a hook |
 | File modes come from the umask | No `chmod` in `cli/`; logs are opened `0644` (`home.log_to`) | DB, logs, plists and caches are typically world-readable files; isolation from other local users rests on the home directory's mode |

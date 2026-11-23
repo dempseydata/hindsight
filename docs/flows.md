@@ -28,12 +28,12 @@ the `listener` health row updated.
 
 | Step | Where | Check | Side effect |
 | --- | --- | --- | --- |
-| 1. POST `/v1/logs` or `/v1/metrics` | `listener.py:166-176, 241` | Bind `127.0.0.1` only. No auth, **no `Host`-header check**. `Content-Type` not starting `application/json` → `415`; declared `Content-Length` over `MAX_BODY` 8 MiB → `413`, body unread (#34). No OPTIONS handler, so a cross-origin JSON POST cannot preflight | — |
+| 1. POST `/v1/logs` or `/v1/metrics` | `listener.py:166-176, 241` | Bind `127.0.0.1` only. No auth. `Host` not naming loopback → `403` (DNS-rebinding guard). `Content-Type` not starting `application/json` → `415`; declared `Content-Length` over `MAX_BODY` 8 MiB → `413`, body unread (#34). No OPTIONS handler, so a cross-origin JSON POST cannot preflight | — |
 | 2. Dechunk / gunzip / `json.loads` | `listener.py:143-158, 178-187` | Chunked running total or inflated body over `MAX_BODY`, a truncated gzip stream, or any parse failure → whole batch dropped, `200` with `partialSuccess`. **A negative chunk size passes the cap check and `rfile.read(<0)` reads to EOF, uncapped** | — |
 | 3. Per-row insert | `listener.py:88-139, 188-197` | Bad row counted and skipped; batch commits the rest. A malformed *container* yields zero rows and is not counted. **Any other POST path:** body parsed, nothing stored, `200 {}`, and a health *success* written | INSERT `otel_events(event_name, session_id, timestamp, attributes)` / `otel_metrics(...)`, attributes stored as the full JSON dict (resource `service.name`/`service.version` merged in) |
 | 4. Respond | `listener.py:202-211, 213-233` | `200` for any accepted body. `GET /health` → `200 {"ok": true}`, any other GET → `404` (#37, a liveness probe; no DB touch) | UPSERT `health` (`listener`; error text on a dropped batch). stderr → `<home>/logs/listener.log` under launchd (`--log`; exception text and skip counts; never bodies) |
 
-**Deny case:** `415` on a non-JSON content type, `413` on an over-cap declared length (`Handler._refuse`, one stderr line each); otherwise the protection is the bind address. **Not denied:** a DNS-rebinding page (same-origin to `127.0.0.1:4318`, so the type gate does not apply) or any local process can post forged events; those feed the where view's token source (`serve.tok_sql`), the cross-check (F3 step 4a) and the health check's capture-behind line (F6). **Failure that loses data:** DB locked past `busy_timeout=5000` → batch lost, reported as one rejected row and a health error, `200` (`listener.py:188-201`). If the operator enables OTel prompt logging, prompt text lands verbatim in `otel_events.attributes`; nothing filters it.
+**Deny case:** `403` on a `Host` that does not name loopback (the DNS-rebinding guard), `415` on a non-JSON content type, `413` on an over-cap declared length (`Handler._refuse`, one stderr line each); otherwise the protection is the bind address. **Not denied:** any local process can post forged events; those feed the where view's token source (`serve.tok_sql`), the cross-check (F3 step 4a) and the health check's capture-behind line (F6). **Failure that loses data:** DB locked past `busy_timeout=5000` → batch lost, reported as one rejected row and a health error, `200` (`listener.py:188-201`). If the operator enables OTel prompt logging, prompt text lands verbatim in `otel_events.attributes`; nothing filters it.
 
 ## F2 — Capture hook (Claude Code → capture.py → raw store)
 
@@ -81,7 +81,7 @@ the `listener` health row updated.
 
 | Step | Where | Check | Side effect |
 | --- | --- | --- | --- |
-| 1. GET `/` (302 → `/what`), `/what`, `/where`, `/how` | `serve.py:862-886` | Loopback bind; no auth; **no `Host`-header check**; other paths → 404 (`VIEWS` allowlist); other methods → 501 (stdlib) | — |
+| 1. GET `/` (302 → `/what`), `/what`, `/where`, `/how` | `serve.py:862-886` | Loopback bind; no auth; `Host` not naming loopback → `403`; other paths → 404 (`VIEWS` allowlist); other methods → 501 (stdlib) | — |
 | 2. Open DB `mode=ro` | `serve.py:94-98` | SQLite enforces read-only; WAL + 30 s timeout, so a writer's checkpoint waits rather than 500s. The path is URL-quoted, as in `health.py:116` and the `how.py` smoke entry | — |
 | 3. Query | `serve.py:101-537`, `how.py:256-292` | All values bound with `?`. The one request parameter, `?p=` on `/how`, is membership-checked against `declaring_projects` before use; an unknown value is escaped into a note and falls back to the busiest (`serve.py:717-729`) | — |
 | 4. Resolve the chosen project's process | `serve.py:567-573`, `how.py:192-238, 440-450` | Root `local-process.md`, else the house master named under `## Process` in `~/.claude/CLAUDE.md` (ADR-0032); strict YAML subset, any fault → declaration invalid, error text rendered escaped | Filesystem reads outside the repo (every DB project's `local-process.md`, the master, `docs/adr/*.md`); `git log` per ADR file for a valid declaration |
@@ -90,7 +90,7 @@ the `listener` health row updated.
 | 5b. Session anchor `/what#<sid>` (ADR-0023) | `what.js:146-151` | Fragment never reaches the server. `CSS.escape` in the selector, `esc` in the miss note; never writes filter state — a row outside the filter is stated under the ledger | — |
 | 6. Browser | `theme.js`, `chrome.js`, `how.js` | No fetch, no external URL; `localStorage.theme`, the per-tab `sessionStorage.filter` (issue #10), and `how.js` writing `?p=` back into that filter — the one link that writes state | — |
 
-**No mutation route exists.** Refresh is a browser reload; a new run is F3. **Deny case missing:** a DNS-rebinding page resolves its own hostname to `127.0.0.1`, is then same-origin with the server, and can read every view — audit entries, project names, failed-tool error text — because nothing checks `Host`. Screenshots of an opened league row may show real error lines: a per-image check for home paths and key shapes before `docs/screenshots/`, never an expanded traceback (its frames carry a path each) — the denylist cannot read a PNG.
+**No mutation route exists.** Refresh is a browser reload; a new run is F3. **Deny case:** `403` on a `Host` that does not name loopback, so a DNS-rebinding page — same-origin once its hostname resolves to `127.0.0.1` — cannot read the views. Any local process still can. Screenshots of an opened league row may show real error lines: a per-image check for home paths and key shapes before `docs/screenshots/`, never an expanded traceback (its frames carry a path each) — the denylist cannot read a PNG.
 
 ## F5 — Operator commands (write, no model)
 

@@ -111,7 +111,7 @@ from substrate import (  # noqa: E402
     derive_field_histogram, derive_tool_events, derive_usage, NotSynced, record_count)
 import extract  # noqa: E402
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
-from home import home, log_to  # noqa: E402
+from home import home, log_to, private  # noqa: E402
 from capture import (REWRITTEN, capture, now as stamp, transcript_key,  # noqa: E402
                      write_health)
 
@@ -417,6 +417,7 @@ def init_db(db_path):
     # held open in serve.py never blocks a commit here or in the listener.
     # Persistent in the file — whichever writer opens it first switches it.
     conn.execute("PRAGMA journal_mode=WAL")
+    private(db_path)   # after WAL, so the sidecars exist to be closed
     conn.executescript(SCHEMA)
     # PRAGMA user_version gates the accreting migration sniffs (ticket #50):
     # each runs exactly once per db, so the #43 drops are never a standing

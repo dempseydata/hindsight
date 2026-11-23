@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from capture import write_health
-from home import home, log_to, loopback_host
+from home import home, log_to, loopback_host, private
 
 DEFAULT_DB = home() / "hindsight.db"
 DEFAULT_PORT = 4318
@@ -57,6 +57,7 @@ def init_db(db_path):
     # the schema DDL must wait for an analyze.py write, not fail at 5 s.
     conn = sqlite3.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")   # issue #12; see analyze.init_db
+    private(db_path)
     conn.executescript(SCHEMA)
     conn.close()
 

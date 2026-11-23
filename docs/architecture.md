@@ -211,9 +211,10 @@ C4Component
 There are none, by design. Hindsight is a single-operator tool that runs as the operator's own
 macOS user: the only principal is the Unix user, the only credential is filesystem ownership of
 Hindsight home and the analysis work dir, and the only network exposure is loopback. Neither
-server checks a token, cookie, origin or `Host` header (`listener.py:166-233`, `serve.py:862-886`).
-No code sets a file mode beyond `log_to`'s `0o644` for logs (`home.py:30`): the DB, its sidecars
-and Hindsight home take the process umask. "Sessions" in this codebase mean Claude Code sessions
+server checks a token, cookie or origin; both refuse a `Host` that does not name loopback
+(`home.loopback_host`). The store is owner-only whatever the umask: `home.private` sets the DB and
+its sidecars `0600` and Hindsight home `0700` on every `init_db`, logs are created `0600`
+(`home.log_to`), and install closes home too. "Sessions" in this codebase mean Claude Code sessions
 (transcripts), not login sessions. See [permissions.md](permissions.md).
 
 ## Trust boundaries
@@ -235,7 +236,7 @@ and Hindsight home take the process umask. "Sessions" in this codebase mean Clau
 Each entry is a fact about the code as written, not a checklist item. Ordered by what crossing it exposes.
 
 1. **Secrets can land in the DB, by three routes.** `capture_backstop` stores the full text of `~/.claude/CLAUDE.md`, `settings.json`, `settings.local.json`, `keybindings.json`, `mcp.json` and `plugins/installed_plugins.json` in `blobs.content` (`analyze.py:191-192,1748-1779`), and `_capture_project_git` stores every historical version of every `.claude/*` file in every workspace repo (`analyze.py:1688-1714`). Settings and MCP config commonly carry API keys. The raw store holds every transcript line verbatim for the raw limit, so a key pasted into a prompt or echoed by a tool is there too. The DB is never served raw, but a copy of `hindsight.db` is a copy of all of it. See [variables.md](variables.md).
-2. **The store is only as private as the umask.** No `chmod` anywhere; the DB, `-wal`, `-shm` and `~/.hindsight` follow the process umask (commonly world-readable), and logs are created `0644` (`home.py:30`). On a single-user Mac the exposure is low; on a shared one, any local account can read the transcripts the raw store holds.
+2. **Owner-only covers Hindsight home, not everything Hindsight writes.** The DB and its sidecars are `0600` and Hindsight home `0700`, set on every `init_db` whatever the umask (`home.private`). Three places still follow the umask: a `--db` outside Hindsight home keeps its directory's mode (the DB file itself is still `0600`), the analysis work dir holding extracts (risk 11), and the launchd plists. Backups of Hindsight home are transcript backups.
 3. **The raw limit reaches the nightly only through the plist.** `HINDSIGHT_RAW_DAYS` is read by `raw_days()` (`analyze.py:1902-1915`) and baked into the nightly plist at install when set (`hindsight.py:56-59`); launchd does not inherit the shell. Change it in the shell without re-running `/hindsight:ops install`, or keep a plist written before the raw limit was baked, and the nightly compacts at the plist's value (90 if absent) — a manual run's limit is undone by the next nightly. A bad value stops compaction and errors the run rather than deleting. Compaction itself is irreversible: raw records go, audit and derived rows survive as `compacted`.
 4. **Error text is transcript content, stored uncapped and rendered.** `tool_events.error_text` holds a failed call's result verbatim — file paths, command lines, whatever the tool echoed — with no length cap (`substrate.py:266-289`), outlives compaction, and the where view renders the full text under each grouped error line. Screenshots of an opened league row need a per-image check for home paths — the pre-commit denylist cannot read a PNG.
 5. **Both servers trust any local process.** Any local process can POST arbitrary JSON to `:4318`; forged rows feed the where view, the OTel cross-check (condition-4 breakage, `analyze.py:1287-1331`) and the health check's "capture behind OTel" line (`health.py:82-107`). Web pages are kept out: the `application/json` gate stops a cross-origin page, and both servers refuse (`403`) a `Host` that does not name loopback, which stops a DNS-rebinding page (`home.loopback_host`, tested). A DB error drops the whole batch but reports `rejectedLogRecords: 1` and still returns `200`, so the exporter never retries (`listener.py:188-211`).

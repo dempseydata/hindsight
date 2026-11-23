@@ -55,7 +55,7 @@ Rotation "re-install" means re-running `/hindsight:ops install`, which rewrites 
 | `~/Library/LaunchAgents/com.hindsight.ingest.plist` | Absolute `sys.executable` + `<home>/current/cli/listener.py --log`; `RunAtLoad`, `KeepAlive`; `HINDSIGHT_HOME` if set | `/hindsight:ops install` |
 | `~/Library/LaunchAgents/com.hindsight.nightly.plist` | Absolute `sys.executable` + `<home>/current/cli/analyze.py --log`; 03:00; `PATH` and, if set, `HINDSIGHT_HOME`, `HINDSIGHT_TZ`, `HINDSIGHT_RAW_DAYS`, `CLAUDE_PLUGIN_DATA` | `/hindsight:ops install` |
 | `<home>/current` | Symlink to the live plugin root; both plists run through it | `install` (re-pointed), the health hook (re-pointed atomically on a plugin update), `uninstall` (removed) |
-| `<home>/logs/{listener,analyze}.log` | Process logs, mode `0644`, never rotated. `analyze.log` carries the first 80 chars of any rejected model output and the first 200 chars of a failed call's stderr | The job itself (`--log`, `home.log_to`, which recreates `logs/`) |
+| `<home>/logs/{listener,analyze}.log` | Process logs, mode `0600`, never rotated. `analyze.log` carries the first 80 chars of any rejected model output and the first 200 chars of a failed call's stderr | The job itself (`--log`, `home.log_to`, which recreates `logs/`) |
 | `<home>/logs/serve.log` | Request log of a views server started by `/hindsight:ops serve` or `open`; a terminal-started one logs to its terminal | `hindsight.py` |
 | `$TMPDIR/hindsight-model-cwd/` | Empty working dir for every `claude -p` call | `default_model_runner` |
 
@@ -67,7 +67,7 @@ the health hook re-pointing `current`, upgrading Python means re-install. The ca
 Hindsight has none of its own — no API key (the model runs through the `claude` CLI's existing auth:
 subscription login, or `ANTHROPIC_API_KEY` if the CLI is set up that way; Hindsight never reads it), no
 tokens, no signing keys. What it has is **other people's secrets copied in**. No row is redacted, and
-the DB file gets the process umask — there is no `chmod` anywhere:
+the DB and its sidecars are `0600` inside a `0700` Hindsight home (`home.private`), whatever the umask:
 
 | Where | What | How | Exposure |
 | --- | --- | --- | --- |
@@ -78,7 +78,7 @@ the DB file gets the process umask — there is no `chmod` anywhere:
 | `otel_events.attributes` | Every OTLP attribute as JSON; whatever Claude Code exports — more with `OTEL_LOG_TOOL_DETAILS=1` | `listener.py` | Database |
 | `audit.markdown`, `status_narrative` | Model-written prose derived from transcripts | analysis run | **Served** (what-view, how-view) |
 | `<work dir>/extracts/`, `what-v3/` | Message text (1,500 chars per piece) and raw model output | `extract.py`, `analyze.py` | Filesystem; deleted per session at compaction |
-| `<home>/logs/analyze.log` | Rejected-output heads, failed-call stderr heads | analysis run | Filesystem, `0644` |
+| `<home>/logs/analyze.log` | Rejected-output heads, failed-call stderr heads | analysis run | Filesystem, `0600` |
 | `local-data/eval/` | what-pass extracts (the regression set's real inputs), run outputs, the Stage B dry-run material (`so-what/`) | `eval/*.py` | Filesystem, untracked |
 
 **Rotation:** if `hindsight.db`, a backup of `<home>` or `local-data/` is ever copied off the machine or committed, treat
@@ -111,4 +111,4 @@ Operator, on a machine that runs it:
 - [ ] Run `/hindsight:ops install` from the shell holding the final `PATH`, `HINDSIGHT_HOME`, `HINDSIGHT_TZ`, `CLAUDE_PLUGIN_DATA`; re-run after changing any. `which claude` resolves on that `PATH`.
 - [ ] Set `HINDSIGHT_RAW_DAYS` deliberately, then re-run `/hindsight:ops install` so the nightly plist carries it.
 - [ ] Know which auth `claude -p` uses: on an API key the what-pass is metered spend with no cap.
-- [ ] `chmod 700 <home>` if the Mac has other users; treat backups of `<home>` as transcript backups.
+- [ ] Treat backups of `<home>` as transcript backups; `<home>` itself is closed to other users (`0700`).

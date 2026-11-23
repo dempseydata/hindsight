@@ -77,7 +77,7 @@ the DB and its sidecars are `0600` inside a `0700` Hindsight home (`home.private
 | `tool_events.error_text` | Verbatim, uncapped text of every failed tool result (ADR-0027): stderr, tracebacks, absolute paths, whatever a command printed | `substrate.py` deriver | **Served** in the where blob (`errs[].t`) |
 | `otel_events.attributes` | Every OTLP attribute as JSON; whatever Claude Code exports — more with `OTEL_LOG_TOOL_DETAILS=1` | `listener.py` | Database |
 | `audit.markdown`, `status_narrative` | Model-written prose derived from transcripts | analysis run | **Served** (what-view, how-view) |
-| `<work dir>/extracts/`, `what-v3/` | Message text (1,500 chars per piece) and raw model output | `extract.py`, `analyze.py` | Filesystem; deleted per session at compaction |
+| `<work dir>/extracts/`, `what-v3/` | Message text (1,500 chars per piece) and raw model output | `extract.py`, `analyze.py` | Filesystem, work dir `0700`; deleted per session at compaction |
 | `<home>/logs/analyze.log` | Rejected-output heads, failed-call stderr heads | analysis run | Filesystem, `0600` |
 | `local-data/eval/` | what-pass extracts (the regression set's real inputs), run outputs, the Stage B dry-run material (`so-what/`) | `eval/*.py` | Filesystem, untracked |
 

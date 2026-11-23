@@ -112,6 +112,7 @@ from substrate import (  # noqa: E402
 import extract  # noqa: E402
 from sunk_cost import PLUGINS_FILE, plugin_entries, scan_sunk_cost  # noqa: E402
 from home import home, log_to, private  # noqa: E402
+from redact import redact  # noqa: E402
 from capture import (REWRITTEN, capture, now as stamp, transcript_key,  # noqa: E402
                      write_health)
 
@@ -544,6 +545,8 @@ def init_db(db_path):
         conn.execute("DROP TABLE IF EXISTS scan_runs")
         conn.execute("PRAGMA user_version = 12")
         conn.commit()
+    if v < 13:
+        _migrate_v13(conn)
     # Message-lens join indexes — after the gate, so a pre-#42 db grows the
     # columns before they're indexed.
     conn.executescript(
@@ -553,6 +556,33 @@ def init_db(db_path):
         " CREATE INDEX IF NOT EXISTS idx_field_histogram_session"
         " ON field_histogram(session_id);")
     return conn
+
+
+def _migrate_v13(conn):
+    """Risk 1: redact the backstop blobs stored before redaction. A changed
+    blob gets a new hash, every reference moves to it, and the old row goes.
+    Then VACUUM: deleted rows leave their bytes in page slack, and old
+    versions of a secret can sit there from long-gone rows too (measured on a
+    real store: none in any table, still in the file until the VACUUM).
+    The version moves only after the VACUUM, so a busy store retries it at
+    the next open; the blob pass is idempotent."""
+    for h, content in conn.execute("SELECT hash, content FROM blobs").fetchall():
+        new = store_blob(conn, content)
+        if new == h:
+            continue
+        for col in ("before_hash", "after_hash"):
+            conn.execute(f"UPDATE change_events SET {col} = ? WHERE {col} = ?", (new, h))
+        conn.execute("UPDATE backstop_state SET value = ? WHERE value = ?", (new, h))
+        conn.execute("DELETE FROM blobs WHERE hash = ?", (h,))
+    conn.commit()
+    try:
+        conn.execute("VACUUM")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.OperationalError as e:
+        print(f"v13 VACUUM deferred to the next open: {e}", file=sys.stderr)
+        return
+    conn.execute("PRAGMA user_version = 13")
+    conn.commit()
 
 
 # v10 (ticket #84, ADR-0031, ADR-0039 §1-§8): additive only. Every new table
@@ -1669,7 +1699,10 @@ def default_model_runner(prompt, model=MODEL):  # model: eval/run_v2.py's compar
 
 
 def store_blob(conn, content):
-    """Content-addressed storage: identical content stored once."""
+    """Content-addressed storage of the redacted content: identical content
+    stored once, secrets never (risk 1). Redaction is idempotent, so an
+    unchanged file keeps its hash and raises no change event."""
+    content = redact(content)
     h = hashlib.sha256(content.encode()).hexdigest()
     conn.execute("INSERT OR IGNORE INTO blobs (hash, content) VALUES (?, ?)",
                  (h, content))

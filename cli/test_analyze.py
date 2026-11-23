@@ -779,7 +779,7 @@ class FolderIdentityTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 12)
+                conn.execute("PRAGMA user_version").fetchone()[0], 13)
         finally:
             conn.close()
         row = self.identity_row("sess-old")
@@ -850,7 +850,7 @@ class V10MigrationTest(DbHelpers, unittest.TestCase):
               "since": "2026-08-01", "source": None, "session_id": None}])
         conn = sqlite3.connect(self.db)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 13)
             self.assertEqual(conn.execute("PRAGMA auto_vacuum").fetchone()[0], 2)
             self.assertIsNone(conn.execute("SELECT 1 FROM sqlite_master"
                                            " WHERE name='scan_runs'").fetchone())  # v12
@@ -920,6 +920,54 @@ class BackstopTest(DbHelpers, unittest.TestCase):
         self.run_pipeline()
         self.assertEqual(self.blob_hashes(), {sha('{"a": 1}')},
                          "backstop never ran: the narrative pass killed the run")
+
+    def test_secrets_never_stored_and_reruns_are_silent(self):
+        """Risk 1: settings and MCP config carry keys; the blob is redacted,
+        and an unchanged file raises no event run to run."""
+        key = "sk-ant-api03-" + "x7" * 20
+        (self.claude / "settings.json").write_text(json.dumps({"env": {"ANTHROPIC_API_KEY": key}}))
+        (self.claude / "mcp.json").write_text(json.dumps(
+            {"mcpServers": {"t": {"env": {"BOT_TOKEN": "12345:abcdefghijklmnop"},
+                                  "headers": {"X-Key": "plain"}}}}))
+        self.run_pipeline()
+        self.run_pipeline()
+        self.assertEqual(self.events(), [])
+        conn = sqlite3.connect(self.db)
+        try:
+            stored = " ".join(r[0] for r in conn.execute("SELECT content FROM blobs"))
+        finally:
+            conn.close()
+        for secret in (key, "12345:abcdefghijklmnop", "plain"):
+            self.assertNotIn(secret, stored)
+        self.assertIn("ANTHROPIC_API_KEY", stored)  # the shape of the config survives
+
+    def test_v13_migration_redacts_stored_blobs_and_zeroes_them(self):
+        """A v12 db holding an unredacted blob: init_db moves every reference
+        to the redacted blob and leaves the secret nowhere in the file."""
+        key = "sk-ant-api03-" + "q9" * 20
+        raw = json.dumps({"env": {"ANTHROPIC_API_KEY": key}})
+        analyze.init_db(self.db).close()
+        conn = sqlite3.connect(self.db)
+        conn.execute("INSERT INTO blobs (hash, content) VALUES (?, ?)", (sha(raw), raw))
+        conn.execute("INSERT INTO change_events (observed_at, source, path, before_hash, after_hash)"
+                     " VALUES ('t', 'snapshot', 'settings.json', NULL, ?)", (sha(raw),))
+        conn.execute("INSERT INTO backstop_state (key, value) VALUES ('settings.json', ?)", (sha(raw),))
+        conn.execute("PRAGMA user_version = 12")
+        conn.commit()
+        conn.close()
+        analyze.init_db(self.db).close()
+        conn = sqlite3.connect(self.db)
+        try:
+            [(h, content)] = conn.execute("SELECT hash, content FROM blobs").fetchall()
+            self.assertNotIn(key, content)
+            self.assertEqual(h, sha(content))
+            self.assertEqual(conn.execute("SELECT after_hash FROM change_events").fetchone()[0], h)
+            self.assertEqual(conn.execute("SELECT value FROM backstop_state").fetchone()[0], h)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 13)
+        finally:
+            conn.close()
+        for p in self.db.parent.glob(self.db.name + "*"):
+            self.assertNotIn(key.encode(), p.read_bytes(), p.name)
 
     def test_first_run_is_silent_baseline_with_blobs(self):
         (self.claude / "settings.json").write_text('{"a": 1}')
@@ -1125,7 +1173,7 @@ class PresenceTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 12)
+                conn.execute("PRAGMA user_version").fetchone()[0], 13)
             row = conn.execute("SELECT folder_identity, name, present"
                                " FROM project_presence").fetchone()
         finally:
@@ -1782,7 +1830,7 @@ class SweepDeriveTest(DbHelpers, unittest.TestCase):
         self.run_pipeline()
         conn = sqlite3.connect(self.db)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 13)
             self.assertNotIn("date", {r[1] for r in conn.execute("PRAGMA table_info(audit)")})
         finally:
             conn.close()

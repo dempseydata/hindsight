@@ -630,7 +630,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 12)
+                conn.execute("PRAGMA user_version").fetchone()[0], 13)
         finally:
             conn.close()
 
@@ -674,7 +674,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         self.assertEqual(len(self.rows("SELECT * FROM tool_events")), 2)
         conn = sqlite3.connect(self.db)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 13)
         finally:
             conn.close()
         # an unchanged session is never re-derived: a second run leaves it
@@ -706,7 +706,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = analyze.init_db(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 12)
+                conn.execute("PRAGMA user_version").fetchone()[0], 13)
             tables = {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("runs", tables)
@@ -741,7 +741,7 @@ class SubstrateTest(DbHelpers, unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 12)
+                conn.execute("PRAGMA user_version").fetchone()[0], 13)
         finally:
             conn.close()
 

@@ -4,7 +4,9 @@ External behaviour at the HTTP boundary plus the chip policy: GET pages
 from a server on an ephemeral port over a fixture DB, assert the chrome
 data and the read-only guarantee.
 """
+import contextlib
 import http.client
+import io
 import json
 import os
 import re
@@ -424,6 +426,16 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(c.getresponse().status, 302)
         finally:
             c.close()
+
+    def test_a_served_page_leaves_one_request_record(self):
+        # The stdlib request log on stderr is the view-use record (ticket 119); serve.log captures it.
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            r, _ = self.get("/how?p=alpha")
+        self.assertEqual(r.status, 200)
+        lines = [l for l in err.getvalue().splitlines() if '"GET ' in l]
+        self.assertEqual(len(lines), 1)
+        self.assertRegex(lines[0], r'\[\d{2}/\w{3}/\d{4} \d{2}:\d{2}:\d{2}\] "GET /how\?p=alpha HTTP/1\.1" 200')
 
     def test_root_redirects_to_what(self):
         r, _ = self.get("/")

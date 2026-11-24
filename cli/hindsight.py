@@ -182,7 +182,9 @@ def serve():
         return None
     log = serve_log()
     log.parent.mkdir(parents=True, exist_ok=True)
-    with open(log, "ab") as f:
+    # The request log is the view-use record (ticket 119): owner-only, tightened if it predates this.
+    with os.fdopen(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab") as f:
+        os.chmod(log, 0o600)
         p = subprocess.Popen([sys.executable, str(ROOT / "cli" / "serve.py"),
                               "--port", str(SERVE_PORT)],
                              stdin=subprocess.DEVNULL, stdout=f, stderr=f,

@@ -1,6 +1,6 @@
 # Hindsight
 
-Local observability over Claude Code history, built for a solo, skill-heavy operator: **what** was done, **where** the tokens went, and **how** the process ran. Read-only, stdlib-only Python over SQLite — everything is derived from the transcripts and telemetry already on the machine, and the derived data never leaves it.
+Local observability over Claude Code history, built for a solo, skill-heavy operator: **what** was done, **where** the tokens went, and **how** the process ran. Read-only, stdlib-only Python over SQLite — everything is derived from the transcripts and telemetry already on the machine. Hindsight keeps every copy on the machine; data reaches Anthropic only through Claude sessions you run ([ADR-0042](docs/adr/0042-the-local-only-rule-forbids-a-second-store-not-the-api.md)).
 
 **What — the cross-project session ledger.** One row per session: what was done and what was decided, setup changes, with the evidence a click away.
 

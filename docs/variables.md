@@ -56,7 +56,7 @@ Rotation "re-install" means re-running `/hindsight:ops install`, which rewrites 
 | `~/Library/LaunchAgents/com.hindsight.nightly.plist` | Absolute `sys.executable` + `<home>/current/cli/analyze.py --log`; 03:00; `PATH` and, if set, `HINDSIGHT_HOME`, `HINDSIGHT_TZ`, `HINDSIGHT_RAW_DAYS`, `CLAUDE_PLUGIN_DATA` | `/hindsight:ops install` |
 | `<home>/current` | Symlink to the live plugin root; both plists run through it | `install` (re-pointed), the health hook (re-pointed atomically on a plugin update), `uninstall` (removed) |
 | `<home>/logs/{listener,analyze}.log` | Process logs, mode `0600`, never rotated. `analyze.log` carries the first 80 chars of any rejected model output and the first 200 chars of a failed call's stderr | The job itself (`--log`, `home.log_to`, which recreates `logs/`) |
-| `<home>/logs/serve.log` | Request log of a views server started by `/hindsight:ops serve` or `open`; a terminal-started one logs to its terminal | `hindsight.py` |
+| `<home>/logs/serve.log` | Request log of a views server started by `/hindsight:ops serve` or `open`, mode `0600` (tightened at each start), never rotated; a terminal-started one logs to its terminal. It is the **view-use record** (ticket 119): one stdlib line per request, local time without zone, path and full `?p=` query. Panel expansion is client-side `<details>` and is not recorded. Read with `grep '"GET '` | `hindsight.py` |
 | `$TMPDIR/hindsight-model-cwd/` | Empty working dir for every `claude -p` call | `default_model_runner` |
 
 Both plists pin the Python binary and `<home>/current` at install time; a plugin update is picked up by

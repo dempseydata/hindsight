@@ -18,7 +18,7 @@ The `v2-framing.md` routing table already applied the narrower rule. It rejected
    - **Aggregates:** tokens, counts and rates.
    - **Identifiers:** session ids, project names and skill names.
    - **Summary text:** audit entries and status narratives.
-   - **Not verbatim `error_text`** (ADR-0027). It is raw tool output: the likeliest carrier of instructions injected into the querying agent, and of a secret that appeared in a failed command. A tool may return error counts and error classes instead.
+   - **Not verbatim `error_text`** (ADR-0027). It is raw tool output: the likeliest carrier of instructions injected into the querying agent, and of a secret that appeared in a failed command. The derived error line (ADR-0027 §3) is held back too: it is a verbatim line of that text, and a display key, not a class. A tool may return error counts by consumer and MCP tool instead (issue #125).
 4. **Current project by default.** A tool answers for the project the querying session sits in. All-projects results need an explicit argument. This keeps a private project's names and text out of a session in another repo, including this public one, unless they are asked for.
 5. **Any local client.** The server is stdio and registered by the plugin. Claude Code and the desktop app's chat may both use it. Conversation history in the operator's own account is the same terms as the source sessions, not a store hindsight controls.
 6. **The self-observation loop is accepted.** A query result lands in the querying session's transcript, which hindsight then ingests and sends through the what-pass. Querying hindsight is something that session did. Self-exclusion (ADR-0003) stays limited to hindsight's own `claude -p` runs.
